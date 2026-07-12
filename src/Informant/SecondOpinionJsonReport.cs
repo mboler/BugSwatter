@@ -4,7 +4,7 @@ using System.Text.Json.Serialization;
 namespace Informant;
 
 /// <summary>Result of a completed second-opinion pass, carried to the email step</summary>
-public sealed record SecondOpinionOutcome(string ValidatedReportPath, string ValidatedJsonPath, Severity MaxSeverity, int ValidatedCount, int FailedCount);
+public sealed record SecondOpinionOutcome(string ValidatedReportPath, string ValidatedJsonPath, Severity MaxSeverity, bool SeverityDetermined, int ValidatedCount, int FailedCount);
 
 /// <summary>Accumulates the structured second-opinion verdicts across a run and writes the machine-readable companion artifact next to the validated Markdown report. Files whose json did not parse are recorded with parseOk false so a consumer can tell confirmed-none from could-not-parse</summary>
 public sealed class SecondOpinionJsonReport
@@ -15,6 +15,9 @@ public sealed class SecondOpinionJsonReport
 
     /// <summary>Highest confirmed severity seen across every parsed file, for the email gate</summary>
     public Severity MaxSeverity { get; private set; } = Severity.None;
+
+    /// <summary>True only when every completed validation returned parseable structured findings</summary>
+    public bool SeverityDetermined => _files.All(file => file.ParseOk);
 
     /// <summary>Records one file's validation; <paramref name="parsed"/> is null when the model produced no usable json</summary>
     public void Add(string filePath, IReadOnlyList<LineRange> ranges, ParsedValidation? parsed)
@@ -47,7 +50,8 @@ public sealed class SecondOpinionJsonReport
             validatingModel,
             endpoint,
             sourceReport = Path.GetFileName(sourceReportPath),
-            maxSeverity = MaxSeverity,
+            maxSeverity = SeverityDetermined ? MaxSeverity.ToString() : "Undetermined",
+            severityDetermined = SeverityDetermined,
             fileCount = _files.Count,
             files = _files
         };

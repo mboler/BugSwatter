@@ -74,6 +74,7 @@ public sealed class ReportWriter
         builder.AppendLine($"## {result.File.Path}");
         builder.AppendLine();
         builder.AppendLine($"Status: {result.File.Kind} | Changed line ranges: {FormatRanges(result.File.ChangedRanges)}");
+        builder.AppendLine($"Review result: {result.Status}");
         builder.AppendLine();
 
         if (result.TotalChunks > 1)
@@ -90,7 +91,13 @@ public sealed class ReportWriter
 
         if (result.SkipReason is not null)
         {
-            builder.AppendLine(result.Findings is null ? $"SKIPPED: {result.SkipReason}" : $"PARTIAL: remainder skipped, {result.SkipReason}");
+            builder.AppendLine(result.Status switch
+            {
+                FileReviewStatus.NotReviewable => $"NOT REVIEWABLE: {result.SkipReason}",
+                FileReviewStatus.Failed => $"FAILED: {result.SkipReason}",
+                FileReviewStatus.Partial => $"PARTIAL: remainder not reviewed, {result.SkipReason}",
+                _ => result.SkipReason
+            });
             builder.AppendLine();
         }
 

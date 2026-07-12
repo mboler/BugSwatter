@@ -3,6 +3,9 @@ namespace Informant;
 /// <summary>The assembled email: subject, body and attachment paths, produced deterministically from a run so tests can assert it without sending</summary>
 public sealed record EmailReport(string Subject, string Body, IReadOnlyList<string> AttachmentPaths);
 
+/// <summary>What the configured email transport confirmed after accepting a message</summary>
+public sealed record EmailSendReceipt(string Decision, string? MessageId, string Detail);
+
 /// <summary>The outcome of the report-email step, appended to the validated report so the run's own artifact records what was sent, to whom and when</summary>
 public sealed record EmailDeliveryRecord(string Decision, DateTimeOffset Time, string Provider, IReadOnlyList<string> Recipients, string Detail)
 {
@@ -28,8 +31,8 @@ public sealed record EmailDeliveryRecord(string Decision, DateTimeOffset Time, s
 /// <summary>Sends an assembled report email; abstracted so tests exercise gating and assembly without a live relay</summary>
 public interface IEmailSender
 {
-    /// <summary>Sends the email; throws on transport failure so the caller can log it without disturbing the completed run</summary>
-    Task SendAsync(EmailReport report, CancellationToken cancellationToken = default);
+    /// <summary>Sends the email and returns the transport's acceptance receipt; throws on failure so the caller can log it without disturbing the completed run</summary>
+    Task<EmailSendReceipt> SendAsync(EmailReport report, CancellationToken cancellationToken = default);
 }
 
 /// <summary>Builds the report email from a completed run: a summary body plus the two Markdown reports as attachments</summary>

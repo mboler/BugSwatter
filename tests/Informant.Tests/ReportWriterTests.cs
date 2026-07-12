@@ -40,7 +40,7 @@ public sealed class ReportWriterTests : IDisposable
         ReportWriter writer = CreateWriter();
         writer.WriteHeader("repo", "main", ReviewMode.Changed, "base", "tip", DateTimeOffset.Now);
         var file = new ChangedFile("src/Foo.cs", ChangeKind.Modified, [new LineRange(3, 5), new LineRange(9, 9)]);
-        writer.AppendFileSection(new FileReviewResult(file, "The findings text from the model.\n", 1, 1, null));
+        writer.AppendFileSection(new FileReviewResult(file, FileReviewStatus.Reviewed, "The findings text from the model.\n", 1, 1, null));
 
         // On disk immediately, before any finalize, so a crash cannot lose completed sections
         string report = File.ReadAllText(writer.ReportPath);
@@ -51,14 +51,15 @@ public sealed class ReportWriterTests : IDisposable
     }
 
     [Fact]
-    public void SkippedSectionNamesTheReason()
+    public void NotReviewableSectionNamesTheReason()
     {
         ReportWriter writer = CreateWriter();
         writer.WriteHeader("repo", "main", ReviewMode.Changed, "base", "tip", DateTimeOffset.Now);
-        writer.AppendFileSection(new FileReviewResult(new ChangedFile("blob.bin", ChangeKind.Modified, []), null, 0, 0, "binary file"));
+        writer.AppendFileSection(new FileReviewResult(new ChangedFile("blob.bin", ChangeKind.Modified, []), FileReviewStatus.NotReviewable, null, 0, 0, "binary file"));
         string report = File.ReadAllText(writer.ReportPath);
         Assert.Contains("## blob.bin", report);
-        Assert.Contains("SKIPPED: binary file", report);
+        Assert.Contains("Review result: NotReviewable", report);
+        Assert.Contains("NOT REVIEWABLE: binary file", report);
         Assert.Contains("Changed line ranges: (none)", report);
     }
 
@@ -67,11 +68,13 @@ public sealed class ReportWriterTests : IDisposable
     {
         ReportWriter writer = CreateWriter();
         writer.WriteHeader("repo", "main", ReviewMode.Changed, "base", "tip", DateTimeOffset.Now);
-        writer.AppendFileSection(new FileReviewResult(new ChangedFile("big.cs", ChangeKind.Modified, [new LineRange(1, 400)]), "part one findings", 1, 3, "part 2 of 3 failed after 2 retries"));
+        writer.AppendFileSection(new FileReviewResult(new ChangedFile("big.cs", ChangeKind.Modified, [new LineRange(1, 400)]), FileReviewStatus.Partial, "part one findings", 1, 3,
+            "part 2 of 3 failed after 2 retries"));
         string report = File.ReadAllText(writer.ReportPath);
         Assert.Contains("Parts reviewed: 1 of 3", report);
         Assert.Contains("part one findings", report);
-        Assert.Contains("PARTIAL: remainder skipped, part 2 of 3 failed after 2 retries", report);
+        Assert.Contains("Review result: Partial", report);
+        Assert.Contains("PARTIAL: remainder not reviewed, part 2 of 3 failed after 2 retries", report);
     }
 
     [Fact]
@@ -79,7 +82,7 @@ public sealed class ReportWriterTests : IDisposable
     {
         ReportWriter writer = CreateWriter();
         writer.WriteHeader("repo", "main", ReviewMode.Changed, "base", "tip", DateTimeOffset.Now);
-        writer.AppendFileSection(new FileReviewResult(new ChangedFile("a.cs", ChangeKind.Modified, [new LineRange(1, 2)]), "fine", 1, 1, null));
+        writer.AppendFileSection(new FileReviewResult(new ChangedFile("a.cs", ChangeKind.Modified, [new LineRange(1, 2)]), FileReviewStatus.Reviewed, "fine", 1, 1, null));
         writer.Finalize(1, [("blob.bin", "binary file"), ("big.cs", "part 2 of 3 failed")], TimeSpan.FromMinutes(90) + TimeSpan.FromSeconds(5));
 
         string report = File.ReadAllText(writer.ReportPath);
@@ -97,7 +100,8 @@ public sealed class ReportWriterTests : IDisposable
     {
         ReportWriter writer = CreateWriter();
         writer.WriteHeader("repo", "main", ReviewMode.Changed, "base", "tip", DateTimeOffset.Now);
-        writer.AppendFileSection(new FileReviewResult(new ChangedFile("a.cs", ChangeKind.Modified, [new LineRange(1, 1)]), "the model oddly wrote (pending: files reviewed) in its findings", 1, 1, null));
+        writer.AppendFileSection(new FileReviewResult(new ChangedFile("a.cs", ChangeKind.Modified, [new LineRange(1, 1)]), FileReviewStatus.Reviewed,
+            "the model oddly wrote (pending: files reviewed) in its findings", 1, 1, null));
         writer.Finalize(1, [], TimeSpan.FromSeconds(30));
 
         string report = File.ReadAllText(writer.ReportPath);

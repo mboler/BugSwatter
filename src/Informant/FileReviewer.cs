@@ -3,11 +3,38 @@ using Serilog;
 
 namespace Informant;
 
-/// <summary>Outcome of reviewing one file. Fully reviewed: findings set, no skip reason. Skipped: no findings, reason set. Partial: findings from completed parts plus the reason the remainder was skipped</summary>
-public sealed record FileReviewResult(ChangedFile File, string? Findings, int CompletedChunks, int TotalChunks, string? SkipReason)
+/// <summary>Final disposition of one file in the primary review</summary>
+public enum FileReviewStatus
+{
+    /// <summary>Every reviewable part completed</summary>
+    Reviewed,
+
+    /// <summary>The file was intentionally excluded because its content cannot or need not be reviewed</summary>
+    NotReviewable,
+
+    /// <summary>No review completed because an unexpected read or model failure occurred</summary>
+    Failed,
+
+    /// <summary>Some, but not all, reviewable parts completed</summary>
+    Partial
+}
+
+/// <summary>Outcome of reviewing one file, with an explicit status separating expected exclusions from failures that must preserve the previous baseline</summary>
+public sealed record FileReviewResult(ChangedFile File, FileReviewStatus Status, string? Findings, int CompletedChunks, int TotalChunks, string? SkipReason)
 {
     /// <summary>True when every part of the file was reviewed</summary>
-    public bool FullyReviewed => SkipReason is null && Findings is not null;
+    public bool FullyReviewed => Status == FileReviewStatus.Reviewed;
+}
+
+/// <summary>Decides whether a completed primary pass is safe to record as the new baseline</summary>
+public static class ReviewCompletion
+{
+    /// <summary>Returns true when every changed file was reviewed or intentionally classified as not reviewable</summary>
+    public static bool CanAdvanceBaseline(IEnumerable<FileReviewResult> results)
+    {
+        ArgumentNullException.ThrowIfNull(results);
+        return results.All(result => result.Status is FileReviewStatus.Reviewed or FileReviewStatus.NotReviewable);
+    }
 }
 
 /// <summary>Reviews one file at a time: whole-file feeding with changed-line focus hints, logical chunking for oversized files, and retry-then-skip resilience so one bad file never kills the run</summary>
@@ -47,7 +74,7 @@ public sealed class FileReviewer
 
         if (file.Kind is ChangeKind.Modified or ChangeKind.Renamed && file.ChangedRanges.Count == 0)
         {
-            return Skip(file, "no line changes (pure rename or metadata-only change)");
+            return NotReviewable(file, "no line changes (pure rename or metadata-only change)");
         }
 
         string[] lines;
@@ -60,17 +87,17 @@ public sealed class FileReviewer
         catch (RepositoryFileException ex)
         {
             string reason = ex.Error == RepositoryFileError.NotFound ? "file not present in the working tree" : ex.Message;
-            return Skip(file, reason);
+            return IsExpectedExclusion(ex.Error) ? NotReviewable(file, reason) : Failed(file, reason);
         }
 
         if (lines.Length == 0)
         {
-            return Skip(file, "empty file");
+            return NotReviewable(file, "empty file");
         }
 
         if (Array.Exists(lines, line => line.Contains('\0')))
         {
-            return Skip(file, "binary file");
+            return NotReviewable(file, "binary file");
         }
 
         var chunks = Chunker.Split(lines, _maxFileLines, _maxContentCharacters);
@@ -84,7 +111,8 @@ public sealed class FileReviewer
             if (partFindings is null)
             {
                 string reason = $"part {index + 1} of {chunks.Count} failed after {_retryCount} retries";
-                return new FileReviewResult(file, findings.Length > 0 ? findings.ToString() : null, index, chunks.Count, reason);
+                FileReviewStatus status = index == 0 ? FileReviewStatus.Failed : FileReviewStatus.Partial;
+                return new FileReviewResult(file, status, findings.Length > 0 ? findings.ToString() : null, index, chunks.Count, reason);
             }
 
             if (chunks.Count > 1)
@@ -97,7 +125,7 @@ public sealed class FileReviewer
             findings.AppendLine();
         }
 
-        return new FileReviewResult(file, findings.ToString().TrimEnd() + Environment.NewLine, chunks.Count, chunks.Count, null);
+        return new FileReviewResult(file, FileReviewStatus.Reviewed, findings.ToString().TrimEnd() + Environment.NewLine, chunks.Count, chunks.Count, null);
     }
 
     private async Task<string?> RunWithRetriesAsync(ChangedFile file, int part, int totalParts, string userPrompt, CancellationToken cancellationToken)
@@ -119,11 +147,19 @@ public sealed class FileReviewer
         return null;
     }
 
-    private static FileReviewResult Skip(ChangedFile file, string reason)
+    private static FileReviewResult NotReviewable(ChangedFile file, string reason)
     {
-        Log.Information("Skipping {Path}: {Reason}", file.Path, reason);
-        return new FileReviewResult(file, null, 0, 0, reason);
+        Log.Information("Not reviewing {Path}: {Reason}", file.Path, reason);
+        return new FileReviewResult(file, FileReviewStatus.NotReviewable, null, 0, 0, reason);
     }
+
+    private static FileReviewResult Failed(ChangedFile file, string reason)
+    {
+        Log.Warning("Review failed for {Path}: {Reason}", file.Path, reason);
+        return new FileReviewResult(file, FileReviewStatus.Failed, null, 0, 0, reason);
+    }
+
+    private static bool IsExpectedExclusion(RepositoryFileError error) => error is RepositoryFileError.ReparsePoint or RepositoryFileError.TooLarge or RepositoryFileError.Binary;
 
     private static string BuildUserPrompt(ChangedFile file, string[] lines, Chunk chunk, int part, int totalParts)
     {

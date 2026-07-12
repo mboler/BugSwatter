@@ -19,6 +19,7 @@ public sealed class FileReviewerTests : IDisposable
         FileReviewResult result = await CreateReviewer(handler).ReviewAsync(new ChangedFile("src/Foo.cs", ChangeKind.Modified, [new LineRange(3, 5)]));
 
         Assert.True(result.FullyReviewed);
+        Assert.Equal(FileReviewStatus.Reviewed, result.Status);
         Assert.Contains("Nothing of concern.", result.Findings);
         Assert.Equal(1, result.TotalChunks);
         string userPrompt = GetUserPrompt(handler.RequestBodies[0]);
@@ -71,17 +72,21 @@ public sealed class FileReviewerTests : IDisposable
         File.WriteAllBytes(Path.Combine(_tree.Path, "blob.bin"), [0x00, 0x01, 0x02]);
         FileReviewResult binary = await reviewer.ReviewAsync(new ChangedFile("blob.bin", ChangeKind.Modified, [new LineRange(1, 1)]));
         Assert.Contains("binary", binary.SkipReason);
+        Assert.Equal(FileReviewStatus.NotReviewable, binary.Status);
 
         File.WriteAllText(Path.Combine(_tree.Path, "empty.cs"), "");
         FileReviewResult empty = await reviewer.ReviewAsync(new ChangedFile("empty.cs", ChangeKind.Added, []));
         Assert.Contains("empty", empty.SkipReason);
+        Assert.Equal(FileReviewStatus.NotReviewable, empty.Status);
 
         FileReviewResult missing = await reviewer.ReviewAsync(new ChangedFile("gone.cs", ChangeKind.Modified, [new LineRange(1, 1)]));
         Assert.Contains("not present", missing.SkipReason);
+        Assert.Equal(FileReviewStatus.Failed, missing.Status);
 
         WriteLines("renamed.cs", "unchanged content");
         FileReviewResult rangeless = await reviewer.ReviewAsync(new ChangedFile("renamed.cs", ChangeKind.Renamed, []));
         Assert.Contains("no line changes", rangeless.SkipReason);
+        Assert.Equal(FileReviewStatus.NotReviewable, rangeless.Status);
 
         Assert.Empty(handler.RequestBodies);
     }
@@ -96,6 +101,7 @@ public sealed class FileReviewerTests : IDisposable
         FileReviewResult result = await reviewer.ReviewAsync(new ChangedFile("large.cs", ChangeKind.Modified, [new LineRange(1, 1)]));
 
         Assert.Contains("maxFileBytes", result.SkipReason);
+        Assert.Equal(FileReviewStatus.NotReviewable, result.Status);
         Assert.Empty(handler.RequestBodies);
     }
 
@@ -114,6 +120,7 @@ public sealed class FileReviewerTests : IDisposable
             FileReviewResult result = await CreateReviewer(handler).ReviewAsync(new ChangedFile("linked.cs", ChangeKind.Modified, [new LineRange(1, 1)]));
 
             Assert.Contains("symbolic link", result.SkipReason);
+            Assert.Equal(FileReviewStatus.NotReviewable, result.Status);
             Assert.Empty(handler.RequestBodies);
         }
         finally
@@ -134,6 +141,7 @@ public sealed class FileReviewerTests : IDisposable
         FileReviewResult result = await CreateReviewer(handler).ReviewAsync(new ChangedFile("flaky.cs", ChangeKind.Modified, [new LineRange(1, 1)]));
 
         Assert.False(result.FullyReviewed);
+        Assert.Equal(FileReviewStatus.Failed, result.Status);
         Assert.Null(result.Findings);
         Assert.Contains("failed after 2 retries", result.SkipReason);
         Assert.Equal(3, handler.RequestBodies.Count);
@@ -189,6 +197,7 @@ public sealed class FileReviewerTests : IDisposable
         FileReviewResult result = await reviewer.ReviewAsync(new ChangedFile("big.cs", ChangeKind.Modified, [new LineRange(1, 100)]));
 
         Assert.False(result.FullyReviewed);
+        Assert.Equal(FileReviewStatus.Partial, result.Status);
         Assert.Contains("first part ok", result.Findings);
         Assert.Equal(1, result.CompletedChunks);
         Assert.Equal(2, result.TotalChunks);

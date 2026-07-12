@@ -23,6 +23,15 @@ public sealed class EmailTests : IDisposable
         Assert.Equal(expected, config.ShouldSend(maxSeverity));
     }
 
+    [Theory]
+    [InlineData(EmailSendOn.Medium)]
+    [InlineData(EmailSendOn.High)]
+    public void ShouldSendFailsOpenWhenSeverityIsUndetermined(EmailSendOn sendOn)
+    {
+        var config = new EmailConfig { SendOn = sendOn };
+        Assert.True(config.ShouldSend(Severity.None, severityDetermined: false));
+    }
+
     [Fact]
     public void ValidBlockLoads()
     {
@@ -128,7 +137,7 @@ public sealed class EmailTests : IDisposable
     [Fact]
     public void BuildSubjectCarriesRepoBranchAndSeverity()
     {
-        var outcome = new SecondOpinionOutcome("v.md", "v.json", Severity.High, 3, 0);
+        var outcome = new SecondOpinionOutcome("v.md", "v.json", Severity.High, true, 3, 0);
         EmailReport report = EmailReportBuilder.Build("https://example.test/repo.git", "main", "local.md", outcome, severityUndetermined: false, attachReports: true);
 
         Assert.Contains("https://example.test/repo.git", report.Subject);
@@ -141,7 +150,7 @@ public sealed class EmailTests : IDisposable
     [Fact]
     public void BuildFlagsUndeterminedSeverityAndCanOmitAttachments()
     {
-        var outcome = new SecondOpinionOutcome("v.md", "v.json", Severity.None, 2, 0);
+        var outcome = new SecondOpinionOutcome("v.md", "v.json", Severity.None, false, 2, 0);
         EmailReport report = EmailReportBuilder.Build("repo", "dev", "local.md", outcome, severityUndetermined: true, attachReports: false);
 
         Assert.Contains("undetermined", report.Subject);
@@ -152,14 +161,15 @@ public sealed class EmailTests : IDisposable
     [Fact]
     public void EmailDeliveryRecordRendersAMarkdownSection()
     {
-        var record = new EmailDeliveryRecord("Sent", new DateTimeOffset(2026, 7, 11, 18, 57, 0, TimeSpan.FromHours(-5)), "Smtp", ["a@b.com", "c@d.com"], "subject: review");
+        var record = new EmailDeliveryRecord("AcceptedForDelivery", new DateTimeOffset(2026, 7, 11, 18, 57, 0, TimeSpan.FromHours(-5)), "Smtp", ["a@b.com", "c@d.com"],
+            "subject: review; operation/message ID: abc123");
         string section = record.ToMarkdownSection();
 
         Assert.Contains("## Email delivery", section);
-        Assert.Contains("| Decision | Sent |", section);
+        Assert.Contains("| Decision | AcceptedForDelivery |", section);
         Assert.Contains("| Provider | Smtp |", section);
         Assert.Contains("| Recipients | a@b.com, c@d.com |", section);
-        Assert.Contains("| Detail | subject: review |", section);
+        Assert.Contains("operation/message ID: abc123", section);
     }
 
     [Fact]

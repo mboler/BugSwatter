@@ -20,7 +20,7 @@ public sealed class AcsEmailSender : IEmailSender
     }
 
     /// <inheritdoc />
-    public async Task SendAsync(EmailReport report, CancellationToken cancellationToken = default)
+    public async Task<EmailSendReceipt> SendAsync(EmailReport report, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(report);
 
@@ -38,7 +38,8 @@ public sealed class AcsEmailSender : IEmailSender
             }
         }
 
-        // WaitUntil.Started returns as soon as ACS accepts the message; delivery is asynchronous on the service side
-        await client.SendAsync(WaitUntil.Started, message, cancellationToken);
+        // Completed confirms the ACS send operation succeeded, but it does not prove recipient delivery
+        EmailSendOperation operation = await client.SendAsync(WaitUntil.Completed, message, cancellationToken);
+        return new EmailSendReceipt("AcceptedForDelivery", operation.Id, $"ACS operation status: {operation.Value.Status}");
     }
 }

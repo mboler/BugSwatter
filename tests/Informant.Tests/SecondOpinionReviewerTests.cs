@@ -63,7 +63,7 @@ public sealed class SecondOpinionReviewerTests : IDisposable
         handler.Enqueue(HttpStatusCode.OK, StubHttpMessageHandler.FinalResponse("CONFIRMED FINDINGS\n1. real issue\nDISCARDED FINDINGS\n(none)\nVERDICT ok"));
 
         SecondOpinionReviewer reviewer = CreateReviewer(handler);
-        var localResult = new FileReviewResult(new ChangedFile("Foo.cs", ChangeKind.Modified, [new LineRange(3, 3)]), "The local model thinks x is unused.", 1, 1, null);
+        var localResult = new FileReviewResult(new ChangedFile("Foo.cs", ChangeKind.Modified, [new LineRange(3, 3)]), FileReviewStatus.Reviewed, "The local model thinks x is unused.", 1, 1, null);
 
         string? validation = await reviewer.ValidateAsync(localResult);
 
@@ -84,7 +84,7 @@ public sealed class SecondOpinionReviewerTests : IDisposable
         handler.Enqueue(HttpStatusCode.InternalServerError, "boom");
 
         SecondOpinionReviewer reviewer = CreateReviewer(handler);
-        var localResult = new FileReviewResult(new ChangedFile("Foo.cs", ChangeKind.Modified, [new LineRange(1, 1)]), "findings", 1, 1, null);
+        var localResult = new FileReviewResult(new ChangedFile("Foo.cs", ChangeKind.Modified, [new LineRange(1, 1)]), FileReviewStatus.Reviewed, "findings", 1, 1, null);
 
         Assert.Null(await reviewer.ValidateAsync(localResult));
     }
@@ -96,7 +96,7 @@ public sealed class SecondOpinionReviewerTests : IDisposable
         handler.Enqueue(HttpStatusCode.OK, StubHttpMessageHandler.FinalResponse("UNVERIFIABLE"));
 
         SecondOpinionReviewer reviewer = CreateReviewer(handler);
-        var localResult = new FileReviewResult(new ChangedFile("missing.cs", ChangeKind.Modified, [new LineRange(1, 1)]), "findings", 1, 1, null);
+        var localResult = new FileReviewResult(new ChangedFile("missing.cs", ChangeKind.Modified, [new LineRange(1, 1)]), FileReviewStatus.Reviewed, "findings", 1, 1, null);
 
         Assert.NotNull(await reviewer.ValidateAsync(localResult));
         using var request = JsonDocument.Parse(handler.RequestBodies[0]);
@@ -111,7 +111,7 @@ public sealed class SecondOpinionReviewerTests : IDisposable
         handler.Enqueue(HttpStatusCode.OK, StubHttpMessageHandler.FinalResponse("UNVERIFIABLE"));
         var reviewer = new SecondOpinionReviewer(new ModelClient(new HttpClient(handler), "https://api.example.test/v1", "frontier-1", TimeSpan.FromSeconds(5), "key"), _tree.Path,
             "validation system prompt", 100000, 30, false, 5, 1024);
-        var localResult = new FileReviewResult(new ChangedFile("large.cs", ChangeKind.Modified, [new LineRange(1, 1)]), "findings", 1, 1, null);
+        var localResult = new FileReviewResult(new ChangedFile("large.cs", ChangeKind.Modified, [new LineRange(1, 1)]), FileReviewStatus.Reviewed, "findings", 1, 1, null);
 
         Assert.NotNull(await reviewer.ValidateAsync(localResult));
         using var request = JsonDocument.Parse(handler.RequestBodies[0]);
@@ -131,7 +131,7 @@ public sealed class SecondOpinionReviewerTests : IDisposable
         handler.Enqueue(HttpStatusCode.OK, StubHttpMessageHandler.FinalResponse("CONFIRMED FINDINGS\n(none)\nDISCARDED FINDINGS\n(none)\nVERDICT ok"));
         var reviewer = new SecondOpinionReviewer(new ModelClient(new HttpClient(handler), "https://api.example.test/v1", "frontier-1", TimeSpan.FromSeconds(5), "key"), treePath,
             "validation system prompt", 100000, 30, false, 5, RepositoryFileReader.DefaultMaxFileBytes, git);
-        var localResult = new FileReviewResult(new ChangedFile("removed.cs", ChangeKind.Deleted, [], baseline), "Deletion may break callers.", 1, 1, null);
+        var localResult = new FileReviewResult(new ChangedFile("removed.cs", ChangeKind.Deleted, [], baseline), FileReviewStatus.Reviewed, "Deletion may break callers.", 1, 1, null);
 
         Assert.NotNull(await reviewer.ValidateAsync(localResult));
         using var request = JsonDocument.Parse(handler.RequestBodies[0]);

@@ -145,9 +145,18 @@ internal static class Program
         }
 
         report.Finalize(reviewedCount, skipped, stopwatch.Elapsed);
-        state.SetBaseline(config.RepositoryUrl, config.Branch, tipSha);
-        
-        Log.Information("Run complete: {Reviewed} reviewed, {Skipped} skipped or partial, new baseline {Tip}, report at {Report}", reviewedCount, skipped.Count, tipSha, report.ReportPath);
+        bool baselineAdvanced = ReviewCompletion.CanAdvanceBaseline(results);
+        if (baselineAdvanced)
+        {
+            state.SetBaseline(config.RepositoryUrl, config.Branch, tipSha);
+            Log.Information("Primary review complete: {Reviewed} reviewed, {Excluded} not reviewable, new baseline {Tip}, report at {Report}", reviewedCount,
+                results.Count(result => result.Status == FileReviewStatus.NotReviewable), tipSha, report.ReportPath);
+        }
+        else
+        {
+            Log.Warning("Primary review incomplete: {Failed} failed and {Partial} partial; baseline remains {Baseline}. Report at {Report}", results.Count(result => result.Status == FileReviewStatus.Failed),
+                results.Count(result => result.Status == FileReviewStatus.Partial), baselineSha ?? "(none)", report.ReportPath);
+        }
 
         // The second pass is strictly additive: the local review, its report and the baseline are already settled above
         string primaryReportPath = report.ReportPath;
@@ -187,8 +196,8 @@ internal static class Program
         try
         {
             // Fail open: when the second opinion produced no parseable severity, send anyway rather than risk dropping a real finding
-            bool severityUndetermined = outcome.MaxSeverity == Severity.None && outcome.ValidatedCount > 0 && !ValidatedJsonHasParsedFile(outcome.ValidatedJsonPath);
-            if (!severityUndetermined && !email.ShouldSend(outcome.MaxSeverity))
+            bool severityUndetermined = !outcome.SeverityDetermined;
+            if (!email.ShouldSend(outcome.MaxSeverity, outcome.SeverityDetermined))
             {
                 Log.Information("Email skipped: max confirmed severity {Severity} is below the '{Threshold}' send threshold", outcome.MaxSeverity, email.SendOn);
                 RecordEmailDelivery(outcome.ValidatedReportPath, new EmailDeliveryRecord("Skipped", DateTimeOffset.Now, provider, email.To, $"max confirmed severity {outcome.MaxSeverity} is below the '{email.SendOn}' send threshold"));
@@ -203,10 +212,11 @@ internal static class Program
             }
 
             EmailReport report = EmailReportBuilder.Build(config.RepositoryUrl, config.Branch, localReportPath, outcome, severityUndetermined, email.AttachReports);
-            await sender.SendAsync(report);
+            EmailSendReceipt receipt = await sender.SendAsync(report);
+            string messageId = string.IsNullOrWhiteSpace(receipt.MessageId) ? "" : $"; operation/message ID: {receipt.MessageId}";
 
-            Log.Information("Report email sent to {Recipients} (subject: {Subject})", string.Join(", ", email.To), report.Subject);
-            RecordEmailDelivery(outcome.ValidatedReportPath, new EmailDeliveryRecord("Sent", DateTimeOffset.Now, provider, email.To, $"subject: {report.Subject}"));
+            Log.Information("Report email accepted for delivery to {Recipients} (subject: {Subject}, operation/message ID: {MessageId})", string.Join(", ", email.To), report.Subject, receipt.MessageId ?? "not provided");
+            RecordEmailDelivery(outcome.ValidatedReportPath, new EmailDeliveryRecord(receipt.Decision, DateTimeOffset.Now, provider, email.To, $"subject: {report.Subject}; {receipt.Detail}{messageId}"));
         }
         catch (Exception ex)
         {
@@ -256,20 +266,6 @@ internal static class Program
             default:
                 Log.Error("Email provider {Provider} is not supported; skipping the email", email.Provider);
                 return null;
-        }
-    }
-
-    private static bool ValidatedJsonHasParsedFile(string validatedJsonPath)
-    {
-        try
-        {
-            using var document = System.Text.Json.JsonDocument.Parse(File.ReadAllText(validatedJsonPath));
-            return document.RootElement.GetProperty("files").EnumerateArray().Any(file => file.GetProperty("parseOk").GetBoolean());
-        }
-        catch (Exception)
-        {
-            // catch-all: if the companion json cannot be read, treat severity as undetermined and let the fail-open path decide
-            return false;
         }
     }
 
@@ -329,6 +325,7 @@ internal static class Program
                 {
                     failed++;
                     writer.AppendFileSection(result.File.Path, result.File.ChangedRanges, null);
+                    jsonReport.Add(result.File.Path, result.File.ChangedRanges, null);
                     continue;
                 }
 
@@ -344,7 +341,7 @@ internal static class Program
             string jsonPath = jsonReport.Write(config.ReportDirectory, runStamp, secondOpinion.ModelName, secondOpinion.Endpoint, sourceReportPath);
             Log.Information("Second opinion complete: {Validated} validated, {Failed} failed, max confirmed severity {Severity}, reports at {Report} and {Json}", validated, failed, jsonReport.MaxSeverity, writer.ReportPath, jsonPath);
 
-            return new SecondOpinionOutcome(writer.ReportPath, jsonPath, jsonReport.MaxSeverity, validated, failed);
+            return new SecondOpinionOutcome(writer.ReportPath, jsonPath, jsonReport.MaxSeverity, jsonReport.SeverityDetermined, validated, failed);
         }
         catch (ModelCallException ex)
         {

@@ -76,7 +76,7 @@ public sealed record EmailConfig
     /// <returns>The connection string, or null when no reference is configured or the source is unset</returns>
     public string? ResolveAcsConnectionString() => SecretReference.Resolve(AcsConnectionString, _configDirectory);
 
-    /// <summary>Returns whether the run's max confirmed severity meets the send threshold; a None severity with an unparseable second opinion is handled by the caller's fail-open policy, not here</summary>
+    /// <summary>Returns whether the run's max confirmed severity meets the send threshold</summary>
     public bool ShouldSend(Severity maxSeverity)
     {
         return SendOn switch
@@ -87,6 +87,9 @@ public sealed record EmailConfig
             _ => false
         };
     }
+
+    /// <summary>Returns whether to send for a completed second opinion, failing open when its overall severity could not be determined</summary>
+    public bool ShouldSend(Severity maxSeverity, bool severityDetermined) => !severityDetermined || ShouldSend(maxSeverity);
 
     internal void Validate()
     {

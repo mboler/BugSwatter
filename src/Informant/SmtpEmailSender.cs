@@ -18,7 +18,7 @@ public sealed class SmtpEmailSender : IEmailSender
     }
 
     /// <inheritdoc />
-    public async Task SendAsync(EmailReport report, CancellationToken cancellationToken = default)
+    public async Task<EmailSendReceipt> SendAsync(EmailReport report, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(report);
 
@@ -50,6 +50,7 @@ public sealed class SmtpEmailSender : IEmailSender
             }
 
             await client.SendMailAsync(message, cancellationToken);
+            return new EmailSendReceipt("AcceptedForDelivery", null, "the SMTP relay accepted the message");
         }
         finally
         {

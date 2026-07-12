@@ -211,12 +211,13 @@ internal static class Program
                 return;
             }
 
-            EmailReport report = EmailReportBuilder.Build(config.RepositoryUrl, config.Branch, localReportPath, outcome, severityUndetermined, email.AttachReports);
-            EmailSendReceipt receipt = await sender.SendAsync(report);
+            EmailMessage message = EmailReportBuilder.Build(email.From, email.To, config.RepositoryUrl, config.Branch, localReportPath, outcome, severityUndetermined, email.AttachReports);
+            EmailSendReceipt receipt = await sender.SendAsync(message);
             string messageId = string.IsNullOrWhiteSpace(receipt.MessageId) ? "" : $"; operation/message ID: {receipt.MessageId}";
 
-            Log.Information("Report email accepted for delivery to {Recipients} (subject: {Subject}, operation/message ID: {MessageId})", string.Join(", ", email.To), report.Subject, receipt.MessageId ?? "not provided");
-            RecordEmailDelivery(outcome.ValidatedReportPath, new EmailDeliveryRecord(receipt.Decision, DateTimeOffset.Now, provider, email.To, $"subject: {report.Subject}; {receipt.Detail}{messageId}"));
+            Log.Information("Report email accepted for delivery to {Recipients} (subject: {Subject}, operation/message ID: {MessageId})", string.Join(", ", email.To), message.Subject,
+                receipt.MessageId ?? "not provided");
+            RecordEmailDelivery(outcome.ValidatedReportPath, new EmailDeliveryRecord(receipt.Decision, DateTimeOffset.Now, provider, email.To, $"subject: {message.Subject}; {receipt.Detail}{messageId}"));
         }
         catch (Exception ex)
         {
@@ -251,7 +252,7 @@ internal static class Program
                     return null;
                 }
 
-                return new SmtpEmailSender(email, password);
+                return new SmtpEmailSender(new SmtpEmailOptions(email.SmtpHost, email.SmtpPort, email.UseStartTls, email.Username, password));
 
             case EmailProvider.AzureCommunicationServices:
                 string? connectionString = email.ResolveAcsConnectionString();
@@ -261,7 +262,7 @@ internal static class Program
                     return null;
                 }
 
-                return new AcsEmailSender(email, connectionString);
+                return new AcsEmailSender(connectionString);
 
             default:
                 Log.Error("Email provider {Provider} is not supported; skipping the email", email.Provider);

@@ -138,24 +138,25 @@ public sealed class EmailTests : IDisposable
     public void BuildSubjectCarriesRepoBranchAndSeverity()
     {
         var outcome = new SecondOpinionOutcome("v.md", "v.json", Severity.High, true, 3, 0);
-        EmailReport report = EmailReportBuilder.Build("https://example.test/repo.git", "main", "local.md", outcome, severityUndetermined: false, attachReports: true);
+        EmailMessage message = EmailReportBuilder.Build("sender@example.test", ["recipient@example.test"], "https://example.test/repo.git", "main", "local.md", outcome,
+            severityUndetermined: false, attachReports: true);
 
-        Assert.Contains("https://example.test/repo.git", report.Subject);
-        Assert.Contains("main", report.Subject);
-        Assert.Contains("High", report.Subject);
-        Assert.Equal(["local.md", "v.md"], report.AttachmentPaths);
-        Assert.Contains("Files validated by the second opinion: 3", report.Body);
+        Assert.Contains("https://example.test/repo.git", message.Subject);
+        Assert.Contains("main", message.Subject);
+        Assert.Contains("High", message.Subject);
+        Assert.Equal(["local.md", "v.md"], message.Attachments.Select(attachment => attachment.Path));
+        Assert.Contains("Files validated by the second opinion: 3", message.Body);
     }
 
     [Fact]
     public void BuildFlagsUndeterminedSeverityAndCanOmitAttachments()
     {
         var outcome = new SecondOpinionOutcome("v.md", "v.json", Severity.None, false, 2, 0);
-        EmailReport report = EmailReportBuilder.Build("repo", "dev", "local.md", outcome, severityUndetermined: true, attachReports: false);
+        EmailMessage message = EmailReportBuilder.Build("sender@example.test", ["recipient@example.test"], "repo", "dev", "local.md", outcome, severityUndetermined: true, attachReports: false);
 
-        Assert.Contains("undetermined", report.Subject);
-        Assert.Contains("could not be determined", report.Body);
-        Assert.Empty(report.AttachmentPaths);
+        Assert.Contains("undetermined", message.Subject);
+        Assert.Contains("could not be determined", message.Body);
+        Assert.Empty(message.Attachments);
     }
 
     [Fact]

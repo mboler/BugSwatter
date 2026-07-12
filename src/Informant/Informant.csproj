@@ -17,7 +17,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Azure.Communication.Email" />
     <PackageReference Include="Serilog" />
     <PackageReference Include="Serilog.Sinks.Console" />
     <PackageReference Include="Serilog.Sinks.File" />
@@ -25,11 +24,13 @@
 
   <ItemGroup>
     <Using Include="BugSwatter.AI" />
+    <Using Include="BugSwatter.Email" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\BugSwatter.AI\BugSwatter.AI.csproj" />
     <ProjectReference Include="..\BugSwatter.Common\BugSwatter.Common.csproj" />
+    <ProjectReference Include="..\BugSwatter.Email\BugSwatter.Email.csproj" />
   </ItemGroup>
 
 </Project>

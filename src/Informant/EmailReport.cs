@@ -1,10 +1,6 @@
+using BugSwatter.Email;
+
 namespace Informant;
-
-/// <summary>The assembled email: subject, body and attachment paths, produced deterministically from a run so tests can assert it without sending</summary>
-public sealed record EmailReport(string Subject, string Body, IReadOnlyList<string> AttachmentPaths);
-
-/// <summary>What the configured email transport confirmed after accepting a message</summary>
-public sealed record EmailSendReceipt(string Decision, string? MessageId, string Detail);
 
 /// <summary>The outcome of the report-email step, appended to the validated report so the run's own artifact records what was sent, to whom and when</summary>
 public sealed record EmailDeliveryRecord(string Decision, DateTimeOffset Time, string Provider, IReadOnlyList<string> Recipients, string Detail)
@@ -28,24 +24,20 @@ public sealed record EmailDeliveryRecord(string Decision, DateTimeOffset Time, s
     }
 }
 
-/// <summary>Sends an assembled report email; abstracted so tests exercise gating and assembly without a live relay</summary>
-public interface IEmailSender
-{
-    /// <summary>Sends the email and returns the transport's acceptance receipt; throws on failure so the caller can log it without disturbing the completed run</summary>
-    Task<EmailSendReceipt> SendAsync(EmailReport report, CancellationToken cancellationToken = default);
-}
-
 /// <summary>Builds the report email from a completed run: a summary body plus the two Markdown reports as attachments</summary>
 public static class EmailReportBuilder
 {
     /// <summary>Assembles the email for a run whose Second Opinion completed</summary>
+    /// <param name="from">Configured sender address</param>
+    /// <param name="recipients">Configured recipient addresses</param>
     /// <param name="repositoryUrl">Repository under review, named in the subject</param>
     /// <param name="branch">Branch under review</param>
     /// <param name="localReportPath">The raw local-review report, attached</param>
     /// <param name="outcome">The completed second-opinion result driving the subject severity and attachments</param>
     /// <param name="severityUndetermined">True when the JSON did not parse, so the body flags that severity could not be read</param>
     /// <param name="attachReports">Whether to attach the Markdown reports</param>
-    public static EmailReport Build(string repositoryUrl, string branch, string localReportPath, SecondOpinionOutcome outcome, bool severityUndetermined, bool attachReports)
+    public static EmailMessage Build(string from, IReadOnlyList<string> recipients, string repositoryUrl, string branch, string localReportPath, SecondOpinionOutcome outcome, bool severityUndetermined,
+        bool attachReports)
     {
         ArgumentNullException.ThrowIfNull(outcome);
 
@@ -61,13 +53,14 @@ public static class EmailReportBuilder
         if (severityUndetermined)
         {
             body.AppendLine();
-            body.AppendLine("Note: the second-opinion model did not return parseable structured findings, so severity could not be determined. This email was sent anyway; read the attached validated report for the details.");
+            body.Append("Note: the second-opinion model did not return parseable structured findings, so severity could not be determined. ");
+            body.AppendLine("This notification is attempted anyway; read the attached validated report for the details.");
         }
 
         body.AppendLine();
         body.AppendLine("The raw local review and the validated second-opinion review are attached. The validated report is the one to read first: it confirms the real findings and discards the noise.");
 
-        List<string> attachments = attachReports ? [localReportPath, outcome.ValidatedReportPath] : [];
-        return new EmailReport(subject, body.ToString(), attachments);
+        List<EmailFileAttachment> attachments = attachReports ? [new(localReportPath, "text/markdown"), new(outcome.ValidatedReportPath, "text/markdown")] : [];
+        return new EmailMessage(from, recipients, subject, body.ToString(), attachments);
     }
 }

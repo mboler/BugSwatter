@@ -58,6 +58,11 @@ internal static class Program
             ReportFatal(ex.Message);
             return 1;
         }
+        catch (GitOperationException ex)
+        {
+            ReportFatal(ex.Message);
+            return 1;
+        }
         catch (Exception ex)
         {
             // catch-all so an unattended run always exits with a logged reason instead of an unhandled crash

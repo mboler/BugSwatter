@@ -25,12 +25,14 @@
   <ItemGroup>
     <Using Include="BugSwatter.AI" />
     <Using Include="BugSwatter.Email" />
+    <Using Include="BugSwatter.Git" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\BugSwatter.AI\BugSwatter.AI.csproj" />
     <ProjectReference Include="..\BugSwatter.Common\BugSwatter.Common.csproj" />
     <ProjectReference Include="..\BugSwatter.Email\BugSwatter.Email.csproj" />
+    <ProjectReference Include="..\BugSwatter.Git\BugSwatter.Git.csproj" />
   </ItemGroup>
 
 </Project>

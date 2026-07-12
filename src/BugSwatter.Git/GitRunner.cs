@@ -4,12 +4,12 @@ using System.Text;
 using BugSwatter.Common;
 using Serilog;
 
-namespace Informant;
+namespace BugSwatter.Git;
 
 /// <summary>Result of one git invocation</summary>
 public sealed record GitResult(int ExitCode, string StandardOutput, string StandardError);
 
-/// <summary>Runs the configured git executable and captures its output. Informant deliberately shells out instead of taking a git library dependency</summary>
+/// <summary>Runs a configured Git executable directly and captures its output</summary>
 public sealed class GitRunner
 {
     private static readonly TimeSpan GitTimeout = TimeSpan.FromMinutes(10);
@@ -31,7 +31,7 @@ public sealed class GitRunner
             FileName = _gitPath, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8,
             // Every command targets its tree explicitly via -C or an absolute path argument; pinning the child working
             // directory to temp means a command that ever forgot to would hit a non-repository and fail instead of
-            // acting on whatever directory Informant happened to be launched from
+            // acting on whatever directory the parent process happened to be launched from
             WorkingDirectory = Path.GetTempPath(),
             Environment =
             {
@@ -49,7 +49,7 @@ public sealed class GitRunner
             startInfo.ArgumentList.Add(argument);
         }
 
-        using var process = Process.Start(startInfo) ?? throw new InformantFatalException($"Failed to start git at {_gitPath}");
+        using var process = Process.Start(startInfo) ?? throw new GitOperationException($"Failed to start git at {_gitPath}");
         Task<string> stdoutTask = process.StandardOutput.ReadToEndAsync();
         Task<string> stderrTask = process.StandardError.ReadToEndAsync();
 
@@ -78,7 +78,7 @@ public sealed class GitRunner
                 // catch-all: output of a killed process is best effort and must not mask the timeout error below
             }
 
-            throw new InformantFatalException($"git {string.Join(' ', arguments)} did not finish within {GitTimeout.TotalMinutes:0} minutes and was killed");
+            throw new GitOperationException($"git {string.Join(' ', arguments)} did not finish within {GitTimeout.TotalMinutes:0} minutes and was killed");
         }
 
         string standardOutput = await stdoutTask;
@@ -97,7 +97,7 @@ public sealed class GitRunner
 
         if (result.ExitCode != 0)
         {
-            throw new InformantFatalException($"git {string.Join(' ', arguments)} failed with exit code {result.ExitCode}: {TextSummary.Create(result.StandardError, 2000)}");
+            throw new GitOperationException($"git {string.Join(' ', arguments)} failed with exit code {result.ExitCode}: {TextSummary.Create(result.StandardError, 2000)}");
         }
 
         return result.StandardOutput;

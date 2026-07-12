@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>BugSwatter.Git</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Serilog" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BugSwatter.Common\BugSwatter.Common.csproj" />
+  </ItemGroup>
+
+</Project>

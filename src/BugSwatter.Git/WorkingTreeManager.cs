@@ -2,9 +2,9 @@ using System.Text;
 using System.Text.Json;
 using Serilog;
 
-namespace Informant;
+namespace BugSwatter.Git;
 
-/// <summary>Versioned ownership record stored both inside and outside an Informant working tree</summary>
+/// <summary>Versioned ownership record stored both inside and outside a managed Git working tree</summary>
 public sealed record WorkingTreeOwnership
 {
     /// <summary>Ownership record format version</summary>
@@ -26,11 +26,11 @@ public sealed record WorkingTreeOwnership
     public DateTimeOffset ClaimedAtUtc { get; init; }
 }
 
-/// <summary>Owns Informant's working tree and validates paired ownership records before every destructive refresh</summary>
+/// <summary>Owns a Git working tree and validates paired ownership records before every destructive refresh</summary>
 public sealed class WorkingTreeManager
 {
     /// <summary>Name of the versioned ownership marker at the tree root</summary>
-    public const string MarkerFileName = ".informant";
+    public const string MarkerFileName = ".bugswatter";
 
     /// <summary>Current ownership record format</summary>
     public const int OwnershipVersion = 1;
@@ -59,14 +59,14 @@ public sealed class WorkingTreeManager
     }
 
     /// <summary>Returns the external ownership-claim path paired with a working tree</summary>
-    public static string GetClaimFilePath(string treePath) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(treePath)) + ".informant-claim.json";
+    public static string GetClaimFilePath(string treePath) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(treePath)) + ".bugswatter-claim.json";
 
     /// <summary>Ensures the tree exists and matches the remote branch exactly: clones and claims on first use, otherwise validates ownership and refreshes destructively</summary>
     public async Task EnsureFreshTreeAsync()
     {
         if (Directory.Exists(_treePath) && (File.GetAttributes(_treePath) & FileAttributes.ReparsePoint) != 0)
         {
-            throw new InformantFatalException($"Refusing to use workingTreePath {_treePath}: the directory is a symbolic link, junction, mount point, or other reparse point");
+            throw new GitOperationException($"Refusing to use workingTreePath {_treePath}: the directory is a symbolic link, junction, mount point, or other reparse point");
         }
 
         if (!Directory.Exists(_treePath) || !Directory.EnumerateFileSystemEntries(_treePath).Any())
@@ -93,7 +93,7 @@ public sealed class WorkingTreeManager
 
         if (File.Exists(_claimFilePath) || Directory.Exists(_claimFilePath))
         {
-            throw new InformantFatalException($"Refusing to initialize {_treePath}: external ownership claim already exists at {_claimFilePath}");
+            throw new GitOperationException($"Refusing to initialize {_treePath}: external ownership claim already exists at {_claimFilePath}");
         }
 
         await _git.RunCheckedAsync("clone", "--branch", _branch, _repositoryUrl, _treePath);
@@ -204,31 +204,31 @@ public sealed class WorkingTreeManager
     {
         if (!File.Exists(path))
         {
-            throw new InformantFatalException($"Refusing to run destructive git operations: the {source} is missing at {path}");
+            throw new GitOperationException($"Refusing to run destructive git operations: the {source} is missing at {path}");
         }
 
         try
         {
             if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
             {
-                throw new InformantFatalException($"Refusing to run destructive git operations: the {source} is a symbolic link or reparse point at {path}");
+                throw new GitOperationException($"Refusing to run destructive git operations: the {source} is a symbolic link or reparse point at {path}");
             }
 
             string json = await File.ReadAllTextAsync(path);
             return JsonSerializer.Deserialize<WorkingTreeOwnership>(json, JsonOptions)
                 ?? throw new JsonException("the ownership document was empty");
         }
-        catch (InformantFatalException)
+        catch (GitOperationException)
         {
             throw;
         }
         catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
         {
-            throw new InformantFatalException($"Refusing to run destructive git operations: the {source} at {path} is invalid: {ex.Message}", ex);
+            throw new GitOperationException($"Refusing to run destructive git operations: the {source} at {path} is invalid: {ex.Message}", ex);
         }
     }
 
-    private InformantFatalException Refusal(string reason) => new($"Refusing to run destructive git operations in {_treePath}: {reason}");
+    private GitOperationException Refusal(string reason) => new($"Refusing to run destructive git operations in {_treePath}: {reason}");
 
     private static async Task WriteNewFileAsync(string path, string content)
     {
@@ -240,7 +240,7 @@ public sealed class WorkingTreeManager
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            throw new InformantFatalException($"Could not create ownership record {path}: {ex.Message}", ex);
+            throw new GitOperationException($"Could not create ownership record {path}: {ex.Message}", ex);
         }
     }
 }

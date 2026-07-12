@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
-namespace Informant.Tests;
+namespace BugSwatter.Git.Tests;
 
 public sealed class WorkingTreeManagerTests
 {
@@ -35,7 +35,7 @@ public sealed class WorkingTreeManagerTests
         Directory.CreateDirectory(treePath);
         File.WriteAllText(Path.Combine(treePath, "precious-work.txt"), "do not destroy");
         var manager = new WorkingTreeManager(new GitRunner(TestGit.ExecutablePath), "https://example.test/repo.git", "main", treePath);
-        InformantFatalException ex = await Assert.ThrowsAsync<InformantFatalException>(manager.EnsureFreshTreeAsync);
+        GitOperationException ex = await Assert.ThrowsAsync<GitOperationException>(manager.EnsureFreshTreeAsync);
         Assert.Contains(WorkingTreeManager.MarkerFileName, ex.Message);
         Assert.True(File.Exists(Path.Combine(treePath, "precious-work.txt")));
     }
@@ -79,7 +79,7 @@ public sealed class WorkingTreeManagerTests
         File.Delete(Path.Combine(treePath, WorkingTreeManager.MarkerFileName));
         File.WriteAllText(Path.Combine(treePath, "a.txt"), "must survive");
 
-        await Assert.ThrowsAsync<InformantFatalException>(manager.EnsureFreshTreeAsync);
+        await Assert.ThrowsAsync<GitOperationException>(manager.EnsureFreshTreeAsync);
 
         // The refusal must have fired before any destructive git command ran
         Assert.Equal("must survive", File.ReadAllText(Path.Combine(treePath, "a.txt")));
@@ -176,7 +176,7 @@ public sealed class WorkingTreeManagerTests
     }
 
     [Theory]
-    [InlineData("This directory is owned by Informant")]
+    [InlineData("This directory is owned by a legacy reviewer")]
     [InlineData("{ not json")]
     public async Task RefusesLegacyOrMalformedMarkerBeforeReset(string markerContent)
     {
@@ -222,7 +222,7 @@ public sealed class WorkingTreeManagerTests
             try
             {
                 File.WriteAllText(Path.Combine(treePath, "a.txt"), "must survive");
-                await Assert.ThrowsAsync<InformantFatalException>(manager.EnsureFreshTreeAsync);
+                await Assert.ThrowsAsync<GitOperationException>(manager.EnsureFreshTreeAsync);
                 Assert.Equal("must survive", File.ReadAllText(Path.Combine(treePath, "a.txt")));
             }
             finally
@@ -247,7 +247,7 @@ public sealed class WorkingTreeManagerTests
     private static async Task AssertRefusesWithoutResetAsync(WorkingTreeManager manager, string treePath)
     {
         File.WriteAllText(Path.Combine(treePath, "a.txt"), "must survive");
-        await Assert.ThrowsAsync<InformantFatalException>(manager.EnsureFreshTreeAsync);
+        await Assert.ThrowsAsync<GitOperationException>(manager.EnsureFreshTreeAsync);
         Assert.Equal("must survive", File.ReadAllText(Path.Combine(treePath, "a.txt")));
     }
 

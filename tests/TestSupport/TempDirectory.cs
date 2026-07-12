@@ -1,12 +1,12 @@
-namespace Informant.Tests;
+namespace BugSwatter.TestSupport;
 
 /// <summary>Disposable temp directory for tests; contents are removed on dispose</summary>
-internal sealed class TempDirectory : IDisposable
+public sealed class TempDirectory : IDisposable
 {
     /// <summary>Creates a fresh unique directory under the system temp path</summary>
     public TempDirectory()
     {
-        Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "informant-tests-" + Guid.NewGuid().ToString("N"));
+        Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "bugswatter-tests-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(Path);
     }
 

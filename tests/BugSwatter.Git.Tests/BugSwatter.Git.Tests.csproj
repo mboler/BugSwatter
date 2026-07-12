@@ -14,9 +14,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Using Include="BugSwatter.AI" />
-    <Using Include="BugSwatter.Common" />
-    <Using Include="BugSwatter.Email" />
     <Using Include="BugSwatter.Git" />
     <Using Include="BugSwatter.TestSupport" />
     <Using Include="Xunit" />
@@ -29,10 +26,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\BugSwatter.AI\BugSwatter.AI.csproj" />
-    <ProjectReference Include="..\..\src\BugSwatter.Email\BugSwatter.Email.csproj" />
     <ProjectReference Include="..\..\src\BugSwatter.Git\BugSwatter.Git.csproj" />
-    <ProjectReference Include="..\..\src\Informant\Informant.csproj" />
   </ItemGroup>
 
 </Project>

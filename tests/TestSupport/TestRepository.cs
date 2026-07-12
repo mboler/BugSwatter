@@ -1,7 +1,9 @@
-namespace Informant.Tests;
+using BugSwatter.Git;
+
+namespace BugSwatter.TestSupport;
 
 /// <summary>Local git fixture: a bare origin plus a seed clone used to author commits, all inside one disposable temp directory</summary>
-internal sealed class TestRepository : IDisposable
+public sealed class TestRepository : IDisposable
 {
     private readonly GitRunner _git = new(TestGit.ExecutablePath);
     private readonly TempDirectory _root;
@@ -63,7 +65,7 @@ internal sealed class TestRepository : IDisposable
 
     private async Task<string> CommitAndPushAsync(string message)
     {
-        await _git.RunCheckedAsync("-C", SeedPath, "-c", "user.name=Informant Tests", "-c", "user.email=tests@informant.local", "commit", "-m", message);
+        await _git.RunCheckedAsync("-C", SeedPath, "-c", "user.name=BugSwatter Tests", "-c", "user.email=tests@bugswatter.invalid", "commit", "-m", message);
         await _git.RunCheckedAsync("-C", SeedPath, "push", "origin", "main");
         return (await _git.RunCheckedAsync("-C", SeedPath, "rev-parse", "HEAD")).Trim();
     }

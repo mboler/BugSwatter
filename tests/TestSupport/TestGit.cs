@@ -1,7 +1,7 @@
-namespace Informant.Tests;
+namespace BugSwatter.TestSupport;
 
 /// <summary>Locates a git executable for the integration tests</summary>
-internal static class TestGit
+public static class TestGit
 {
     /// <summary>Full path of the git executable used by tests</summary>
     public static string ExecutablePath { get; } = Locate();

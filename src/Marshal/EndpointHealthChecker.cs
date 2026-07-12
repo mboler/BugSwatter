@@ -1,4 +1,4 @@
-using System.Text.Json;
+using BugSwatter.Common;
 
 namespace Marshal;
 
@@ -40,21 +40,35 @@ public sealed class HttpEndpointHealthChecker : IEndpointHealthChecker
     }
 }
 
-/// <summary>Reads the model endpoint from a job's Informant config with a minimal comment-tolerant JSON read, the same lightweight peek used for report discovery, so Marshal can health-check without parsing the whole Informant config format</summary>
+/// <summary>Reads runtime values from a job's Informant config through the same JSON-plus-environment configuration stack Informant uses</summary>
 public static class JobConfigReader
 {
+    private sealed class InformantRuntimeConfig
+    {
+        public string? ModelEndpoint { get; init; }
+
+        public string ReportDirectory { get; init; } = "reports";
+    }
+
     /// <summary>Returns the modelEndpoint value from the config, or null when it cannot be read</summary>
-    public static string? TryReadModelEndpoint(string informantConfigPath)
+    public static string? TryReadModelEndpoint(string informantConfigPath) => TryLoad(informantConfigPath)?.ModelEndpoint;
+
+    /// <summary>Returns the absolute report directory from the config, including environment overrides, or null when it cannot be read</summary>
+    public static string? TryReadReportDirectory(string informantConfigPath)
+    {
+        InformantRuntimeConfig? config = TryLoad(informantConfigPath);
+        return config is null ? null : ConfigLoader.ResolvePath(ConfigLoader.GetConfigDirectory(informantConfigPath), config.ReportDirectory);
+    }
+
+    private static InformantRuntimeConfig? TryLoad(string informantConfigPath)
     {
         try
         {
-            var options = new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true };
-            using var document = JsonDocument.Parse(File.ReadAllText(informantConfigPath), options);
-            return document.RootElement.TryGetProperty("modelEndpoint", out JsonElement element) ? element.GetString() : null;
+            return ConfigLoader.Load<InformantRuntimeConfig>(Path.GetFullPath(informantConfigPath), "INFORMANT_");
         }
         catch (Exception)
         {
-            // catch-all: an unreadable config just means the health check is skipped and Informant itself reports the problem
+            // catch-all: an unreadable config just means the health check or fallback report discovery is skipped and Informant itself reports the problem
             return null;
         }
     }

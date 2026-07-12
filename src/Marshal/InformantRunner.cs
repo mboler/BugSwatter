@@ -1,6 +1,5 @@
 using System.ComponentModel;
 using System.Diagnostics;
-using System.Text.Json;
 using BugSwatter.Common;
 using Serilog;
 
@@ -124,11 +123,11 @@ public sealed class InformantProcessRunner : IInformantRunner
     {
         try
         {
-            string configDirectory = Path.GetDirectoryName(Path.GetFullPath(informantConfigPath)) ?? ".";
-            var documentOptions = new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true };
-            using var document = JsonDocument.Parse(File.ReadAllText(informantConfigPath), documentOptions);
-            string reportDirectory = document.RootElement.TryGetProperty("reportDirectory", out JsonElement element) ? element.GetString() ?? "reports" : "reports";
-            string fullReportDirectory = Path.IsPathFullyQualified(reportDirectory) ? reportDirectory : Path.Combine(configDirectory, reportDirectory);
+            string? fullReportDirectory = JobConfigReader.TryReadReportDirectory(informantConfigPath);
+            if (fullReportDirectory is null)
+            {
+                return null;
+            }
 
             return Directory.EnumerateFiles(fullReportDirectory, "Informant-Report-*.md")
                 .Select(path => new FileInfo(path))

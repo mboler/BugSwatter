@@ -16,8 +16,8 @@ public sealed class InformantConfigTests : IDisposable
         Assert.Equal("https://example.test/repo.git", config.RepositoryUrl);
         Assert.Equal("main", config.Branch);
         Assert.Equal(ReviewMode.Changed, config.ReviewMode);
-        Assert.Equal("reports", config.ReportDirectory);
-        Assert.Equal("informant.state.json", config.StateFilePath);
+        Assert.Equal(Path.Combine(_directory.Path, "reports"), config.ReportDirectory);
+        Assert.Equal(Path.Combine(_directory.Path, "informant.state.json"), config.StateFilePath);
         Assert.Equal(24000, config.MaxContextCharacters);
         Assert.Equal(800, config.MaxFileLines);
         Assert.Equal(2, config.PerFileRetryCount);
@@ -122,6 +122,49 @@ public sealed class InformantConfigTests : IDisposable
     }
 
     [Fact]
+    public void RelativePathsResolveAgainstExplicitConfigWithoutChangingCurrentDirectory()
+    {
+        File.WriteAllText(Path.Combine(_directory.Path, "prompt.txt"), "prompt from relative file");
+        WriteConfig(values =>
+        {
+            values["allowedReadRoot"] = "allowed";
+            values["reportDirectory"] = "artifacts/reports";
+            values["stateFilePath"] = "state/review.json";
+            values["reviewPromptFile"] = "prompt.txt";
+            values["logFilePath"] = "logs/informant-.log";
+        });
+        string originalDirectory = Directory.GetCurrentDirectory();
+
+        InformantConfig config = InformantConfig.LoadFile(Path.Combine(_directory.Path, InformantConfig.FileName));
+
+        Assert.Equal(originalDirectory, Directory.GetCurrentDirectory());
+        Assert.Equal(Path.Combine(_directory.Path, "allowed"), config.ResolvedAllowedReadRoot);
+        Assert.Equal(Path.Combine(_directory.Path, "artifacts", "reports"), config.ReportDirectory);
+        Assert.Equal(Path.Combine(_directory.Path, "state", "review.json"), config.StateFilePath);
+        Assert.Equal(Path.Combine(_directory.Path, "logs", "informant-.log"), config.LogFilePath);
+        Assert.Equal("prompt from relative file", config.ResolveReviewPrompt(EmptyTree()));
+    }
+
+    [Fact]
+    public void RelativeNestedPromptAndSecretFilesResolveAgainstConfig()
+    {
+        File.WriteAllText(Path.Combine(_directory.Path, "second-opinion.txt"), "validate carefully");
+        File.WriteAllText(Path.Combine(_directory.Path, "api-key.txt"), "test-key\n");
+        WriteConfig(values => values["secondOpinion"] = new Dictionary<string, object?>
+        {
+            ["endpoint"] = "http://localhost:1234/v1",
+            ["modelName"] = "validator",
+            ["promptFile"] = "second-opinion.txt",
+            ["apiKey"] = "file:api-key.txt"
+        });
+
+        SecondOpinionConfig config = InformantConfig.Load(_directory.Path).SecondOpinion!;
+
+        Assert.Equal("validate carefully", config.ResolvePrompt());
+        Assert.Equal("test-key", config.ResolveApiKey());
+    }
+
+    [Fact]
     public void MissingPromptFileThrowsFatal()
     {
         WriteConfig(values => values["reviewPromptFile"] = Path.Combine(_directory.Path, "gone.txt"));
@@ -220,6 +263,21 @@ public sealed class InformantConfigTests : IDisposable
         finally
         {
             Environment.SetEnvironmentVariable("INFORMANT_SecondOpinion__ModelName", null);
+        }
+    }
+
+    [Fact]
+    public void EnvironmentVariableOverridesAnArrayValue()
+    {
+        WriteConfig(values => values["promptIncludeFiles"] = new[] { "AGENTS.md" });
+        Environment.SetEnvironmentVariable("INFORMANT_PromptIncludeFiles__0", "GUIDANCE.md");
+        try
+        {
+            Assert.Equal("GUIDANCE.md", Assert.Single(InformantConfig.Load(_directory.Path).PromptIncludeFiles));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("INFORMANT_PromptIncludeFiles__0", null);
         }
     }
 

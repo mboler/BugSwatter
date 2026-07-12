@@ -27,20 +27,39 @@ public sealed record JobWebhookConfig
 /// <summary>One repository Marshal watches: where its Informant config lives and which triggers enqueue it</summary>
 public sealed record ReviewJobConfig
 {
+    private string _configDirectory = Directory.GetCurrentDirectory();
+    private bool _pathsResolved;
+    private string _informantConfigPath = "";
+    private string? _watchPath;
+
     /// <summary>Display name used in logs</summary>
     public string Name { get; init; } = "";
 
-    /// <summary>Path of the Informant config for this repository; Marshal passes it to Informant via --config</summary>
-    public string InformantConfigPath { get; init; } = "";
+    /// <summary>Path of the Informant config for this repository, resolved from the Marshal configuration directory when relative; Marshal passes it to Informant via --config</summary>
+    public string InformantConfigPath
+    {
+        get => _pathsResolved ? ConfigLoader.ResolvePath(_configDirectory, _informantConfigPath) : _informantConfigPath;
+        init => _informantConfigPath = value;
+    }
 
     /// <summary>Daily local times (HH:mm) at which the job is enqueued; null or empty for no schedule</summary>
     public IReadOnlyList<string>? Schedule { get; init; }
 
-    /// <summary>Directory watched for file changes; null for no filesystem trigger</summary>
-    public string? WatchPath { get; init; }
+    /// <summary>Directory watched for file changes, resolved from the Marshal configuration directory when relative; null for no filesystem trigger</summary>
+    public string? WatchPath
+    {
+        get => string.IsNullOrWhiteSpace(_watchPath) || !_pathsResolved ? _watchPath : ConfigLoader.ResolvePath(_configDirectory, _watchPath);
+        init => _watchPath = value;
+    }
 
     /// <summary>Webhook mapping; null when webhooks do not trigger this job</summary>
     public JobWebhookConfig? Webhook { get; init; }
+
+    internal void SetConfigDirectory(string configDirectory)
+    {
+        _configDirectory = configDirectory;
+        _pathsResolved = true;
+    }
 }
 
 /// <summary>Kestrel web server settings: one listener serving the health, status and dashboard routes always, and the webhook routes when webhooks are enabled. Bind this to an internal or VPN-reachable interface only; the dashboard exposes repository names and findings</summary>
@@ -72,8 +91,18 @@ public sealed record WebhookSettings
 /// <summary>Marshal configuration: the Informant executable it dispatches, global dispatch settings, and the jobs it watches</summary>
 public sealed class MarshalConfig
 {
-    /// <summary>Full path of the Informant executable Marshal launches for each review</summary>
-    public string InformantExecutable { get; init; } = "";
+    private string _configDirectory = Directory.GetCurrentDirectory();
+    private bool _pathsResolved;
+    private string _informantExecutable = "";
+    private string _logFilePath = "logs/marshal-.log";
+    private string _historyFilePath = "history/marshal-history.jsonl";
+
+    /// <summary>Path of the Informant executable Marshal launches for each review, resolved from the Marshal configuration directory when relative</summary>
+    public string InformantExecutable
+    {
+        get => ResolvePath(_informantExecutable);
+        init => _informantExecutable = value;
+    }
 
     /// <summary>Hard timeout per Informant run; a child exceeding it is killed and the run marked failed</summary>
     public int PerRunTimeoutMinutes { get; init; } = 360;
@@ -84,11 +113,19 @@ public sealed class MarshalConfig
     /// <summary>Minimum Serilog level: Verbose, Debug, Information, Warning, Error or Fatal</summary>
     public string LogLevel { get; init; } = "Information";
 
-    /// <summary>Log file path; a rolling file per day is written next to it</summary>
-    public string LogFilePath { get; init; } = "logs/marshal-.log";
+    /// <summary>Log file path resolved from the Marshal configuration directory when relative; a rolling file per day is written next to it</summary>
+    public string LogFilePath
+    {
+        get => ResolvePath(_logFilePath);
+        init => _logFilePath = value;
+    }
 
-    /// <summary>Append-only JSON-lines file recording completed runs, read by the dashboard and status views</summary>
-    public string HistoryFilePath { get; init; } = "history/marshal-history.jsonl";
+    /// <summary>Append-only JSON-lines file recording completed runs, resolved from the Marshal configuration directory when relative and read by the dashboard and status views</summary>
+    public string HistoryFilePath
+    {
+        get => ResolvePath(_historyFilePath);
+        init => _historyFilePath = value;
+    }
 
     /// <summary>Forces the console sink on (true) or off (false); null auto-detects interactivity</summary>
     public bool? ConsoleLogging { get; init; }
@@ -115,6 +152,7 @@ public sealed class MarshalConfig
         try
         {
             config = ConfigLoader.Load<MarshalConfig>(fullPath, "MARSHAL_");
+            config.SetConfigDirectory(ConfigLoader.GetConfigDirectory(fullPath));
         }
         catch (Exception ex) when (ex is not MarshalFatalException)
         {
@@ -136,6 +174,17 @@ public sealed class MarshalConfig
 
         // Marshal's webhook secrets may be literals as well as env:/file: references; the shared resolver handles the reference forms
         return SecretReference.IsReference(configured) ? SecretReference.Resolve(configured) : configured;
+    }
+
+    /// <summary>Resolves a configured webhook secret, anchoring file references to the Marshal configuration directory</summary>
+    public string? ResolveConfiguredSecret(string? configured)
+    {
+        if (string.IsNullOrWhiteSpace(configured))
+        {
+            return null;
+        }
+
+        return SecretReference.IsReference(configured) ? SecretReference.Resolve(configured, _configDirectory) : configured;
     }
 
     private void Validate()
@@ -181,6 +230,18 @@ public sealed class MarshalConfig
             ValidateJob(job);
         }
     }
+
+    private void SetConfigDirectory(string configDirectory)
+    {
+        _configDirectory = configDirectory;
+        _pathsResolved = true;
+        foreach (ReviewJobConfig job in Jobs)
+        {
+            job.SetConfigDirectory(configDirectory);
+        }
+    }
+
+    private string ResolvePath(string configuredPath) => _pathsResolved ? ConfigLoader.ResolvePath(_configDirectory, configuredPath) : configuredPath;
 
     private static void ValidateSecretReference(string? value, string fieldName)
     {

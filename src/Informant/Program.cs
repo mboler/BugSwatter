@@ -29,12 +29,12 @@ internal static class Program
                     return InitCommand.Run(Directory.GetCurrentDirectory());
             }
 
-            var config = LoadConfig(arguments);
+            (InformantConfig config, string configPath) = LoadConfig(arguments);
             
             _consoleLogging = LoggingSetup.Initialize(config.LogLevel, config.LogFilePath, config.ConsoleLogging);
             _loggingReady = true;
             
-            Log.Information("Config loaded from {Directory}", Directory.GetCurrentDirectory());
+            Log.Information("Config loaded from {Path}", configPath);
 
             switch (arguments.Command)
             {
@@ -73,24 +73,10 @@ internal static class Program
         }
     }
 
-    private static InformantConfig LoadConfig(CommandLineArguments arguments)
+    private static (InformantConfig Config, string ConfigPath) LoadConfig(CommandLineArguments arguments)
     {
-        if (arguments.ConfigPath is null)
-        {
-            return InformantConfig.Load(Directory.GetCurrentDirectory());
-        }
-
-        string fullConfigPath = Path.GetFullPath(arguments.ConfigPath);
-
-        // Anchor all relative config paths (reports, state, logs, prompt file) to the config's directory,
-        // exactly like the cd-into-the-job-directory-then-run model the config was written for
-        string? configDirectory = Path.GetDirectoryName(fullConfigPath);
-        if (!string.IsNullOrEmpty(configDirectory))
-        {
-            Directory.SetCurrentDirectory(configDirectory);
-        }
-
-        return InformantConfig.LoadFile(fullConfigPath);
+        string configPath = Path.GetFullPath(arguments.ConfigPath ?? InformantConfig.FileName);
+        return (InformantConfig.LoadFile(configPath), configPath);
     }
 
     private static async Task<int> RunReviewAsync(InformantConfig config)

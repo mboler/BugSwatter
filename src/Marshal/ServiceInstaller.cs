@@ -22,6 +22,7 @@ public static class ServiceInstaller
     {
         string executable = Environment.ProcessPath ?? throw new MarshalFatalException("Cannot determine the Marshal executable path for service registration");
         string fullConfigPath = Path.GetFullPath(configPath);
+        MarshalConfig.Load(fullConfigPath);
 
         return OperatingSystem.IsWindows()
             ? useScExe ? InstallWindowsWithScExe(executable, fullConfigPath) : InstallWindowsWithApi(executable, fullConfigPath)

@@ -5,9 +5,19 @@ using Serilog;
 
 namespace Informant;
 
-/// <summary>Configuration for an Informant run, loaded from informant.json in the current working directory. The current directory only selects which config to load; all destructive operations target the absolute working-tree path declared inside it</summary>
+/// <summary>Configuration for an Informant run. Relative operational paths resolve from the configuration file
+/// directory, while destructive operations target only the absolute working-tree path declared inside it</summary>
 public sealed class InformantConfig
 {
+    private string _configDirectory = Directory.GetCurrentDirectory();
+    private bool _pathsResolved;
+    private string _gitExecutablePath = "";
+    private string? _allowedReadRoot;
+    private string _reportDirectory = "reports";
+    private string _stateFilePath = "informant.state.json";
+    private string? _reviewPromptFile;
+    private string _logFilePath = "logs/informant-.log";
+
     /// <summary>Name of the config file expected in the current working directory</summary>
     public const string FileName = "informant.json";
 
@@ -20,11 +30,19 @@ public sealed class InformantConfig
     /// <summary>Absolute path of the working tree Informant owns and refreshes destructively on every run</summary>
     public string WorkingTreePath { get; init; } = "";
 
-    /// <summary>Full path of the git executable, for example C:\Program Files\Git\cmd\git.exe on Windows or /usr/bin/git on Linux</summary>
-    public string GitExecutablePath { get; init; } = "";
+    /// <summary>Path of the git executable, resolved from the configuration directory when relative</summary>
+    public string GitExecutablePath
+    {
+        get => ResolvePath(_gitExecutablePath);
+        init => _gitExecutablePath = value;
+    }
 
     /// <summary>Directory tree the read_file_lines tool may read from; defaults to the working tree when null or empty</summary>
-    public string? AllowedReadRoot { get; init; }
+    public string? AllowedReadRoot
+    {
+        get => _allowedReadRoot;
+        init => _allowedReadRoot = value;
+    }
 
     /// <summary>Base URL of the OpenAI-compatible model endpoint, for example http://localhost:1234/v1</summary>
     public string ModelEndpoint { get; init; } = "";
@@ -36,17 +54,29 @@ public sealed class InformantConfig
     [JsonConverter(typeof(JsonStringEnumConverter<ReviewMode>))]
     public ReviewMode ReviewMode { get; init; } = ReviewMode.Changed;
 
-    /// <summary>Directory the run reports and changed-file lists are written to</summary>
-    public string ReportDirectory { get; init; } = "reports";
+    /// <summary>Directory the run reports and changed-file lists are written to, resolved from the configuration directory when relative</summary>
+    public string ReportDirectory
+    {
+        get => ResolvePath(_reportDirectory);
+        init => _reportDirectory = value;
+    }
 
-    /// <summary>Path of the JSON state file holding baseline SHAs keyed by repository and branch</summary>
-    public string StateFilePath { get; init; } = "informant.state.json";
+    /// <summary>Path of the JSON state file holding baseline SHAs keyed by repository and branch, resolved from the configuration directory when relative</summary>
+    public string StateFilePath
+    {
+        get => ResolvePath(_stateFilePath);
+        init => _stateFilePath = value;
+    }
 
     /// <summary>Inline review prompt text; when null or empty the prompt file is used instead</summary>
     public string? ReviewPrompt { get; init; }
 
     /// <summary>Path of a file holding the review prompt; when neither this nor the inline text is set, the built-in default applies</summary>
-    public string? ReviewPromptFile { get; init; }
+    public string? ReviewPromptFile
+    {
+        get => string.IsNullOrWhiteSpace(_reviewPromptFile) || !_pathsResolved ? _reviewPromptFile : ConfigLoader.ResolvePath(_configDirectory, _reviewPromptFile);
+        init => _reviewPromptFile = value;
+    }
 
     /// <summary>Glob patterns for Markdown guidance files appended to the review prompt. Relative patterns match at the working-tree root, so a repository's own AGENTS.md informs its review; absolute paths name exact files. Defaults to none; the starter config opts in with AGENTS.md</summary>
     public IReadOnlyList<string> PromptIncludeFiles { get; init; } = [];
@@ -66,8 +96,12 @@ public sealed class InformantConfig
     /// <summary>Minimum Serilog level: Verbose, Debug, Information, Warning, Error or Fatal</summary>
     public string LogLevel { get; init; } = "Information";
 
-    /// <summary>Log file path; a rolling file per day is written next to it</summary>
-    public string LogFilePath { get; init; } = "logs/informant-.log";
+    /// <summary>Log file path resolved from the configuration directory when relative; a rolling file per day is written next to it</summary>
+    public string LogFilePath
+    {
+        get => ResolvePath(_logFilePath);
+        init => _logFilePath = value;
+    }
 
     /// <summary>Forces the console sink on (true) or off (false); null auto-detects interactivity</summary>
     public bool? ConsoleLogging { get; init; }
@@ -79,7 +113,7 @@ public sealed class InformantConfig
     public EmailConfig? Email { get; init; }
 
     /// <summary>Absolute directory the read_file_lines tool is confined to</summary>
-    public string ResolvedAllowedReadRoot => string.IsNullOrWhiteSpace(AllowedReadRoot) ? WorkingTreePath : Path.GetFullPath(AllowedReadRoot);
+    public string ResolvedAllowedReadRoot => string.IsNullOrWhiteSpace(AllowedReadRoot) ? WorkingTreePath : ConfigLoader.ResolvePath(_configDirectory, AllowedReadRoot);
 
     /// <summary>Loads and validates the configuration from the default file name inside <paramref name="directory"/></summary>
     public static InformantConfig Load(string directory) => LoadFile(Path.Combine(directory, FileName));
@@ -95,7 +129,9 @@ public sealed class InformantConfig
         InformantConfig config;
         try
         {
-            config = ConfigLoader.Load<InformantConfig>(path, "INFORMANT_");
+            string fullPath = Path.GetFullPath(path);
+            config = ConfigLoader.Load<InformantConfig>(fullPath, "INFORMANT_");
+            config.SetConfigDirectory(ConfigLoader.GetConfigDirectory(fullPath));
         }
         catch (Exception ex) when (ex is not InformantFatalException)
         {
@@ -150,7 +186,7 @@ public sealed class InformantConfig
 
         if (!string.IsNullOrWhiteSpace(ReviewPromptFile))
         {
-            string promptPath = Path.GetFullPath(ReviewPromptFile);
+            string promptPath = ReviewPromptFile;
             if (!File.Exists(promptPath))
             {
                 throw new InformantFatalException($"Review prompt file not found: {promptPath}");
@@ -230,6 +266,16 @@ public sealed class InformantConfig
             throw new InformantFatalException("email is configured but secondOpinion is not; email sends only after a completed second opinion, so configure secondOpinion or remove the email block");
         }
     }
+
+    private void SetConfigDirectory(string configDirectory)
+    {
+        _configDirectory = configDirectory;
+        _pathsResolved = true;
+        SecondOpinion?.SetConfigDirectory(configDirectory);
+        Email?.SetConfigDirectory(configDirectory);
+    }
+
+    private string ResolvePath(string configuredPath) => _pathsResolved ? ConfigLoader.ResolvePath(_configDirectory, configuredPath) : configuredPath;
 
     private static void RequireValue(string value, string fieldName)
     {

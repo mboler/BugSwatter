@@ -4,7 +4,7 @@ namespace BugSwatter.Common;
 
 /// <summary>Loads a JSON config file and layers prefixed environment variables over it, then binds the result to a
 /// config type. The environment layer follows the standard .NET convention: PREFIX plus the key path with a double
-/// underscore as the section separator, so for a INFORMANT_ prefix, INFORMANT_ModelName overrides modelName and
+/// underscore as the section separator, so for an INFORMANT_ prefix, INFORMANT_ModelName overrides modelName and
 /// INFORMANT_Email__SmtpHost overrides email.smtpHost. Only prefixed variables participate, so unrelated machine
 /// variables never leak into the config. The JSON provider tolerates comments and trailing commas</summary>
 public static class ConfigLoader
@@ -21,4 +21,11 @@ public static class ConfigLoader
 
         return configuration.Get<T>() ?? new T();
     }
+
+    /// <summary>Returns the absolute directory containing a configuration file</summary>
+    public static string GetConfigDirectory(string filePath) => Path.GetDirectoryName(Path.GetFullPath(filePath)) ?? Directory.GetCurrentDirectory();
+
+    /// <summary>Resolves a configured path relative to the configuration file directory while preserving absolute paths</summary>
+    public static string ResolvePath(string configDirectory, string configuredPath) =>
+        string.IsNullOrWhiteSpace(configuredPath) ? configuredPath : Path.GetFullPath(configuredPath, configDirectory);
 }

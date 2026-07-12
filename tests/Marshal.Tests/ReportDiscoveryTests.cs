@@ -43,6 +43,26 @@ public sealed class ReportDiscoveryTests : IDisposable
     }
 
     [Fact]
+    public void ReportDiscoveryUsesInformantEnvironmentOverride()
+    {
+        string configPath = Path.Combine(_directory.Path, "informant.json");
+        File.WriteAllText(configPath, """{ "reportDirectory": "ignored" }""");
+        string overriddenDirectory = Path.Combine(_directory.Path, "environment-reports");
+        Directory.CreateDirectory(overriddenDirectory);
+        string report = Path.Combine(overriddenDirectory, "Informant-Report-2026-07-12_10-00-00.md");
+        File.WriteAllText(report, "report");
+        Environment.SetEnvironmentVariable("INFORMANT_ReportDirectory", overriddenDirectory);
+        try
+        {
+            Assert.Equal(report, InformantProcessRunner.DiscoverReportPath(configPath, DateTime.UtcNow.AddMinutes(-1)));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("INFORMANT_ReportDirectory", null);
+        }
+    }
+
+    [Fact]
     public void MissingConfigOrDirectoryYieldsNullNotAnException()
     {
         Assert.Null(InformantProcessRunner.DiscoverReportPath(Path.Combine(_directory.Path, "ghost.json"), DateTime.UtcNow));

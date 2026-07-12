@@ -55,16 +55,7 @@ internal static class Program
 
         try
         {
-            // Anchor relative config paths (log file, history) to the config's own directory. A Windows service or
-            // systemd unit starts with its working directory set to a system folder, so without this the default
-            // relative log and history paths would resolve there instead of beside the config
             string configPath = Path.GetFullPath(commandLine.RequireConfigPath());
-            string? configDirectory = Path.GetDirectoryName(configPath);
-            if (!string.IsNullOrEmpty(configDirectory))
-            {
-                Directory.SetCurrentDirectory(configDirectory);
-            }
-
             var config = MarshalConfig.Load(configPath);
             _consoleLogging = LoggingSetup.Initialize(config.LogLevel, config.LogFilePath, config.ConsoleLogging);
             _loggingReady = true;

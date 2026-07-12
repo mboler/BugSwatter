@@ -132,7 +132,7 @@ public static class WebEndpoints
     {
         if (provider == WebhookProvider.GitHub)
         {
-            string? secret = MarshalConfig.ResolveSecret(config.Webhook!.GitHubSecret);
+            string? secret = config.ResolveConfiguredSecret(config.Webhook!.GitHubSecret);
             if (secret is null)
             {
                 Log.Error("A GitHub webhook arrived but no gitHubSecret is configured; rejecting");
@@ -142,7 +142,7 @@ public static class WebEndpoints
             return WebhookValidator.ValidateGitHubSignature(body, context.Request.Headers["X-Hub-Signature-256"], secret);
         }
 
-        string? adoSecret = MarshalConfig.ResolveSecret(config.Webhook!.AzureDevOpsSecret);
+        string? adoSecret = config.ResolveConfiguredSecret(config.Webhook!.AzureDevOpsSecret);
         if (adoSecret is null)
         {
             Log.Error("An Azure DevOps webhook arrived but no azureDevOpsSecret is configured; rejecting");

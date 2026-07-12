@@ -5,6 +5,10 @@ namespace Informant;
 /// <summary>Configuration for the optional second-opinion validation pass against a stronger model, cloud or local. When this block is absent from the config, no second pass runs. An API key is never stored in config: the apiKey field must be an env:VARIABLE_NAME reference when set, and may be omitted entirely for local endpoints that need no authentication</summary>
 public sealed record SecondOpinionConfig
 {
+    private string _configDirectory = Directory.GetCurrentDirectory();
+    private bool _pathsResolved;
+    private string? _promptFile;
+
     /// <summary>OpenAI-compatible base URL of the validating endpoint, cloud (for example https://api.openai.com/v1) or local (for example http://192.0.2.13:1234/v1)</summary>
     public string Endpoint { get; init; } = "";
 
@@ -27,7 +31,11 @@ public sealed record SecondOpinionConfig
     public string? Prompt { get; init; }
 
     /// <summary>Path of a file holding the validation prompt; when neither this nor the inline text is set, the built-in default applies</summary>
-    public string? PromptFile { get; init; }
+    public string? PromptFile
+    {
+        get => string.IsNullOrWhiteSpace(_promptFile) || !_pathsResolved ? _promptFile : ConfigLoader.ResolvePath(_configDirectory, _promptFile);
+        init => _promptFile = value;
+    }
 
     /// <summary>Timeout in seconds for a single validation request; generous by default because a strong or reasoning model can legitimately think for many minutes on one file, which is acceptable for an unattended run</summary>
     public int RequestTimeoutSeconds { get; init; } = 1800;
@@ -37,7 +45,7 @@ public sealed record SecondOpinionConfig
 
     /// <summary>Reads the API key from its env: or file: reference</summary>
     /// <returns>The key value, or null when no reference is configured or the source is not set</returns>
-    public string? ResolveApiKey() => SecretReference.Resolve(ApiKey);
+    public string? ResolveApiKey() => SecretReference.Resolve(ApiKey, _configDirectory);
 
     /// <summary>Returns the validation prompt: inline text when set, otherwise the prompt file contents, otherwise the built-in default</summary>
     public string ResolvePrompt()
@@ -49,7 +57,7 @@ public sealed record SecondOpinionConfig
 
         if (!string.IsNullOrWhiteSpace(PromptFile))
         {
-            string promptPath = Path.GetFullPath(PromptFile);
+            string promptPath = PromptFile;
             if (!File.Exists(promptPath))
             {
                 throw new InformantFatalException($"Second-opinion prompt file not found: {promptPath}");
@@ -96,5 +104,11 @@ public sealed record SecondOpinionConfig
         {
             throw new InformantFatalException($"secondOpinion.maxFileReads cannot be negative, got {MaxFileReads}");
         }
+    }
+
+    internal void SetConfigDirectory(string configDirectory)
+    {
+        _configDirectory = configDirectory;
+        _pathsResolved = true;
     }
 }

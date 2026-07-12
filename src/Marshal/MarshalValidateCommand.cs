@@ -19,8 +19,8 @@ public static class MarshalValidateCommand
 
         if (config.Webhook is { Enabled: true } webhook)
         {
-            ReportSecret(ref failed, "webhook GitHub secret", webhook.GitHubSecret);
-            ReportSecret(ref failed, "webhook Azure DevOps secret", webhook.AzureDevOpsSecret);
+            ReportSecret(ref failed, config, "webhook GitHub secret", webhook.GitHubSecret);
+            ReportSecret(ref failed, config, "webhook Azure DevOps secret", webhook.AzureDevOpsSecret);
         }
 
         foreach (ReviewJobConfig job in config.Jobs)
@@ -70,7 +70,7 @@ public static class MarshalValidateCommand
         return (process.ExitCode, error.Length > 0 ? $"{output}\n{error}" : output);
     }
 
-    private static void ReportSecret(ref int failed, string label, string? secret)
+    private static void ReportSecret(ref int failed, MarshalConfig config, string label, string? secret)
     {
         if (string.IsNullOrWhiteSpace(secret))
         {
@@ -78,7 +78,7 @@ public static class MarshalValidateCommand
             return;
         }
 
-        bool resolved = !string.IsNullOrEmpty(MarshalConfig.ResolveSecret(secret));
+        bool resolved = !string.IsNullOrEmpty(config.ResolveConfiguredSecret(secret));
         Report(ref failed, resolved, label, resolved ? "resolves to a value" : "environment reference does not resolve");
     }
 

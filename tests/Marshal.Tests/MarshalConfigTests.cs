@@ -122,6 +122,59 @@ public sealed class MarshalConfigTests : IDisposable
         }
     }
 
+    [Fact]
+    public void RelativePathsAndSecretFilesResolveAgainstConfigWithoutChangingCurrentDirectory()
+    {
+        File.WriteAllText(Path.Combine(_directory.Path, "webhook-secret.txt"), "relative-secret\n");
+        string path = WriteConfig(jobWebhook: true, webhookEnabled: true, mutate: values =>
+        {
+            values["informantExecutable"] = "Informant.exe";
+            values["logFilePath"] = "logs/marshal-.log";
+            values["historyFilePath"] = "history/runs.jsonl";
+            values["webhook"] = new Dictionary<string, object?> { ["enabled"] = true, ["gitHubSecret"] = "file:webhook-secret.txt" };
+            var jobs = (Dictionary<string, object?>[])values["jobs"]!;
+            jobs[0]["informantConfigPath"] = "informant.json";
+        });
+        string originalDirectory = Directory.GetCurrentDirectory();
+
+        MarshalConfig config = MarshalConfig.Load(path);
+
+        Assert.Equal(originalDirectory, Directory.GetCurrentDirectory());
+        Assert.Equal(Path.Combine(_directory.Path, "Informant.exe"), config.InformantExecutable);
+        Assert.Equal(Path.Combine(_directory.Path, "logs", "marshal-.log"), config.LogFilePath);
+        Assert.Equal(Path.Combine(_directory.Path, "history", "runs.jsonl"), config.HistoryFilePath);
+        Assert.Equal(Path.Combine(_directory.Path, "informant.json"), Assert.Single(config.Jobs).InformantConfigPath);
+        Assert.Equal("relative-secret", config.ResolveConfiguredSecret(config.Webhook!.GitHubSecret));
+    }
+
+    [Fact]
+    public void EnvironmentVariablesOverrideTopLevelNestedAndArrayValues()
+    {
+        string alternateConfig = Path.Combine(_directory.Path, "alternate-informant.json");
+        File.WriteAllText(alternateConfig, "{}");
+        string path = WriteConfig(webhookEnabled: true);
+        Environment.SetEnvironmentVariable("MARSHAL_PerRunTimeoutMinutes", "45");
+        Environment.SetEnvironmentVariable("MARSHAL_WebServer__Port", "5055");
+        Environment.SetEnvironmentVariable("MARSHAL_Jobs__0__Name", "environment-job");
+        Environment.SetEnvironmentVariable("MARSHAL_Jobs__0__InformantConfigPath", alternateConfig);
+        try
+        {
+            MarshalConfig config = MarshalConfig.Load(path);
+
+            Assert.Equal(45, config.PerRunTimeoutMinutes);
+            Assert.Equal(5055, config.WebServer!.Port);
+            Assert.Equal("environment-job", Assert.Single(config.Jobs).Name);
+            Assert.Equal(alternateConfig, config.Jobs[0].InformantConfigPath);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("MARSHAL_PerRunTimeoutMinutes", null);
+            Environment.SetEnvironmentVariable("MARSHAL_WebServer__Port", null);
+            Environment.SetEnvironmentVariable("MARSHAL_Jobs__0__Name", null);
+            Environment.SetEnvironmentVariable("MARSHAL_Jobs__0__InformantConfigPath", null);
+        }
+    }
+
     private string WriteConfig(Action<Dictionary<string, object?>>? mutate = null, string[]? schedule = null, bool jobWebhook = false, bool webhookEnabled = false)
     {
         string fakeExe = Path.Combine(_directory.Path, "Informant.exe");

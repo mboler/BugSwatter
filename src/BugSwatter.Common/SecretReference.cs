@@ -13,7 +13,10 @@ public static class SecretReference
     public static bool IsReference(string? reference) => HasContent(reference, EnvPrefix) || HasContent(reference, FilePrefix);
 
     /// <summary>Resolves the reference to its secret value, or null when it is not a reference or the source cannot be read</summary>
-    public static string? Resolve(string? reference)
+    public static string? Resolve(string? reference) => Resolve(reference, null);
+
+    /// <summary>Resolves the reference to its secret value, anchoring a relative file path to <paramref name="configDirectory"/></summary>
+    public static string? Resolve(string? reference, string? configDirectory)
     {
         if (string.IsNullOrWhiteSpace(reference))
         {
@@ -31,7 +34,13 @@ public static class SecretReference
             try
             {
                 // Trim the trailing newline a secret file almost always carries; the file's own ACL is the protection
-                return path.Length == 0 ? null : File.ReadAllText(path).Trim();
+                if (path.Length == 0)
+                {
+                    return null;
+                }
+
+                string resolvedPath = configDirectory is null ? Path.GetFullPath(path) : ConfigLoader.ResolvePath(configDirectory, path);
+                return File.ReadAllText(resolvedPath).Trim();
             }
             catch (Exception)
             {

@@ -28,6 +28,8 @@ public enum EmailSendOn
 /// <summary>Configuration for emailing run reports. Present only when email is wanted; email is additionally gated on a Second Opinion having completed, so it never fires for a raw local review. The SMTP password is an env:VARIABLE_NAME reference, never a literal</summary>
 public sealed record EmailConfig
 {
+    private string _configDirectory = Directory.GetCurrentDirectory();
+
     /// <summary>Which transport to use</summary>
     [System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter<EmailProvider>))]
     public EmailProvider Provider { get; init; } = EmailProvider.Smtp;
@@ -68,11 +70,11 @@ public sealed record EmailConfig
 
     /// <summary>Reads the SMTP password from its env: or file: reference</summary>
     /// <returns>The password value, or null when no reference is configured or the source is unset</returns>
-    public string? ResolvePassword() => SecretReference.Resolve(Password);
+    public string? ResolvePassword() => SecretReference.Resolve(Password, _configDirectory);
 
     /// <summary>Reads the ACS connection string from its env: or file: reference</summary>
     /// <returns>The connection string, or null when no reference is configured or the source is unset</returns>
-    public string? ResolveAcsConnectionString() => SecretReference.Resolve(AcsConnectionString);
+    public string? ResolveAcsConnectionString() => SecretReference.Resolve(AcsConnectionString, _configDirectory);
 
     /// <summary>Returns whether the run's max confirmed severity meets the send threshold; a None severity with an unparseable second opinion is handled by the caller's fail-open policy, not here</summary>
     public bool ShouldSend(Severity maxSeverity)
@@ -112,6 +114,8 @@ public sealed record EmailConfig
                 throw new InformantFatalException($"email.provider '{Provider}' is not supported");
         }
     }
+
+    internal void SetConfigDirectory(string configDirectory) => _configDirectory = configDirectory;
 
     private void ValidateSmtp()
     {

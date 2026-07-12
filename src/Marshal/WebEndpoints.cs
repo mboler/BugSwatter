@@ -13,7 +13,8 @@ public sealed class MarshalStatus
     public DateTimeOffset StartedUtc { get; } = DateTimeOffset.UtcNow;
 }
 
-/// <summary>Maps the web routes onto the Kestrel host: health, status and history JSON, a self-contained dashboard page, and the provider webhook endpoints when webhooks are enabled. Webhook signature validation reuses the transport-agnostic WebhookValidator and WebhookRouter unchanged</summary>
+/// <summary>Maps health, status, history, dashboard and provider webhook routes onto the Kestrel host
+/// Webhook routes authenticate requests, accept repository push events and deduplicate provider delivery IDs</summary>
 public static class WebEndpoints
 {
     private const int MaxBodyBytes = 1024 * 1024;
@@ -81,13 +82,13 @@ public static class WebEndpoints
 
         if (config.Webhook is { Enabled: true })
         {
-            app.MapPost("/webhook/github", (HttpContext context, ReviewQueue queue) => HandleWebhookAsync(context, queue, config, WebhookProvider.GitHub));
-            app.MapPost("/webhook/azuredevops", (HttpContext context, ReviewQueue queue) => HandleWebhookAsync(context, queue, config, WebhookProvider.AzureDevOps));
+            app.MapPost("/webhook/github", (HttpContext context, ReviewQueue queue, WebhookDeliveryTracker deliveries) => HandleWebhookAsync(context, queue, deliveries, config, WebhookProvider.GitHub));
+            app.MapPost("/webhook/azuredevops", (HttpContext context, ReviewQueue queue, WebhookDeliveryTracker deliveries) => HandleWebhookAsync(context, queue, deliveries, config, WebhookProvider.AzureDevOps));
             Log.Information("Webhook routes enabled: /webhook/github (HMAC-SHA256), /webhook/azuredevops (basic auth)");
         }
     }
 
-    private static async Task<IResult> HandleWebhookAsync(HttpContext context, ReviewQueue queue, MarshalConfig config, WebhookProvider provider)
+    private static async Task<IResult> HandleWebhookAsync(HttpContext context, ReviewQueue queue, WebhookDeliveryTracker deliveries, MarshalConfig config, WebhookProvider provider)
     {
         byte[]? body = await ReadBodyBoundedAsync(context.Request.Body, MaxBodyBytes, context.RequestAborted);
         if (body is null)
@@ -102,31 +103,71 @@ public static class WebEndpoints
             return Results.StatusCode(StatusCodes.Status401Unauthorized);
         }
 
-        string? repository;
+        JsonDocument payload;
         try
         {
-            using var payload = JsonDocument.Parse(body);
-            repository = WebhookRouter.ExtractRepository(provider, payload.RootElement);
+            payload = JsonDocument.Parse(body);
         }
         catch (JsonException)
         {
             return Results.BadRequest("payload is not valid JSON");
         }
 
-        if (repository is null)
+        using (payload)
         {
-            return Results.BadRequest("payload carries no repository identifier");
-        }
+            string? eventType = WebhookRouter.ExtractEventType(provider, payload.RootElement, context.Request.Headers["X-GitHub-Event"]);
+            if (eventType is null)
+            {
+                return Results.BadRequest("payload carries no recognized event type");
+            }
 
-        ReviewJobConfig? job = WebhookRouter.MatchJob(config.Jobs, provider, repository);
-        if (job is null)
-        {
-            Log.Warning("Valid {Provider} webhook for {Repository} matches no configured job", provider, repository);
-            return Results.NotFound("no job configured for this repository");
-        }
+            if (WebhookRouter.IsHandshakeEvent(provider, eventType))
+            {
+                Log.Information("Accepted {Provider} webhook handshake", provider);
+                return Results.Ok();
+            }
 
-        queue.Enqueue(job, $"{provider} webhook for {repository}");
-        return Results.Accepted();
+            if (!WebhookRouter.IsRepositoryChangeEvent(provider, eventType))
+            {
+                Log.Information("Ignored authenticated {Provider} webhook event {EventType}: only repository push events trigger reviews", provider, eventType);
+                return Results.Accepted();
+            }
+
+            string? deliveryId = WebhookRouter.ExtractDeliveryId(provider, payload.RootElement, context.Request.Headers["X-GitHub-Delivery"]);
+            if (deliveryId is null)
+            {
+                return Results.BadRequest("repository-change webhook carries no valid delivery ID");
+            }
+
+            string? repository = WebhookRouter.ExtractRepository(provider, payload.RootElement);
+            if (repository is null)
+            {
+                return Results.BadRequest("payload carries no repository identifier");
+            }
+
+            ReviewJobConfig? job = WebhookRouter.MatchJob(config.Jobs, provider, repository);
+            if (job is null)
+            {
+                Log.Warning("Valid {Provider} webhook for {Repository} matches no configured job", provider, repository);
+                return Results.NotFound("no job configured for this repository");
+            }
+
+            if (!deliveries.TryClaim(provider, deliveryId))
+            {
+                Log.Information("Ignored duplicate {Provider} webhook delivery {DeliveryId} for {Repository}", provider, deliveryId, repository);
+                return Results.Accepted();
+            }
+
+            EnqueueResult result = queue.Enqueue(job, $"{provider} {eventType} webhook for {repository}");
+            if (result == EnqueueResult.DroppedQueueFull)
+            {
+                deliveries.Forget(provider, deliveryId);
+                Log.Warning("Could not accept {Provider} webhook delivery {DeliveryId}: review queue is full; returning 503 so the provider can retry", provider, deliveryId);
+                return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+            }
+
+            return Results.Accepted();
+        }
     }
 
     private static bool Validate(HttpContext context, MarshalConfig config, WebhookProvider provider, byte[] body)

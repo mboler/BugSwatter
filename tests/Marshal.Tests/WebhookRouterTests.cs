@@ -5,6 +5,42 @@ namespace Marshal.Tests;
 public sealed class WebhookRouterTests
 {
     [Fact]
+    public void ExtractsGitHubHeadersAsDeliveryMetadata()
+    {
+        using var payload = JsonDocument.Parse("{}");
+
+        Assert.Equal("delivery-id", WebhookRouter.ExtractDeliveryId(WebhookProvider.GitHub, payload.RootElement, " delivery-id "));
+        Assert.Equal("push", WebhookRouter.ExtractEventType(WebhookProvider.GitHub, payload.RootElement, "push"));
+    }
+
+    [Fact]
+    public void ExtractsAzureDevOpsPayloadDeliveryMetadata()
+    {
+        using var payload = JsonDocument.Parse("""{"id":"a0a0a0a0-bbbb-cccc-dddd-e1e1e1e1e1e1","eventType":"git.push"}""");
+
+        Assert.Equal("a0a0a0a0-bbbb-cccc-dddd-e1e1e1e1e1e1", WebhookRouter.ExtractDeliveryId(WebhookProvider.AzureDevOps, payload.RootElement));
+        Assert.Equal("git.push", WebhookRouter.ExtractEventType(WebhookProvider.AzureDevOps, payload.RootElement));
+    }
+
+    [Theory]
+    [InlineData(WebhookProvider.GitHub, "push", true)]
+    [InlineData(WebhookProvider.GitHub, "pull_request", false)]
+    [InlineData(WebhookProvider.AzureDevOps, "git.push", true)]
+    [InlineData(WebhookProvider.AzureDevOps, "git.pullrequest.created", false)]
+    public void OnlyPushEventsAreRepositoryChanges(WebhookProvider provider, string eventType, bool expected)
+    {
+        Assert.Equal(expected, WebhookRouter.IsRepositoryChangeEvent(provider, eventType));
+    }
+
+    [Fact]
+    public void GitHubPingIsAHandshakeButPushIsNot()
+    {
+        Assert.True(WebhookRouter.IsHandshakeEvent(WebhookProvider.GitHub, "ping"));
+        Assert.False(WebhookRouter.IsHandshakeEvent(WebhookProvider.GitHub, "push"));
+        Assert.False(WebhookRouter.IsHandshakeEvent(WebhookProvider.AzureDevOps, "ping"));
+    }
+
+    [Fact]
     public void ExtractsGitHubFullName()
     {
         using var payload = JsonDocument.Parse("""{"ref": "refs/heads/main", "repository": {"full_name": "mboler/BugSwatter"}}""");

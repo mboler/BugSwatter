@@ -283,7 +283,13 @@ Each completed run is appended to `historyFilePath` (a JSON-lines file: job, tri
 
 ### Triggers
 
-Time triggers fire daily at each configured local time. Filesystem triggers watch a directory (subdirectories included) and enqueue after changes settle for the debounce window (default 5 minutes), so a checkout touching thousands of files coalesces into one review. Webhook triggers listen on `/webhook/github` and `/webhook/azuredevops`; GitHub posts are validated against the shared secret via the `X-Hub-Signature-256` HMAC-SHA256 header, Azure DevOps service hooks via basic-auth credentials whose password is the shared secret. Validation is mandatory and uses fixed-time comparison; failures are rejected with 401. Request bodies are capped at 1 MiB, enforced during the read so chunked requests cannot bypass it.
+Time triggers fire daily at each configured local time. Filesystem triggers watch a directory (subdirectories included) and enqueue after changes settle for the debounce window (default 5 minutes), so a checkout touching thousands of files coalesces into one review.
+
+Webhook triggers listen on `/webhook/github` and `/webhook/azuredevops`. GitHub posts are validated against the shared secret via the `X-Hub-Signature-256` HMAC-SHA256 header; Azure DevOps service hooks use basic-auth credentials whose password is the shared secret. Validation is mandatory and uses fixed-time comparison; failures are rejected with 401. Request bodies are capped at 1 MiB, enforced during the read so chunked requests cannot bypass it.
+
+Only repository push events enqueue work: `X-GitHub-Event: push` for GitHub and `eventType: git.push` for Azure DevOps. An authenticated GitHub `ping` succeeds without enqueueing, and other authenticated event types are acknowledged and ignored. When configuring Azure DevOps, select **Code pushed** and send **All** resource details so `resource.repository` is present for job routing.
+
+Provider retries are deduplicated by `X-GitHub-Delivery` for GitHub and the root payload `id` for Azure DevOps. Marshal retains up to 4,096 accepted IDs in memory for 24 hours. A duplicate receives `202 Accepted` without creating another review. The cache is intentionally bounded and process-local, so restarting Marshal clears it. If the review queue is full, Marshal releases the ID and returns 503 so the provider can retry instead of silently losing the event.
 
 ### Webhook deployment topology
 

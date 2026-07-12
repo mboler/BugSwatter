@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace Informant;
+namespace BugSwatter.AI;
 
 /// <summary>One chat message in the OpenAI-compatible wire format; assistant replies carrying tool calls are echoed back verbatim, and tool results reference the call they answer</summary>
 public sealed record ChatMessage

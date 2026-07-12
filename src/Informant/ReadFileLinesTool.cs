@@ -1,12 +1,13 @@
 using System.Text;
 using System.Text.Json;
+using BugSwatter.AI;
 using BugSwatter.Common;
 using Serilog;
 
 namespace Informant;
 
 /// <summary>The single, read-only tool exposed to the model. It returns a numbered line range from a file inside the allowed read-root and nothing else; no write, delete, execute or directory-mutation capability exists here. Every failure returns a structured error string for the model to recover from, never an exception</summary>
-public sealed class ReadFileLinesTool
+public sealed class ReadFileLinesTool : IModelTool
 {
     /// <summary>Tool name declared to the model</summary>
     public const string ToolName = "read_file_lines";
@@ -52,6 +53,8 @@ public sealed class ReadFileLinesTool
         _reader = reader;
     }
 
+    ToolDefinition IModelTool.Definition => Definition;
+
     /// <summary>Parses the raw JSON arguments of a tool call and executes the read; malformed arguments produce a structured error result</summary>
     public string ExecuteRaw(string argumentsJson)
     {
@@ -73,6 +76,8 @@ public sealed class ReadFileLinesTool
 
         return Execute(path, startLine, endLine);
     }
+
+    string IModelTool.Execute(string argumentsJson) => ExecuteRaw(argumentsJson);
 
     /// <summary>Executes a validated read: confines the path to the read-root, checks the range, and returns numbered lines</summary>
     /// <param name="path">File path relative to the read root; forward or backward slashes both work, and anything resolving outside the root is refused</param>

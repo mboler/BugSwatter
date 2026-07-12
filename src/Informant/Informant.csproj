@@ -24,6 +24,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Using Include="BugSwatter.AI" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BugSwatter.AI\BugSwatter.AI.csproj" />
     <ProjectReference Include="..\BugSwatter.Common\BugSwatter.Common.csproj" />
   </ItemGroup>
 

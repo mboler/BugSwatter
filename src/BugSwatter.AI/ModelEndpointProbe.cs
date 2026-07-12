@@ -1,4 +1,4 @@
-namespace BugSwatter.Common;
+namespace BugSwatter.AI;
 
 /// <summary>Result of checking whether an OpenAI-compatible endpoint answers its models route</summary>
 public sealed record ModelEndpointProbeResult(bool Reachable, int? StatusCode, string? Error);

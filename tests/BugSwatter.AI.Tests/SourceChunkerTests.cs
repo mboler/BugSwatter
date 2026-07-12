@@ -1,23 +1,37 @@
-namespace Informant.Tests;
+namespace BugSwatter.AI.Tests;
 
-public sealed class ChunkerTests
+public sealed class SourceChunkerTests
 {
+    [Fact]
+    public void EmptyInputProducesNoChunks()
+    {
+        Assert.Empty(SourceChunker.Split([], 100, 1000));
+    }
+
+    [Theory]
+    [InlineData(0, 1000)]
+    [InlineData(100, 0)]
+    public void NonPositiveLimitsAreRejected(int maxLines, int maxCharacters)
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => SourceChunker.Split(["line"], maxLines, maxCharacters));
+    }
+
     [Fact]
     public void SmallFileComesBackAsOneChunk()
     {
         string[] lines = [.. Enumerable.Range(1, 50).Select(i => $"line {i}")];
-        Chunk chunk = Assert.Single(Chunker.Split(lines, 800, 100000));
-        Assert.Equal(new Chunk(1, 50, false), chunk);
+        SourceChunk chunk = Assert.Single(SourceChunker.Split(lines, 800, 100000));
+        Assert.Equal(new SourceChunk(1, 50, false), chunk);
     }
 
     [Fact]
     public void SplitsAtMethodClosingBraces()
     {
         string[] lines = BuildCSharpClass(methodCount: 10, bodyLines: 20);
-        IReadOnlyList<Chunk> chunks = Chunker.Split(lines, 60, 100000);
+        IReadOnlyList<SourceChunk> chunks = SourceChunker.Split(lines, 60, 100000);
         Assert.True(chunks.Count > 1);
         AssertContiguousCoverage(chunks, lines.Length);
-        foreach (Chunk chunk in chunks.Take(chunks.Count - 1))
+        foreach (SourceChunk chunk in chunks.Take(chunks.Count - 1))
         {
             Assert.False(chunk.HardCut);
             string cutLine = lines[chunk.EndLine - 1].Trim();
@@ -43,7 +57,7 @@ public sealed class ChunkerTests
                 methodSpans.Add((index + 1, end + 1));
             }
         }
-        foreach (Chunk chunk in Chunker.Split(lines, 70, 100000))
+        foreach (SourceChunk chunk in SourceChunker.Split(lines, 70, 100000))
         {
             foreach ((int start, int end) in methodSpans)
             {
@@ -56,7 +70,7 @@ public sealed class ChunkerTests
     public void HardCutsWhenNoBoundaryExists()
     {
         string[] lines = [.. Enumerable.Range(1, 200).Select(i => $"data row {i} with no blank lines or braces")];
-        IReadOnlyList<Chunk> chunks = Chunker.Split(lines, 80, 1000000);
+        IReadOnlyList<SourceChunk> chunks = SourceChunker.Split(lines, 80, 1000000);
         Assert.Equal(3, chunks.Count);
         Assert.True(chunks[0].HardCut);
         Assert.Equal(80, chunks[0].EndLine);
@@ -73,10 +87,10 @@ public sealed class ChunkerTests
             lines.AddRange(Enumerable.Range(1, 9).Select(i => $"paragraph {paragraph} line {i}"));
             lines.Add("");
         }
-        IReadOnlyList<Chunk> chunks = Chunker.Split([.. lines], 25, 100000);
+        IReadOnlyList<SourceChunk> chunks = SourceChunker.Split([.. lines], 25, 100000);
         Assert.True(chunks.Count > 1);
         AssertContiguousCoverage(chunks, lines.Count);
-        foreach (Chunk chunk in chunks.Take(chunks.Count - 1))
+        foreach (SourceChunk chunk in chunks.Take(chunks.Count - 1))
         {
             Assert.False(chunk.HardCut);
             Assert.Equal("", lines[chunk.EndLine - 1]);
@@ -87,7 +101,7 @@ public sealed class ChunkerTests
     public void CharacterBudgetForcesSplitEvenUnderLineLimit()
     {
         string[] lines = [.. Enumerable.Range(1, 40).Select(i => new string('x', 500))];
-        IReadOnlyList<Chunk> chunks = Chunker.Split(lines, 800, 5000);
+        IReadOnlyList<SourceChunk> chunks = SourceChunker.Split(lines, 800, 5000);
         Assert.True(chunks.Count > 1);
         AssertContiguousCoverage(chunks, 40);
     }
@@ -107,7 +121,7 @@ public sealed class ChunkerTests
         return [.. lines];
     }
 
-    private static void AssertContiguousCoverage(IReadOnlyList<Chunk> chunks, int totalLines)
+    private static void AssertContiguousCoverage(IReadOnlyList<SourceChunk> chunks, int totalLines)
     {
         Assert.Equal(1, chunks[0].StartLine);
         Assert.Equal(totalLines, chunks[^1].EndLine);

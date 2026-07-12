@@ -101,7 +101,7 @@ public sealed class FileReviewer
             return NotReviewable(file, "binary file");
         }
 
-        var chunks = Chunker.Split(lines, _maxFileLines, _maxContentCharacters);
+        IReadOnlyList<SourceChunk> chunks = SourceChunker.Split(lines, _maxFileLines, _maxContentCharacters);
         var findings = new StringBuilder();
 
         for (int index = 0; index < chunks.Count; index++)
@@ -162,7 +162,7 @@ public sealed class FileReviewer
 
     private static bool IsExpectedExclusion(RepositoryFileError error) => error is RepositoryFileError.ReparsePoint or RepositoryFileError.TooLarge or RepositoryFileError.Binary;
 
-    private static string BuildUserPrompt(ChangedFile file, string[] lines, Chunk chunk, int part, int totalParts)
+    private static string BuildUserPrompt(ChangedFile file, string[] lines, SourceChunk chunk, int part, int totalParts)
     {
         var builder = new StringBuilder();
         builder.AppendLine("Review the following file.");

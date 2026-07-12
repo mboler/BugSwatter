@@ -1,6 +1,6 @@
-namespace Informant;
+namespace BugSwatter.AI;
 
-/// <summary>Recoverable model-layer failure (endpoint unreachable, timeout, bad status, empty or malformed reply); callers retry per config and then skip the file, unlike a <see cref="InformantFatalException"/> which aborts the run</summary>
+/// <summary>Recoverable model-layer failure such as an unreachable endpoint, timeout, bad status, or malformed reply</summary>
 public sealed class ModelCallException : Exception
 {
     /// <summary>Creates the exception with the failure description</summary>

@@ -1,6 +1,6 @@
 using System.Net;
 
-namespace BugSwatter.Common.Tests;
+namespace BugSwatter.AI.Tests;
 
 public sealed class ModelEndpointProbeTests
 {

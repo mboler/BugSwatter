@@ -5,7 +5,7 @@ using System.Text.Json.Serialization;
 using BugSwatter.Common;
 using Serilog;
 
-namespace Informant;
+namespace BugSwatter.AI;
 
 /// <summary>Minimal client for an OpenAI-compatible chat-completions endpoint with native tool-calling. No streaming, one choice, nothing speculative</summary>
 public sealed class ModelClient
@@ -22,8 +22,10 @@ public sealed class ModelClient
     private readonly string? _apiKey;
     private readonly int _maxResponseBytes;
 
-    /// <summary>Creates a client; the HttpClient is injected so tests can script the wire exchange, and an optional API key is sent per request as a bearer token so authenticated cloud endpoints work over the same shared client as local ones</summary>
-    public ModelClient(HttpClient httpClient, string endpoint, string modelName, TimeSpan requestTimeout, string? apiKey = null, int maxResponseBytes = DefaultMaxResponseBytes)
+    /// <summary>Creates a client over an injected HttpClient; an optional API key is sent per request as a bearer token
+    /// so authenticated cloud endpoints work through the same client as local endpoints</summary>
+    public ModelClient(HttpClient httpClient, string endpoint, string modelName, TimeSpan requestTimeout, string? apiKey = null,
+        int maxResponseBytes = DefaultMaxResponseBytes)
     {
         ArgumentNullException.ThrowIfNull(httpClient);
         ArgumentNullException.ThrowIfNull(endpoint);

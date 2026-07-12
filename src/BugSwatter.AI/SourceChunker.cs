@@ -1,27 +1,37 @@
-namespace Informant;
+namespace BugSwatter.AI;
 
 /// <summary>One slice of an oversized file: 1-based inclusive line span; HardCut marks a split where no clean logical boundary existed</summary>
-public sealed record Chunk(int StartLine, int EndLine, bool HardCut);
+public sealed record SourceChunk(int StartLine, int EndLine, bool HardCut);
 
-/// <summary>Splits oversized files at logical boundaries (member and type closings, blank separator lines) so no chunk ever cuts through the middle of a method when a boundary is available. Brace depth is tracked with a plain character count, a deliberate heuristic that holds for real-world source and degrades to blank-line splitting for non-brace languages</summary>
-public static class Chunker
+/// <summary>Splits oversized files at logical boundaries such as member closings and blank separator lines so a chunk
+/// does not cut through a method when a boundary is available. Brace depth uses a deliberate character-count heuristic
+/// that works for typical source and degrades to blank-line splitting for non-brace languages</summary>
+public static class SourceChunker
 {
     /// <summary>Overhead added per line for the number prefix when estimating prompt size</summary>
     private const int PerLineOverhead = 10;
 
-    /// <summary>Splits <paramref name="lines"/> into chunks of at most <paramref name="maxLines"/> lines and roughly <paramref name="maxCharacters"/> characters; a file inside both limits comes back as one chunk</summary>
+    /// <summary>Splits <paramref name="lines"/> into chunks capped by <paramref name="maxLines"/> lines and roughly
+    /// <paramref name="maxCharacters"/> characters; a file inside both limits comes back as one chunk</summary>
     /// <returns>Contiguous 1-based chunks covering every line exactly once, in file order</returns>
-    public static IReadOnlyList<Chunk> Split(string[] lines, int maxLines, int maxCharacters)
+    public static IReadOnlyList<SourceChunk> Split(string[] lines, int maxLines, int maxCharacters)
     {
         ArgumentNullException.ThrowIfNull(lines);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxLines);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxCharacters);
+
+        if (lines.Length == 0)
+        {
+            return [];
+        }
 
         if (lines.Length <= maxLines && EstimateCharacters(lines, 0, lines.Length) <= maxCharacters)
         {
-            return [new Chunk(1, lines.Length, false)];
+            return [new SourceChunk(1, lines.Length, false)];
         }
 
         bool[] isBoundary = ComputeBoundaries(lines);
-        var chunks = new List<Chunk>();
+        var chunks = new List<SourceChunk>();
         int start = 1;
 
         while (start <= lines.Length)
@@ -29,7 +39,7 @@ public static class Chunker
             int hardLimit = FindHardLimit(lines, start, maxLines, maxCharacters);
             if (hardLimit >= lines.Length)
             {
-                chunks.Add(new Chunk(start, lines.Length, false));
+                chunks.Add(new SourceChunk(start, lines.Length, false));
                 break;
             }
 
@@ -45,7 +55,7 @@ public static class Chunker
                 }
             }
 
-            chunks.Add(cut > 0 ? new Chunk(start, cut, false) : new Chunk(start, hardLimit, true));
+            chunks.Add(cut > 0 ? new SourceChunk(start, cut, false) : new SourceChunk(start, hardLimit, true));
             start = (cut > 0 ? cut : hardLimit) + 1;
         }
 

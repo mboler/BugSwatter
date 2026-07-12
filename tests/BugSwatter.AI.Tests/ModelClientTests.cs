@@ -1,24 +1,36 @@
 using System.Net;
 using System.Text.Json;
 
-namespace Informant.Tests;
+namespace BugSwatter.AI.Tests;
 
 public sealed class ModelClientTests
 {
+    private const string TestToolName = "test_tool";
+
+    private static readonly ToolDefinition TestToolDefinition = new()
+    {
+        Function = new FunctionDefinition
+        {
+            Name = TestToolName,
+            Description = "A deterministic test tool",
+            Parameters = JsonDocument.Parse("""{"type":"object"}""").RootElement.Clone()
+        }
+    };
+
     [Fact]
     public async Task SendsModelMessagesToolsAndToolChoice()
     {
         var handler = new StubHttpMessageHandler();
         handler.Enqueue(HttpStatusCode.OK, StubHttpMessageHandler.FinalResponse("hello"));
         ModelClient client = CreateClient(handler);
-        ChatMessage reply = await client.CompleteAsync([new ChatMessage { Role = "system", Content = "sys" }, new ChatMessage { Role = "user", Content = "usr" }], [ReadFileLinesTool.Definition]);
+        ChatMessage reply = await client.CompleteAsync([new ChatMessage { Role = "system", Content = "sys" }, new ChatMessage { Role = "user", Content = "usr" }], [TestToolDefinition]);
 
         Assert.Equal("hello", reply.Content);
         using var request = JsonDocument.Parse(handler.RequestBodies[0]);
         Assert.Equal("test-model", request.RootElement.GetProperty("model").GetString());
         Assert.Equal("sys", request.RootElement.GetProperty("messages")[0].GetProperty("content").GetString());
         Assert.Equal("auto", request.RootElement.GetProperty("tool_choice").GetString());
-        Assert.Equal(ReadFileLinesTool.ToolName, request.RootElement.GetProperty("tools")[0].GetProperty("function").GetProperty("name").GetString());
+        Assert.Equal(TestToolName, request.RootElement.GetProperty("tools")[0].GetProperty("function").GetProperty("name").GetString());
         Assert.Equal("http://localhost:9999/v1/chat/completions", handler.RequestUris[0]!.ToString());
     }
 
@@ -26,12 +38,12 @@ public sealed class ModelClientTests
     public async Task ParsesToolCallReply()
     {
         var handler = new StubHttpMessageHandler();
-        handler.Enqueue(HttpStatusCode.OK, StubHttpMessageHandler.ToolCallResponse(("call_1", ReadFileLinesTool.ToolName, StubHttpMessageHandler.ReadArguments("src/Foo.cs", 1, 10))));
-        ChatMessage reply = await CreateClient(handler).CompleteAsync([new ChatMessage { Role = "user", Content = "go" }], [ReadFileLinesTool.Definition]);
+        handler.Enqueue(HttpStatusCode.OK, StubHttpMessageHandler.ToolCallResponse(("call_1", TestToolName, StubHttpMessageHandler.ReadArguments("src/Foo.cs", 1, 10))));
+        ChatMessage reply = await CreateClient(handler).CompleteAsync([new ChatMessage { Role = "user", Content = "go" }], [TestToolDefinition]);
 
         ToolCall call = Assert.Single(reply.ToolCalls!);
         Assert.Equal("call_1", call.Id);
-        Assert.Equal(ReadFileLinesTool.ToolName, call.Function!.Name);
+        Assert.Equal(TestToolName, call.Function!.Name);
         Assert.Contains("src/Foo.cs", call.Function.Arguments);
     }
 

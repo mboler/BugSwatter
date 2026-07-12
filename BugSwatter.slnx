@@ -1,10 +1,12 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/BugSwatter.AI/BugSwatter.AI.csproj" />
     <Project Path="src/BugSwatter.Common/BugSwatter.Common.csproj" />
     <Project Path="src/Marshal/Marshal.csproj" />
     <Project Path="src/Informant/Informant.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/BugSwatter.AI.Tests/BugSwatter.AI.Tests.csproj" />
     <Project Path="tests/BugSwatter.Common.Tests/BugSwatter.Common.Tests.csproj" />
     <Project Path="tests/Marshal.Tests/Marshal.Tests.csproj" />
     <Project Path="tests/Informant.Tests/Informant.Tests.csproj" />

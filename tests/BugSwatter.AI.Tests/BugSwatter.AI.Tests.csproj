@@ -15,13 +15,11 @@
 
   <ItemGroup>
     <Using Include="BugSwatter.AI" />
-    <Using Include="BugSwatter.Common" />
     <Using Include="Xunit" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\BugSwatter.AI\BugSwatter.AI.csproj" />
-    <ProjectReference Include="..\..\src\Informant\Informant.csproj" />
   </ItemGroup>
 
 </Project>

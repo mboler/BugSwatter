@@ -1,0 +1,127 @@
+using System.Text.Json;
+
+namespace SlimShady.Tests;
+
+public sealed class SecondOpinionConfigTests : IDisposable
+{
+    private readonly TempDirectory _directory = new();
+
+    public void Dispose() => _directory.Dispose();
+
+    [Fact]
+    public void AbsentBlockLeavesSecondOpinionNull()
+    {
+        WriteConfig(secondOpinion: null);
+        Assert.Null(SlimShadyConfig.Load(_directory.Path).SecondOpinion);
+    }
+
+    [Fact]
+    public void ValidBlockLoadsWithDefaults()
+    {
+        WriteConfig(secondOpinion: new Dictionary<string, object?> { ["endpoint"] = "https://api.example.test/v1", ["modelName"] = "frontier-1", ["apiKey"] = "env:SO_TEST_KEY" });
+
+        SecondOpinionConfig secondOpinion = SlimShadyConfig.Load(_directory.Path).SecondOpinion!;
+        Assert.Equal("https://api.example.test/v1", secondOpinion.Endpoint);
+        Assert.Equal("frontier-1", secondOpinion.ModelName);
+        Assert.Equal(1800, secondOpinion.RequestTimeoutSeconds);
+        Assert.Equal(DefaultSecondOpinionPrompt.Text, secondOpinion.ResolvePrompt());
+    }
+
+    [Fact]
+    public void KeylessLocalEndpointIsAccepted()
+    {
+        WriteConfig(secondOpinion: new Dictionary<string, object?> { ["endpoint"] = "http://192.0.2.13:1234/v1", ["modelName"] = "local-validator" });
+
+        SecondOpinionConfig secondOpinion = SlimShadyConfig.Load(_directory.Path).SecondOpinion!;
+        Assert.False(secondOpinion.RequiresApiKey);
+        Assert.Null(secondOpinion.ResolveApiKey());
+        Assert.Equal(30, secondOpinion.ContextLines);
+    }
+
+    [Fact]
+    public void ContextLinesIsConfigurableAndValidated()
+    {
+        WriteConfig(secondOpinion: new Dictionary<string, object?> { ["endpoint"] = "http://192.0.2.13:1234/v1", ["modelName"] = "local-validator", ["contextLines"] = 12 });
+        Assert.Equal(12, SlimShadyConfig.Load(_directory.Path).SecondOpinion!.ContextLines);
+
+        WriteConfig(secondOpinion: new Dictionary<string, object?> { ["endpoint"] = "http://192.0.2.13:1234/v1", ["modelName"] = "local-validator", ["contextLines"] = 0 });
+        Assert.Throws<SlimShadyFatalException>(() => SlimShadyConfig.Load(_directory.Path));
+    }
+
+    [Fact]
+    public void LiteralApiKeyIsRejectedAtLoad()
+    {
+        WriteConfig(secondOpinion: new Dictionary<string, object?> { ["endpoint"] = "https://api.example.test/v1", ["modelName"] = "frontier-1", ["apiKey"] = "sk-notallowed123" });
+
+        SlimShadyFatalException ex = Assert.Throws<SlimShadyFatalException>(() => SlimShadyConfig.Load(_directory.Path));
+        Assert.Contains("never stored in the config file", ex.Message);
+    }
+
+    [Fact]
+    public void EmptyEnvironmentVariableNameIsRejectedAtLoad()
+    {
+        WriteConfig(secondOpinion: new Dictionary<string, object?> { ["endpoint"] = "https://api.example.test/v1", ["modelName"] = "frontier-1", ["apiKey"] = "env:" });
+        Assert.Throws<SlimShadyFatalException>(() => SlimShadyConfig.Load(_directory.Path));
+    }
+
+    [Fact]
+    public void MissingModelNameIsRejectedAtLoad()
+    {
+        WriteConfig(secondOpinion: new Dictionary<string, object?> { ["endpoint"] = "https://api.example.test/v1", ["apiKey"] = "env:SO_TEST_KEY" });
+        Assert.Throws<SlimShadyFatalException>(() => SlimShadyConfig.Load(_directory.Path));
+    }
+
+    [Fact]
+    public void ResolveApiKeyReadsTheEnvironment()
+    {
+        var secondOpinion = new SecondOpinionConfig { Endpoint = "https://api.example.test/v1", ModelName = "frontier-1", ApiKey = "env:SLIMSHADY_SO_CONFIG_TEST" };
+
+        Environment.SetEnvironmentVariable("SLIMSHADY_SO_CONFIG_TEST", "resolved-value");
+        try
+        {
+            Assert.Equal("resolved-value", secondOpinion.ResolveApiKey());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("SLIMSHADY_SO_CONFIG_TEST", null);
+        }
+
+        Assert.Null(secondOpinion.ResolveApiKey());
+    }
+
+    [Fact]
+    public void InlinePromptWinsOverFileAndDefault()
+    {
+        var secondOpinion = new SecondOpinionConfig { Prompt = "inline validation prompt", PromptFile = "missing.txt" };
+        Assert.Equal("inline validation prompt", secondOpinion.ResolvePrompt());
+    }
+
+    [Fact]
+    public void PromptFileIsReadWhenNoInlinePrompt()
+    {
+        string promptPath = Path.Combine(_directory.Path, "so-prompt.txt");
+        File.WriteAllText(promptPath, "prompt from file");
+        var secondOpinion = new SecondOpinionConfig { PromptFile = promptPath };
+        Assert.Equal("prompt from file", secondOpinion.ResolvePrompt());
+    }
+
+    private void WriteConfig(Dictionary<string, object?>? secondOpinion)
+    {
+        var values = new Dictionary<string, object?>
+        {
+            ["repositoryUrl"] = "https://example.test/repo.git",
+            ["branch"] = "main",
+            ["workingTreePath"] = Path.Combine(_directory.Path, "tree"),
+            ["gitExecutablePath"] = TestGit.ExecutablePath,
+            ["modelEndpoint"] = "http://localhost:1234/v1",
+            ["modelName"] = "test-model"
+        };
+
+        if (secondOpinion is not null)
+        {
+            values["secondOpinion"] = secondOpinion;
+        }
+
+        File.WriteAllText(Path.Combine(_directory.Path, SlimShadyConfig.FileName), JsonSerializer.Serialize(values));
+    }
+}

@@ -1,0 +1,13 @@
+<Project>
+
+  <!-- Shared metadata for every project. Pre-1.0: this is the fourth feature wave, so 0.4.0 -->
+  <PropertyGroup>
+    <Version>0.4.0</Version>
+    <Product>BugSwatter</Product>
+    <Authors>Mark Boler</Authors>
+    <Company>Mark Boler</Company>
+    <Copyright>Copyright 2026 Mark Boler</Copyright>
+    <Description>Nightly local-AI code review that hunts down the shady things hiding in your repos</Description>
+  </PropertyGroup>
+
+</Project>

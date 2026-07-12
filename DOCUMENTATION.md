@@ -209,11 +209,25 @@ Marshal is a long-running supervisor that watches one or more repositories and, 
 ```text
 Marshal run --config D:\marshal\marshal.json [--review-all]
 Marshal validate --config D:\marshal\marshal.json              (pre-flight check, exit 0 on pass)
-Marshal install --config D:\marshal\marshal.json [--use-sc]    (register as service or systemd unit; needs admin)
-Marshal remove [--use-sc]                                        (unregister)
+Marshal install --config D:\marshal\marshal.json [service options]   (register as service or systemd unit; needs admin)
+Marshal remove [--use-sc]                                             (unregister)
 ```
 
-On Windows, `install` and `remove` talk to the Service Control Manager directly through the API by default; pass `--use-sc` to shell out to sc.exe instead. On Linux they write or remove the systemd unit and need root. `validate` loads the config, checks the Informant executable and each job's watch path, resolves webhook secrets, and runs `Informant validate` for every job. `--review-all` enqueues every configured repository once at startup and then keeps watching; without it Marshal starts quiet and acts only on triggers.
+On Windows, `install` and `remove` talk to the Service Control Manager directly through the API by default; pass `--use-sc` to shell out to sc.exe instead. Omitting `--service-user` installs Marshal as LocalSystem. That is convenient and powerful, but a defect or compromised dependency would then have nearly unrestricted control of the machine. Prefer a dedicated least-privilege account when practical:
+
+```powershell
+$env:MARSHAL_SERVICE_PASSWORD = Read-Host "Service password" -MaskInput
+Marshal install --config D:\marshal\marshal.json `
+  --service-user ".\BugSwatter" `
+  --service-password "env:MARSHAL_SERVICE_PASSWORD"
+Remove-Item Env:MARSHAL_SERVICE_PASSWORD
+```
+
+`--service-password` accepts only an `env:` or `file:` reference, never a literal, and a relative `file:` path resolves beside the Marshal config. Custom accounts always use the default Service Control Manager API; combining `--service-user` with `--use-sc` is rejected so a password can never appear in an `sc.exe` process command line. Built-in accounts and group-managed service accounts that do not use a password need only `--service-user`. The account must have the **Log on as a service** right and the filesystem and Git permissions described earlier. After installation, remove the temporary environment variable or tightly ACL and, when operationally appropriate, delete the password file.
+
+On Linux, `install --service-user bugswatter` writes `User=bugswatter` into the systemd unit; omitting it leaves systemd's root default. Linux service installation does not accept `--service-password`. Executable and config paths are quoted in both Windows and systemd service definitions, including paths containing spaces.
+
+`validate` loads the config, checks the Informant executable and each job's watch path, resolves webhook secrets, and runs `Informant validate` for every job. `--review-all` enqueues every configured repository once at startup and then keeps watching; without it Marshal starts quiet and acts only on triggers. When Marshal is stopped while Informant is running, it cancels the review and kills the complete Informant child-process tree before shutdown returns.
 
 ```jsonc
 {

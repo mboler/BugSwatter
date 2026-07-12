@@ -1,13 +1,16 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using BugSwatter.Common;
 
 // The program's own namespace is Marshal, which shadows System.Runtime.InteropServices.Marshal; this alias reaches the interop type unambiguously
 using InteropMarshal = System.Runtime.InteropServices.Marshal;
 
 namespace Marshal;
 
-/// <summary>Registers and unregisters Marshal as a Windows service or a Linux systemd unit. On Windows the default path talks to the Service Control Manager directly through the API; pass useScExe to shell out to sc.exe instead. Both operations need administrative rights</summary>
+/// <summary>Registers and unregisters Marshal as a Windows service or a Linux systemd unit
+/// On Windows the default path uses the Service Control Manager API; useScExe selects sc.exe instead
+/// Both operations need administrative rights</summary>
 public static class ServiceInstaller
 {
     /// <summary>Service name used for both the Windows service and the systemd unit</summary>
@@ -17,16 +20,30 @@ public static class ServiceInstaller
     private const string Description = "Watches repositories and dispatches Informant code reviews";
     private const string SystemdUnitPath = "/etc/systemd/system/marshal.service";
 
-    /// <summary>Registers Marshal to start automatically, launching it with the given config path</summary>
-    public static int Install(string configPath, bool useScExe)
+    /// <summary>Registers Marshal to start automatically, launching it with the given config path and optional service account</summary>
+    public static int Install(string configPath, bool useScExe, string? serviceUser, string? servicePasswordReference)
     {
         string executable = Environment.ProcessPath ?? throw new MarshalFatalException("Cannot determine the Marshal executable path for service registration");
         string fullConfigPath = Path.GetFullPath(configPath);
         MarshalConfig.Load(fullConfigPath);
 
-        return OperatingSystem.IsWindows()
-            ? useScExe ? InstallWindowsWithScExe(executable, fullConfigPath) : InstallWindowsWithApi(executable, fullConfigPath)
-            : InstallLinux(executable, fullConfigPath);
+        if (OperatingSystem.IsWindows())
+        {
+            if (useScExe && serviceUser is not null)
+            {
+                throw new MarshalFatalException("Custom service accounts require the default Service Control Manager API; remove --use-sc");
+            }
+
+            string? servicePassword = ResolveServicePassword(servicePasswordReference, fullConfigPath);
+            return useScExe ? InstallWindowsWithScExe(executable, fullConfigPath) : InstallWindowsWithApi(executable, fullConfigPath, serviceUser, servicePassword);
+        }
+
+        if (servicePasswordReference is not null)
+        {
+            throw new MarshalFatalException("Linux systemd services use User= and do not accept --service-password");
+        }
+
+        return InstallLinux(executable, fullConfigPath, serviceUser);
     }
 
     /// <summary>Stops and unregisters the service or unit</summary>
@@ -35,23 +52,34 @@ public static class ServiceInstaller
     /// <summary>Builds the quoted command line registered for the service, launching Marshal with its config</summary>
     public static string BuildWindowsBinPath(string executable, string configPath) => $"\"{executable}\" run --config \"{configPath}\"";
 
-    /// <summary>Builds the systemd unit file content</summary>
-    public static string BuildSystemdUnit(string executable, string configPath) => $"""
-        [Unit]
-        Description=Marshal review dispatcher
-        After=network.target
+    /// <summary>Builds the systemd unit file content, quoting paths and optionally setting User=</summary>
+    public static string BuildSystemdUnit(string executable, string configPath, string? serviceUser = null)
+    {
+        var lines = new List<string>
+        {
+            "[Unit]",
+            "Description=Marshal review dispatcher",
+            "After=network.target",
+            "",
+            "[Service]",
+            "Type=notify"
+        };
 
-        [Service]
-        Type=notify
-        ExecStart={executable} run --config {configPath}
-        Restart=on-failure
-        RestartSec=10
+        if (serviceUser is not null)
+        {
+            lines.Add($"User={QuoteSystemdArgument(serviceUser)}");
+        }
 
-        [Install]
-        WantedBy=multi-user.target
-        """ + "\n";
+        lines.Add($"ExecStart={QuoteSystemdArgument(executable)} run --config {QuoteSystemdArgument(configPath)}");
+        lines.Add("Restart=on-failure");
+        lines.Add("RestartSec=10");
+        lines.Add("");
+        lines.Add("[Install]");
+        lines.Add("WantedBy=multi-user.target");
+        return string.Join('\n', lines) + "\n";
+    }
 
-    private static int InstallWindowsWithApi(string executable, string configPath)
+    private static int InstallWindowsWithApi(string executable, string configPath, string? serviceUser, string? servicePassword)
     {
         nint scManager = WindowsServiceApi.OpenSCManager(null, null, WindowsServiceApi.ScManagerCreateService);
         if (scManager == 0)
@@ -61,8 +89,8 @@ public static class ServiceInstaller
 
         try
         {
-            nint service = WindowsServiceApi.CreateService(scManager, ServiceName, DisplayName, WindowsServiceApi.ServiceChangeConfig, WindowsServiceApi.ServiceWin32OwnProcess, WindowsServiceApi.ServiceAutoStart, WindowsServiceApi.ServiceErrorNormal,
-                BuildWindowsBinPath(executable, configPath), null, 0, null, null, null);
+            nint service = WindowsServiceApi.CreateService(scManager, ServiceName, DisplayName, WindowsServiceApi.ServiceChangeConfig, WindowsServiceApi.ServiceWin32OwnProcess,
+                WindowsServiceApi.ServiceAutoStart, WindowsServiceApi.ServiceErrorNormal, BuildWindowsBinPath(executable, configPath), null, 0, null, serviceUser, servicePassword);
             if (service == 0)
             {
                 return ReportWin32Failure($"create service '{ServiceName}'");
@@ -71,7 +99,7 @@ public static class ServiceInstaller
             try
             {
                 SetServiceDescription(service);
-                Console.WriteLine($"Service '{ServiceName}' installed via the Service Control Manager API. Start it with: sc.exe start {ServiceName}");
+                Console.WriteLine($"Service '{ServiceName}' installed via the Service Control Manager API as {serviceUser ?? "LocalSystem"}. Start it with: sc.exe start {ServiceName}");
                 return 0;
             }
             finally
@@ -177,11 +205,11 @@ public static class ServiceInstaller
         return deleted;
     }
 
-    private static int InstallLinux(string executable, string configPath)
+    private static int InstallLinux(string executable, string configPath, string? serviceUser)
     {
         try
         {
-            File.WriteAllText(SystemdUnitPath, BuildSystemdUnit(executable, configPath));
+            File.WriteAllText(SystemdUnitPath, BuildSystemdUnit(executable, configPath, serviceUser));
         }
         catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
         {
@@ -216,6 +244,44 @@ public static class ServiceInstaller
         RunTool("systemctl", ["daemon-reload"]);
         Console.WriteLine("Systemd unit removed");
         return 0;
+    }
+
+    private static string? ResolveServicePassword(string? reference, string configPath)
+    {
+        if (reference is null)
+        {
+            return null;
+        }
+
+        if (!SecretReference.IsReference(reference))
+        {
+            throw new MarshalFatalException("--service-password must be an env:VARIABLE_NAME or file:PATH reference; service passwords are never accepted as command-line literals");
+        }
+
+        string configDirectory = Path.GetDirectoryName(configPath) ?? Directory.GetCurrentDirectory();
+        string? password = SecretReference.Resolve(reference, configDirectory);
+        if (string.IsNullOrEmpty(password))
+        {
+            throw new MarshalFatalException($"The service password reference '{reference}' is unset, empty, missing, or unreadable");
+        }
+
+        return password;
+    }
+
+    private static string QuoteSystemdArgument(string value)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(value);
+        if (value.IndexOfAny(['\0', '\r', '\n']) >= 0)
+        {
+            throw new MarshalFatalException("Systemd service arguments cannot contain nulls or line breaks");
+        }
+
+        string escaped = value
+            .Replace("\\", "\\\\", StringComparison.Ordinal)
+            .Replace("\"", "\\\"", StringComparison.Ordinal)
+            .Replace("$", "$$", StringComparison.Ordinal)
+            .Replace("%", "%%", StringComparison.Ordinal);
+        return $"\"{escaped}\"";
     }
 
     private static int RunTool(string fileName, IReadOnlyList<string> arguments)

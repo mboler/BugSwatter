@@ -9,6 +9,8 @@ public sealed class MarshalCommandLineTests
         Assert.Equal("run", line.Command);
         Assert.Null(line.ConfigPath);
         Assert.False(line.ReviewAll);
+        Assert.Null(line.ServiceUser);
+        Assert.Null(line.ServicePasswordReference);
     }
 
     [Fact]
@@ -34,6 +36,36 @@ public sealed class MarshalCommandLineTests
     {
         Assert.True(MarshalCommandLine.Parse(["install", "--config", "m.json", "--use-sc"]).UseScExe);
         Assert.True(MarshalCommandLine.Parse(["remove", "--use-sc"]).UseScExe);
+    }
+
+    [Fact]
+    public void ParsesCustomServiceAccountWithReferencedPassword()
+    {
+        var line = MarshalCommandLine.Parse(["install", "--config", "m.json", "--service-user", @".\BugSwatter", "--service-password", "file:service-password.txt"]);
+
+        Assert.Equal(@".\BugSwatter", line.ServiceUser);
+        Assert.Equal("file:service-password.txt", line.ServicePasswordReference);
+        Assert.False(line.UseScExe);
+    }
+
+    [Fact]
+    public void CustomServiceAccountRejectsScExePath()
+    {
+        MarshalFatalException ex = Assert.Throws<MarshalFatalException>(() => MarshalCommandLine.Parse(["install", "--config", "m.json", "--service-user", @".\BugSwatter", "--use-sc"]));
+        Assert.Contains("Service Control Manager API", ex.Message);
+    }
+
+    [Fact]
+    public void ServicePasswordRequiresUserAndSecretReference()
+    {
+        Assert.Throws<MarshalFatalException>(() => MarshalCommandLine.Parse(["install", "--config", "m.json", "--service-password", "env:MARSHAL_SERVICE_PASSWORD"]));
+        Assert.Throws<MarshalFatalException>(() => MarshalCommandLine.Parse(["install", "--config", "m.json", "--service-user", @".\BugSwatter", "--service-password", "literal-password"]));
+    }
+
+    [Fact]
+    public void ServiceAccountOptionsAreInstallOnly()
+    {
+        Assert.Throws<MarshalFatalException>(() => MarshalCommandLine.Parse(["run", "--config", "m.json", "--service-user", @".\BugSwatter"]));
     }
 
     [Fact]

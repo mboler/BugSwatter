@@ -28,4 +28,18 @@ public sealed class ProcessRunnerTests
         Assert.False(result.TimedOut);
         Assert.Equal(3, result.ExitCode);
     }
+
+    [Fact]
+    public async Task HostCancellationKillsChildProcessTreePromptly()
+    {
+        using var cancellationSource = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var stopwatch = Stopwatch.StartNew();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => OperatingSystem.IsWindows()
+            ? InformantProcessRunner.RunProcessAsync("cmd.exe", ["/c", "ping", "-n", "60", "127.0.0.1"], TimeSpan.FromMinutes(10), cancellationSource.Token)
+            : InformantProcessRunner.RunProcessAsync("/bin/sleep", ["60"], TimeSpan.FromMinutes(10), cancellationSource.Token));
+
+        stopwatch.Stop();
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(30), $"shutdown took {stopwatch.Elapsed}, the child process tree was not stopped promptly");
+    }
 }

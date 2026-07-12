@@ -83,17 +83,17 @@ public sealed class InformantProcessRunner : IInformantRunner
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            try
-            {
-                process.Kill(entireProcessTree: true);
-            }
-            catch (Exception ex) when (ex is InvalidOperationException or Win32Exception)
-            {
-                // the child exited on its own between the timeout firing and the kill; nothing left to stop
-            }
-
+            KillProcessTree(process);
             await ObserveOutputAsync(stdoutTask, stderrTask);
             return new ProcessRunResult(null, true, string.Empty);
+        }
+        catch (OperationCanceledException)
+        {
+            // Host shutdown uses the same token passed by ReviewDispatcher; kill before propagating cancellation so
+            // Marshal never abandons an Informant process or any model/helper process it launched
+            KillProcessTree(process);
+            await ObserveOutputAsync(stdoutTask, stderrTask);
+            throw;
         }
 
         string standardError = (await stderrTask).Trim();
@@ -104,6 +104,18 @@ public sealed class InformantProcessRunner : IInformantRunner
         }
 
         return new ProcessRunResult(process.ExitCode, false, standardOutput);
+    }
+
+    private static void KillProcessTree(Process process)
+    {
+        try
+        {
+            process.Kill(entireProcessTree: true);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or Win32Exception)
+        {
+            // the child exited on its own between cancellation firing and the kill; nothing remains to stop
+        }
     }
 
     private static async Task ObserveOutputAsync(Task<string> stdoutTask, Task<string> stderrTask)

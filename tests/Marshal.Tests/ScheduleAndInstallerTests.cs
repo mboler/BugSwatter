@@ -34,9 +34,25 @@ public sealed class ScheduleAndInstallerTests
     public void SystemdUnitCarriesExecStartRestartAndInstallTarget()
     {
         string unit = ServiceInstaller.BuildSystemdUnit("/opt/marshal/Marshal", "/opt/marshal/marshal.json");
-        Assert.Contains("ExecStart=/opt/marshal/Marshal run --config /opt/marshal/marshal.json", unit);
+        Assert.Contains("ExecStart=\"/opt/marshal/Marshal\" run --config \"/opt/marshal/marshal.json\"", unit);
         Assert.Contains("Restart=on-failure", unit);
         Assert.Contains("WantedBy=multi-user.target", unit);
         Assert.Contains("Type=notify", unit);
+        Assert.DoesNotContain("User=", unit);
+    }
+
+    [Fact]
+    public void SystemdUnitQuotesPathsAndCarriesCustomUser()
+    {
+        string unit = ServiceInstaller.BuildSystemdUnit("/opt/Bug Swatter/Marshal", "/etc/Bug Swatter/marshal.json", "bugswatter");
+
+        Assert.Contains("User=\"bugswatter\"", unit);
+        Assert.Contains("ExecStart=\"/opt/Bug Swatter/Marshal\" run --config \"/etc/Bug Swatter/marshal.json\"", unit);
+    }
+
+    [Fact]
+    public void SystemdUnitRejectsLineBreakInjection()
+    {
+        Assert.Throws<MarshalFatalException>(() => ServiceInstaller.BuildSystemdUnit("/opt/marshal/Marshal", "/opt/marshal/marshal.json", "user\nRestart=no"));
     }
 }

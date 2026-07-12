@@ -28,7 +28,7 @@ internal static class Program
                     return 0;
 
                 case "install":
-                    return ServiceInstaller.Install(commandLine.RequireConfigPath(), commandLine.UseScExe);
+                    return ServiceInstaller.Install(commandLine.RequireConfigPath(), commandLine.UseScExe, commandLine.ServiceUser, commandLine.ServicePasswordReference);
 
                 case "remove":
                     return ServiceInstaller.Remove(commandLine.UseScExe);
@@ -171,11 +171,13 @@ internal static class Program
         Console.WriteLine("Usage:");
         Console.WriteLine("  Marshal run --config <path> [--review-all]   run in the foreground (or under a service manager)");
         Console.WriteLine("  Marshal validate --config <path>             check config, exe, secrets and every job, then exit");
-        Console.WriteLine("  Marshal install --config <path> [--use-sc]   register as a Windows service or systemd unit");
-        Console.WriteLine("  Marshal remove [--use-sc]                     unregister the service or unit");
-        Console.WriteLine("  Marshal help                                  show this help");
+        Console.WriteLine("  Marshal install --config <path> [service options]   register as a Windows service or systemd unit");
+        Console.WriteLine("  Marshal remove [--use-sc]                           unregister the service or unit");
+        Console.WriteLine("  Marshal help                                        show this help");
         Console.WriteLine();
         Console.WriteLine("--review-all enqueues every configured repository once at startup, then keeps watching triggers");
         Console.WriteLine("--use-sc registers or removes via sc.exe instead of the Service Control Manager API (Windows only)");
+        Console.WriteLine("--service-user <account> runs the installed service as that Windows or Linux account; omit it for LocalSystem/root");
+        Console.WriteLine("--service-password <env:NAME|file:PATH> supplies a Windows account password without exposing it on the command line; custom accounts cannot use --use-sc");
     }
 }

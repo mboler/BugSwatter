@@ -118,5 +118,25 @@ public sealed class SecondOpinionReviewerTests : IDisposable
         Assert.Contains("maxFileBytes", request.RootElement.GetProperty("messages")[1].GetProperty("content").GetString());
     }
 
+    [Fact]
+    public async Task DeletedCodeIsValidatedFromBaseline()
+    {
+        using var repository = await TestRepository.CreateAsync();
+        string baseline = await repository.CommitFileAsync("removed.cs", "public static class RemovedApi { }\n", "add removed API");
+        await repository.DeleteFileAsync("removed.cs", "delete removed API");
+        string treePath = Path.Combine(repository.Root, "tree");
+        var git = new GitRunner(TestGit.ExecutablePath);
+        await new WorkingTreeManager(git, repository.RemotePath, "main", treePath).EnsureFreshTreeAsync();
+        var handler = new StubHttpMessageHandler();
+        handler.Enqueue(HttpStatusCode.OK, StubHttpMessageHandler.FinalResponse("CONFIRMED FINDINGS\n(none)\nDISCARDED FINDINGS\n(none)\nVERDICT ok"));
+        var reviewer = new SecondOpinionReviewer(new ModelClient(new HttpClient(handler), "https://api.example.test/v1", "frontier-1", TimeSpan.FromSeconds(5), "key"), treePath,
+            "validation system prompt", 100000, 30, false, 5, RepositoryFileReader.DefaultMaxFileBytes, git);
+        var localResult = new FileReviewResult(new ChangedFile("removed.cs", ChangeKind.Deleted, [], baseline), "Deletion may break callers.", 1, 1, null);
+
+        Assert.NotNull(await reviewer.ValidateAsync(localResult));
+        using var request = JsonDocument.Parse(handler.RequestBodies[0]);
+        Assert.Contains("public static class RemovedApi", request.RootElement.GetProperty("messages")[1].GetProperty("content").GetString());
+    }
+
     private SecondOpinionReviewer CreateReviewer(StubHttpMessageHandler handler, bool enableToolCalls = false) => new(new ModelClient(new HttpClient(handler), "https://api.example.test/v1", "frontier-1", TimeSpan.FromSeconds(5), "key"), _tree.Path, "validation system prompt", 100000, 30, enableToolCalls, 5);
 }

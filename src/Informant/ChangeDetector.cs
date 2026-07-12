@@ -3,7 +3,7 @@ using Serilog;
 
 namespace Informant;
 
-/// <summary>One parsed line of git diff --name-status output</summary>
+/// <summary>One parsed null-delimited git diff --name-status entry</summary>
 public sealed record NameStatusEntry(ChangeKind Kind, string Path, string? OldPath);
 
 /// <summary>Determines what changed between the baseline and the branch tip: the file set from --name-status, and per file the changed line ranges from unified-diff hunk headers</summary>
@@ -33,11 +33,17 @@ public sealed partial class ChangeDetector
     /// <summary>Lists reviewable files changed between the two commits, each with its changed line ranges on the new side</summary>
     public async Task<IReadOnlyList<ChangedFile>> GetChangedFilesAsync(string baselineSha, string tipSha)
     {
-        string nameStatus = await _git.RunCheckedAsync("-C", _treePath, "diff", "--name-status", baselineSha, tipSha);
+        string nameStatus = await _git.RunCheckedAsync("-C", _treePath, "diff", "--name-status", "-z", baselineSha, tipSha);
 
         var files = new List<ChangedFile>();
         foreach (var entry in ParseNameStatus(nameStatus))
         {
+            if (entry.Kind == ChangeKind.Deleted)
+            {
+                files.Add(new ChangedFile(entry.Path, ChangeKind.Deleted, [], baselineSha));
+                continue;
+            }
+
             // -U0 makes hunk headers bracket exactly the changed lines, with no context rows mixed in.
             // For renames both paths go into the pathspec so git can pair them and diff only the content edits.
             // :(literal) disables pathspec globbing, otherwise a filename like data[1].cs would match data1.cs instead of itself
@@ -56,53 +62,70 @@ public sealed partial class ChangeDetector
     /// <summary>Lists every tracked file in the tree for a full review</summary>
     public async Task<IReadOnlyList<ChangedFile>> GetAllFilesAsync()
     {
-        string output = await _git.RunCheckedAsync("-C", _treePath, "ls-files");
+        string output = await _git.RunCheckedAsync("-C", _treePath, "ls-files", "-z");
         
-        return [.. output.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(line => new ChangedFile(line.Trim(), ChangeKind.FullReview, []))];
+        return [.. output.Split('\0', StringSplitOptions.RemoveEmptyEntries).Select(path => new ChangedFile(path, ChangeKind.FullReview, []))];
     }
 
-    /// <summary>Parses git diff --name-status output into reviewable entries; deleted files are skipped because there is nothing left to review</summary>
+    /// <summary>Parses null-delimited git diff --name-status output without trimming any legal filename character</summary>
     public static IReadOnlyList<NameStatusEntry> ParseNameStatus(string output)
     {
         var entries = new List<NameStatusEntry>();
-
-        foreach (string rawLine in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        string[] fields = output.Split('\0');
+        int index = 0;
+        while (index < fields.Length && fields[index].Length > 0)
         {
-            string[] parts = rawLine.TrimEnd('\r').Split('\t');
-            if (parts.Length < 2 || parts[0].Length == 0)
+            string status = fields[index++];
+            if (index >= fields.Length || fields[index].Length == 0)
             {
-                continue;
+                Log.Warning("Incomplete null-delimited --name-status entry for status {Status}", status);
+                break;
             }
 
-            switch (parts[0][0])
+            string firstPath = fields[index++];
+            switch (status[0])
             {
                 case 'A':
-                    entries.Add(new NameStatusEntry(ChangeKind.Added, parts[1], null));
+                    entries.Add(new NameStatusEntry(ChangeKind.Added, firstPath, null));
                     break;
 
                 case 'M' or 'T':
-                    entries.Add(new NameStatusEntry(ChangeKind.Modified, parts[1], null));
+                    entries.Add(new NameStatusEntry(ChangeKind.Modified, firstPath, null));
                     break;
 
-                case 'R' when parts.Length >= 3:
-                    entries.Add(new NameStatusEntry(ChangeKind.Renamed, parts[2], parts[1]));
+                case 'R' when TryReadSecondPath(fields, ref index, status, out string renamedPath):
+                    entries.Add(new NameStatusEntry(ChangeKind.Renamed, renamedPath, firstPath));
                     break;
 
-                case 'C' when parts.Length >= 3:
-                    entries.Add(new NameStatusEntry(ChangeKind.Added, parts[2], null));
+                case 'C' when TryReadSecondPath(fields, ref index, status, out string copiedPath):
+                    entries.Add(new NameStatusEntry(ChangeKind.Added, copiedPath, null));
                     break;
 
                 case 'D':
+                    entries.Add(new NameStatusEntry(ChangeKind.Deleted, firstPath, null));
                     break;
 
                 default:
-                    Log.Warning("Unrecognized --name-status line treated as modified: {Line}", rawLine);
-                    entries.Add(new NameStatusEntry(ChangeKind.Modified, parts[^1], null));
+                    Log.Warning("Unrecognized --name-status status treated as modified: {Status}", status);
+                    entries.Add(new NameStatusEntry(ChangeKind.Modified, firstPath, null));
                     break;
             }
         }
 
         return entries;
+    }
+
+    private static bool TryReadSecondPath(string[] fields, ref int index, string status, out string path)
+    {
+        if (index < fields.Length && fields[index].Length > 0)
+        {
+            path = fields[index++];
+            return true;
+        }
+
+        Log.Warning("Incomplete null-delimited --name-status entry for status {Status}", status);
+        path = "";
+        return false;
     }
 
     /// <summary>Extracts new-side line ranges from unified-diff hunk headers such as @@ -12,5 +12,7 @@; an omitted count means one line and a zero count marks a pure deletion with no new-side lines</summary>

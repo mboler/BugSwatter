@@ -3,18 +3,19 @@ namespace Informant.Tests;
 public sealed class ChangeDetectorParsingTests
 {
     [Fact]
-    public void ParsesAddedModifiedAndSkipsDeleted()
+    public void ParsesAddedModifiedAndDeleted()
     {
-        IReadOnlyList<NameStatusEntry> entries = ChangeDetector.ParseNameStatus("M\tsrc/Foo.cs\nA\tsrc/Bar.cs\nD\tgone.cs\n");
-        Assert.Equal(2, entries.Count);
+        IReadOnlyList<NameStatusEntry> entries = ChangeDetector.ParseNameStatus("M\0src/Foo.cs\0A\0src/Bar.cs\0D\0gone.cs\0");
+        Assert.Equal(3, entries.Count);
         Assert.Equal(new NameStatusEntry(ChangeKind.Modified, "src/Foo.cs", null), entries[0]);
         Assert.Equal(new NameStatusEntry(ChangeKind.Added, "src/Bar.cs", null), entries[1]);
+        Assert.Equal(new NameStatusEntry(ChangeKind.Deleted, "gone.cs", null), entries[2]);
     }
 
     [Fact]
     public void ParsesRenameWithBothPaths()
     {
-        IReadOnlyList<NameStatusEntry> entries = ChangeDetector.ParseNameStatus("R100\told/Name.cs\tnew/Name.cs\n");
+        IReadOnlyList<NameStatusEntry> entries = ChangeDetector.ParseNameStatus("R100\0old/Name.cs\0new/Name.cs\0");
         NameStatusEntry entry = Assert.Single(entries);
         Assert.Equal(ChangeKind.Renamed, entry.Kind);
         Assert.Equal("new/Name.cs", entry.Path);
@@ -24,7 +25,7 @@ public sealed class ChangeDetectorParsingTests
     [Fact]
     public void ParsesCopyAsAddedNewPath()
     {
-        IReadOnlyList<NameStatusEntry> entries = ChangeDetector.ParseNameStatus("C75\tsrc/A.cs\tsrc/B.cs\n");
+        IReadOnlyList<NameStatusEntry> entries = ChangeDetector.ParseNameStatus("C75\0src/A.cs\0src/B.cs\0");
         NameStatusEntry entry = Assert.Single(entries);
         Assert.Equal(ChangeKind.Added, entry.Kind);
         Assert.Equal("src/B.cs", entry.Path);
@@ -33,7 +34,7 @@ public sealed class ChangeDetectorParsingTests
     [Fact]
     public void ParsesTypeChangeAsModified()
     {
-        NameStatusEntry entry = Assert.Single(ChangeDetector.ParseNameStatus("T\tsome/link.cs\n"));
+        NameStatusEntry entry = Assert.Single(ChangeDetector.ParseNameStatus("T\0some/link.cs\0"));
         Assert.Equal(ChangeKind.Modified, entry.Kind);
     }
 
@@ -41,10 +42,11 @@ public sealed class ChangeDetectorParsingTests
     public void EmptyOutputYieldsNoEntries() => Assert.Empty(ChangeDetector.ParseNameStatus(""));
 
     [Fact]
-    public void HandlesWindowsLineEndings()
+    public void PreservesWhitespaceUnicodeAndNewlinesInFilenames()
     {
-        NameStatusEntry entry = Assert.Single(ChangeDetector.ParseNameStatus("M\tsrc/Foo.cs\r\n"));
-        Assert.Equal("src/Foo.cs", entry.Path);
+        IReadOnlyList<NameStatusEntry> entries = ChangeDetector.ParseNameStatus("M\0 leading.cs\0M\0trailing.cs \0M\0tab\tname.cs\0M\0unicodé.cs\0M\0line\nbreak.cs\0");
+
+        Assert.Equal([" leading.cs", "trailing.cs ", "tab\tname.cs", "unicodé.cs", "line\nbreak.cs"], entries.Select(entry => entry.Path));
     }
 
     [Theory]

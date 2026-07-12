@@ -19,9 +19,12 @@ public enum ChangeKind
     /// <summary>File renamed since the baseline; ranges cover any content edits made with the rename</summary>
     Renamed,
 
+    /// <summary>File deleted since the baseline; content is read from the recorded baseline Git object</summary>
+    Deleted,
+
     /// <summary>File selected by a full-tree review; there is no changed-range focus</summary>
     FullReview
 }
 
-/// <summary>One file to review, with the line ranges that changed since the baseline</summary>
-public sealed record ChangedFile(string Path, ChangeKind Kind, IReadOnlyList<LineRange> ChangedRanges);
+/// <summary>One file to review, with changed ranges and the immutable Git revision supplying deleted content when applicable</summary>
+public sealed record ChangedFile(string Path, ChangeKind Kind, IReadOnlyList<LineRange> ChangedRanges, string? ContentRevision = null);

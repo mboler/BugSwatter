@@ -8,6 +8,9 @@ public sealed class SecondOpinionReviewer
 {
     private readonly ModelClient _client;
     private readonly RepositoryFileReader _fileReader;
+    private readonly GitRunner? _git;
+    private readonly string _treeRoot;
+    private readonly int _maxFileBytes;
     private readonly string _systemPrompt;
     private readonly int _maxContentCharacters;
     private readonly int _contextLines;
@@ -22,12 +25,15 @@ public sealed class SecondOpinionReviewer
     /// <param name="enableToolCalls">When true the validating model is offered read_file_lines to read more of the file on demand; when false it validates from the excerpt only</param>
     /// <param name="maxFileReads">Cap on read_file_lines calls per file when tools are enabled, so a capable model cannot pull the whole tree</param>
     public SecondOpinionReviewer(ModelClient client, string treeRoot, string systemPrompt, int maxContextCharacters, int contextLines, bool enableToolCalls, int maxFileReads,
-        int maxFileBytes = RepositoryFileReader.DefaultMaxFileBytes)
+        int maxFileBytes = RepositoryFileReader.DefaultMaxFileBytes, GitRunner? git = null)
     {
         ArgumentNullException.ThrowIfNull(client);
 
         _client = client;
         _fileReader = new RepositoryFileReader(treeRoot, maxFileBytes);
+        _git = git;
+        _treeRoot = treeRoot;
+        _maxFileBytes = maxFileBytes;
         _systemPrompt = systemPrompt;
         _maxContentCharacters = Math.Max(2000, maxContextCharacters / 2);
         _contextLines = contextLines;
@@ -45,7 +51,7 @@ public sealed class SecondOpinionReviewer
 
         try
         {
-            string userPrompt = BuildUserPrompt(localResult);
+            string userPrompt = await BuildUserPromptAsync(localResult);
 
             string? content;
             if (_toolLoop is not null)
@@ -139,12 +145,14 @@ public sealed class SecondOpinionReviewer
         return builder.ToString();
     }
 
-    private string BuildUserPrompt(FileReviewResult localResult)
+    private async Task<string> BuildUserPromptAsync(FileReviewResult localResult)
     {
         string excerpt;
         try
         {
-            string[] lines = _fileReader.ReadAllLines(localResult.File.Path);
+            string[] lines = localResult.File.Kind == ChangeKind.Deleted
+                ? await ReadDeletedLinesAsync(localResult.File)
+                : _fileReader.ReadAllLines(localResult.File.Path);
             excerpt = BuildCodeExcerpt(lines, localResult.File.ChangedRanges, _maxContentCharacters, _contextLines);
         }
         catch (RepositoryFileException ex)
@@ -176,12 +184,32 @@ public sealed class SecondOpinionReviewer
 
         if (_toolLoop is not null)
         {
-            builder.AppendLine("You may call the read_file_lines tool to read more of this file if the excerpt is not enough, for example to check something the local reviewer may have missed. Use it sparingly and stay within this file; do not try to read the whole tree.");
+            if (localResult.File.Kind == ChangeKind.Deleted)
+            {
+                builder.AppendLine("You may call read_file_lines sparingly to inspect surviving files that may still reference or depend on this deleted file.");
+                builder.AppendLine("The deleted path itself no longer exists in the working tree.");
+            }
+            else
+            {
+                builder.AppendLine("You may call read_file_lines to read more of this file if the excerpt is not enough, for example to check something the local reviewer may have missed.");
+                builder.AppendLine("Use it sparingly and stay within this file; do not try to read the whole tree.");
+            }
+
             builder.AppendLine();
         }
 
         builder.AppendLine("Produce your CONFIRMED FINDINGS, DISCARDED FINDINGS and VERDICT now.");
 
         return builder.ToString();
+    }
+
+    private async Task<string[]> ReadDeletedLinesAsync(ChangedFile file)
+    {
+        if (_git is null || string.IsNullOrWhiteSpace(file.ContentRevision))
+        {
+            throw new RepositoryFileException(RepositoryFileError.ReadFailed, $"deleted file '{file.Path}' has no baseline Git revision available");
+        }
+
+        return await RepositoryFileReader.ReadGitBlobLinesAsync(_git, _treeRoot, file.ContentRevision, file.Path, _maxFileBytes);
     }
 }

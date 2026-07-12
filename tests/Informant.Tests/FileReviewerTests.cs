@@ -39,6 +39,30 @@ public sealed class FileReviewerTests : IDisposable
     }
 
     [Fact]
+    public async Task DeletedFileIsReviewedFromBaselineWithRemovalGuidance()
+    {
+        using var repository = await TestRepository.CreateAsync();
+        string baseline = await repository.CommitFileAsync("removed.cs", "public static class RemovedApi { }\n", "add removed API");
+        await repository.DeleteFileAsync("removed.cs", "delete removed API");
+        string treePath = Path.Combine(repository.Root, "tree");
+        var git = new GitRunner(TestGit.ExecutablePath);
+        await new WorkingTreeManager(git, repository.RemotePath, "main", treePath).EnsureFreshTreeAsync();
+        var handler = new StubHttpMessageHandler();
+        handler.Enqueue(HttpStatusCode.OK, StubHttpMessageHandler.FinalResponse("Deletion may break callers."));
+        var reviewer = new FileReviewer(new ToolCallLoop(new ModelClient(new HttpClient(handler), "http://localhost:9999/v1", "test-model", TimeSpan.FromSeconds(5)),
+            new ReadFileLinesTool(treePath), 100000), treePath, "system prompt", 800, 100000, 0, RepositoryFileReader.DefaultMaxFileBytes, git);
+
+        FileReviewResult result = await reviewer.ReviewAsync(new ChangedFile("removed.cs", ChangeKind.Deleted, [], baseline));
+
+        Assert.True(result.FullyReviewed);
+        string prompt = GetUserPrompt(handler.RequestBodies[0]);
+        Assert.Contains("public static class RemovedApi", prompt);
+        Assert.Contains("surviving references", prompt);
+        Assert.Contains("deployment", prompt);
+        Assert.Contains("deleted (baseline content shown)", prompt);
+    }
+
+    [Fact]
     public async Task SkipsBinaryEmptyMissingAndRangelessFilesWithoutModelCalls()
     {
         var handler = new StubHttpMessageHandler();

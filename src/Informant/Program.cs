@@ -119,7 +119,8 @@ internal static class Program
         await ToolCallingVerifier.RequireToolCallingAsync(client, config.MaxContextCharacters);
 
         var loop = new ToolCallLoop(client, new ReadFileLinesTool(config.ResolvedAllowedReadRoot, config.MaxFileBytes), config.MaxContextCharacters);
-        var reviewer = new FileReviewer(loop, config.WorkingTreePath, config.ResolveReviewPrompt(config.WorkingTreePath), config.MaxFileLines, config.MaxContextCharacters, config.PerFileRetryCount, config.MaxFileBytes);
+        var reviewer = new FileReviewer(loop, config.WorkingTreePath, config.ResolveReviewPrompt(config.WorkingTreePath), config.MaxFileLines, config.MaxContextCharacters,
+            config.PerFileRetryCount, config.MaxFileBytes, git);
 
         int reviewedCount = 0;
         var skipped = new List<(string Path, string Reason)>();
@@ -152,7 +153,7 @@ internal static class Program
         string primaryReportPath = report.ReportPath;
         if (config.SecondOpinion is { } secondOpinion)
         {
-            SecondOpinionOutcome? outcome = await RunSecondOpinionAsync(secondOpinion, config, results, runStamp, report.ReportPath);
+            SecondOpinionOutcome? outcome = await RunSecondOpinionAsync(secondOpinion, config, git, results, runStamp, report.ReportPath);
 
             if (outcome is not null)
             {
@@ -272,7 +273,8 @@ internal static class Program
         }
     }
 
-    private static async Task<SecondOpinionOutcome?> RunSecondOpinionAsync(SecondOpinionConfig secondOpinion, InformantConfig config, IReadOnlyList<FileReviewResult> results, string runStamp, string sourceReportPath)
+    private static async Task<SecondOpinionOutcome?> RunSecondOpinionAsync(SecondOpinionConfig secondOpinion, InformantConfig config, GitRunner git, IReadOnlyList<FileReviewResult> results, string runStamp,
+        string sourceReportPath)
     {
         var stopwatch = Stopwatch.StartNew();
         try
@@ -310,7 +312,7 @@ internal static class Program
             Log.Information("Second-opinion tool-calling: {Status} ({Detail})", toolProbe.Success ? $"supported, up to {secondOpinion.MaxFileReads} reads per file" : "not supported, validating from the excerpt only", toolProbe.Detail);
 
             var validator = new SecondOpinionReviewer(client, config.WorkingTreePath, secondOpinion.ResolvePrompt(), config.MaxContextCharacters, secondOpinion.ContextLines, toolProbe.Success, secondOpinion.MaxFileReads,
-                config.MaxFileBytes);
+                config.MaxFileBytes, git);
             var writer = new SecondOpinionReportWriter(config.ReportDirectory, runStamp);
             writer.WriteHeader(secondOpinion.ModelName, secondOpinion.Endpoint, sourceReportPath, DateTimeOffset.Now, secondOpinion.ContextLines);
             var jsonReport = new SecondOpinionJsonReport();

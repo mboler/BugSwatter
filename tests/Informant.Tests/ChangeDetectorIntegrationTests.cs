@@ -20,14 +20,17 @@ public sealed class ChangeDetectorIntegrationTests
         var detector = new ChangeDetector(new GitRunner(TestGit.ExecutablePath), Path.Combine(repository.Root, "tree"));
         IReadOnlyList<ChangedFile> files = await detector.GetChangedFilesAsync(baseline, tip);
 
-        Assert.Equal(2, files.Count);
+        Assert.Equal(3, files.Count);
         ChangedFile a = Assert.Single(files, f => f.Path == "a.txt");
         Assert.Equal(ChangeKind.Modified, a.Kind);
         Assert.Equal([new LineRange(3, 3), new LineRange(6, 7)], a.ChangedRanges);
         ChangedFile c = Assert.Single(files, f => f.Path == "c.txt");
         Assert.Equal(ChangeKind.Added, c.Kind);
         Assert.Equal([new LineRange(1, 3)], c.ChangedRanges);
-        Assert.DoesNotContain(files, f => f.Path == "b.txt");
+        ChangedFile deleted = Assert.Single(files, f => f.Path == "b.txt");
+        Assert.Equal(ChangeKind.Deleted, deleted.Kind);
+        Assert.Equal(baseline, deleted.ContentRevision);
+        Assert.Empty(deleted.ChangedRanges);
         Assert.Equal(tip, await manager.GetTipShaAsync());
     }
 
@@ -47,6 +50,22 @@ public sealed class ChangeDetectorIntegrationTests
         Assert.Equal(ChangeKind.Renamed, renamed.Kind);
         Assert.Equal("new-name.txt", renamed.Path);
         Assert.Equal([new LineRange(4, 4)], renamed.ChangedRanges);
+    }
+
+    [Fact]
+    public async Task DeletionOnlyCommitProducesReviewableDeletion()
+    {
+        using var repository = await TestRepository.CreateAsync();
+        string baseline = await repository.CommitFileAsync("removed.txt", "content that must be reviewed before removal\n", "add file");
+        string tip = await repository.DeleteFileAsync("removed.txt", "delete file");
+        await CloneTreeAsync(repository);
+        var detector = new ChangeDetector(new GitRunner(TestGit.ExecutablePath), Path.Combine(repository.Root, "tree"));
+
+        ChangedFile deleted = Assert.Single(await detector.GetChangedFilesAsync(baseline, tip));
+
+        Assert.Equal("removed.txt", deleted.Path);
+        Assert.Equal(ChangeKind.Deleted, deleted.Kind);
+        Assert.Equal(baseline, deleted.ContentRevision);
     }
 
     [Fact]
@@ -92,6 +111,29 @@ public sealed class ChangeDetectorIntegrationTests
         IReadOnlyList<ChangedFile> files = await detector.GetAllFilesAsync();
         Assert.Equal(["a.txt", "sub/b.txt"], files.Select(f => f.Path).OrderBy(p => p, StringComparer.Ordinal).ToArray());
         Assert.All(files, f => Assert.Equal(ChangeKind.FullReview, f.Kind));
+    }
+
+    [Fact]
+    public async Task FullListingPreservesHostSupportedUnusualNames()
+    {
+        using var repository = await TestRepository.CreateAsync();
+        List<string> paths = [" leading.txt", "unicodé-文件.txt"];
+        if (!OperatingSystem.IsWindows())
+        {
+            paths.AddRange(["tab\tname.txt", "trailing.txt ", "line\nbreak.txt"]);
+        }
+
+        foreach (string path in paths)
+        {
+            await repository.CommitFileAsync(path, "content\n", $"add {path}");
+        }
+
+        await CloneTreeAsync(repository);
+        var detector = new ChangeDetector(new GitRunner(TestGit.ExecutablePath), Path.Combine(repository.Root, "tree"));
+
+        IReadOnlyList<ChangedFile> files = await detector.GetAllFilesAsync();
+
+        Assert.Equal(paths.OrderBy(path => path, StringComparer.Ordinal), files.Select(file => file.Path).OrderBy(path => path, StringComparer.Ordinal));
     }
 
     [Fact]

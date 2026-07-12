@@ -15,22 +15,29 @@ public sealed class FileReviewer
 {
     private readonly ToolCallLoop _loop;
     private readonly RepositoryFileReader _fileReader;
+    private readonly GitRunner? _git;
+    private readonly string _treeRoot;
     private readonly string _systemPrompt;
     private readonly int _maxFileLines;
     private readonly int _maxContentCharacters;
     private readonly int _retryCount;
+    private readonly int _maxFileBytes;
 
     /// <summary>Creates a reviewer; content per call is capped at half the context budget, leaving the rest for the prompt and on-demand tool reads</summary>
-    public FileReviewer(ToolCallLoop loop, string treeRoot, string systemPrompt, int maxFileLines, int maxContextCharacters, int retryCount, int maxFileBytes = RepositoryFileReader.DefaultMaxFileBytes)
+    public FileReviewer(ToolCallLoop loop, string treeRoot, string systemPrompt, int maxFileLines, int maxContextCharacters, int retryCount, int maxFileBytes = RepositoryFileReader.DefaultMaxFileBytes,
+        GitRunner? git = null)
     {
         ArgumentNullException.ThrowIfNull(loop);
 
         _loop = loop;
         _fileReader = new RepositoryFileReader(treeRoot, maxFileBytes);
+        _git = git;
+        _treeRoot = treeRoot;
         _systemPrompt = systemPrompt;
         _maxFileLines = maxFileLines;
         _maxContentCharacters = Math.Max(2000, maxContextCharacters / 2);
         _retryCount = retryCount;
+        _maxFileBytes = maxFileBytes;
     }
 
     /// <summary>Reviews the file and returns findings, a skip, or a partial result; never throws for per-file failures</summary>
@@ -46,7 +53,9 @@ public sealed class FileReviewer
         string[] lines;
         try
         {
-            lines = await _fileReader.ReadAllLinesAsync(file.Path, cancellationToken);
+            lines = file.Kind == ChangeKind.Deleted
+                ? await ReadDeletedLinesAsync(file)
+                : await _fileReader.ReadAllLinesAsync(file.Path, cancellationToken);
         }
         catch (RepositoryFileException ex)
         {
@@ -135,6 +144,12 @@ public sealed class FileReviewer
                 builder.AppendLine("Full-tree review; the entire file is the review subject.");
                 break;
 
+            case ChangeKind.Deleted:
+                builder.AppendLine("The file was deleted; the content below is its complete baseline version before removal.");
+                builder.AppendLine("Review whether removing it breaks surviving references, builds, configuration, documentation, deployment, compatibility, or expected behavior.");
+                builder.AppendLine("Report obsolete code only when its removal is incomplete or harmful.");
+                break;
+
             default:
                 builder.AppendLine(rangesInChunk.Length > 0
                     ? $"Changed line ranges (1-based, inclusive): {string.Join(", ", rangesInChunk.Select(range => range.ToString()))}. Review those lines; the rest of the file is context."
@@ -175,6 +190,9 @@ public sealed class FileReviewer
             
             case ChangeKind.Renamed:
                 return "renamed (with content edits)";
+
+            case ChangeKind.Deleted:
+                return "deleted (baseline content shown)";
             
             case ChangeKind.FullReview:
                 return "full-tree review";
@@ -182,5 +200,15 @@ public sealed class FileReviewer
             default:
                 return kind.ToString();
         }
+    }
+
+    private async Task<string[]> ReadDeletedLinesAsync(ChangedFile file)
+    {
+        if (_git is null || string.IsNullOrWhiteSpace(file.ContentRevision))
+        {
+            throw new RepositoryFileException(RepositoryFileError.ReadFailed, $"deleted file '{file.Path}' has no baseline Git revision available");
+        }
+
+        return await RepositoryFileReader.ReadGitBlobLinesAsync(_git, _treeRoot, file.ContentRevision, file.Path, _maxFileBytes);
     }
 }

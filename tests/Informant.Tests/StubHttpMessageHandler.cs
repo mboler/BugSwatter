@@ -28,11 +28,18 @@ internal sealed class StubHttpMessageHandler : HttpMessageHandler
         return new HttpResponseMessage(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
     });
 
+    /// <summary>Queues a response with caller-supplied content, useful for bodies without a content-length header</summary>
+    public void EnqueueContent(HttpStatusCode status, HttpContent content) =>
+        _responders.Enqueue(_ => Task.FromResult(new HttpResponseMessage(status) { Content = content }));
+
     /// <summary>Queues a connection-level failure</summary>
     public void EnqueueException(Exception exception) => _responders.Enqueue(_ => Task.FromException<HttpResponseMessage>(exception));
 
     /// <summary>Builds a chat response carrying a plain final answer</summary>
     public static string FinalResponse(string content) => JsonSerializer.Serialize(new { choices = new[] { new { message = new { role = "assistant", content }, finish_reason = "stop" } } });
+
+    /// <summary>Creates response content that does not advertise its length</summary>
+    public static HttpContent UnknownLengthContent(string body) => new UnknownLengthStringContent(body);
 
     /// <summary>Builds a chat response carrying tool calls; each entry is (id, name, arguments serialized to JSON)</summary>
     public static string ToolCallResponse(params (string Id, string Name, string ArgumentsJson)[] calls)
@@ -57,5 +64,22 @@ internal sealed class StubHttpMessageHandler : HttpMessageHandler
         }
 
         return await _responders.Dequeue()(cancellationToken);
+    }
+
+    private sealed class UnknownLengthStringContent(string body) : HttpContent
+    {
+        private readonly byte[] _bytes = Encoding.UTF8.GetBytes(body);
+
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) => stream.WriteAsync(_bytes).AsTask();
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = 0;
+            return false;
+        }
+
+        protected override Task<Stream> CreateContentReadStreamAsync() => Task.FromResult<Stream>(new MemoryStream(_bytes, writable: false));
+
+        protected override Task<Stream> CreateContentReadStreamAsync(CancellationToken cancellationToken) => CreateContentReadStreamAsync();
     }
 }

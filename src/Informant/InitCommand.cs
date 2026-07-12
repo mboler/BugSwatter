@@ -50,6 +50,12 @@ public static class InitCommand
           // Files longer than this many lines are chunked at logical boundaries
           "maxFileLines": 800,
 
+          // Source files larger than 10 MiB are reported as oversized without being loaded.
+          "maxFileBytes": 10485760,
+
+          // Model response bodies larger than 4 MiB are rejected before JSON parsing.
+          "maxModelResponseBytes": 4194304,
+
           // Retries per file before it is logged and skipped
           "perFileRetryCount": 2,
 

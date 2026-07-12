@@ -63,6 +63,32 @@ public sealed class ModelClientTests
     }
 
     [Fact]
+    public async Task ContentLengthOverResponseLimitIsRejected()
+    {
+        var handler = new StubHttpMessageHandler();
+        handler.Enqueue(HttpStatusCode.OK, StubHttpMessageHandler.FinalResponse(new string('x', 2000)));
+        var client = new ModelClient(new HttpClient(handler), "http://localhost:9999/v1", "test-model", TimeSpan.FromSeconds(5), maxResponseBytes: 1000);
+
+        ModelCallException ex = await Assert.ThrowsAsync<ModelCallException>(() => client.CompleteAsync([new ChatMessage { Role = "user", Content = "go" }], []));
+
+        Assert.Contains("maxModelResponseBytes", ex.Message);
+    }
+
+    [Fact]
+    public async Task StreamingBodyOverResponseLimitIsRejectedWithoutContentLength()
+    {
+        var handler = new StubHttpMessageHandler();
+        HttpContent content = StubHttpMessageHandler.UnknownLengthContent(StubHttpMessageHandler.FinalResponse(new string('x', 2000)));
+        Assert.Null(content.Headers.ContentLength);
+        handler.EnqueueContent(HttpStatusCode.OK, content);
+        var client = new ModelClient(new HttpClient(handler), "http://localhost:9999/v1", "test-model", TimeSpan.FromSeconds(5), maxResponseBytes: 1000);
+
+        ModelCallException ex = await Assert.ThrowsAsync<ModelCallException>(() => client.CompleteAsync([new ChatMessage { Role = "user", Content = "go" }], []));
+
+        Assert.Contains("maxModelResponseBytes", ex.Message);
+    }
+
+    [Fact]
     public async Task SlowResponseTimesOutAsModelCallException()
     {
         var handler = new StubHttpMessageHandler();

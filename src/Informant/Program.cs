@@ -115,11 +115,11 @@ internal static class Program
         var report = new ReportWriter(config.ReportDirectory, runStamp, config.ModelName, config.ModelEndpoint, config.MaxContextCharacters, config.MaxFileLines);
         report.WriteHeader(config.RepositoryUrl, config.Branch, config.ReviewMode, baselineSha, tipSha, startedAt);
 
-        var client = new ModelClient(SharedHttpClient, config.ModelEndpoint, config.ModelName, TimeSpan.FromSeconds(config.RequestTimeoutSeconds));
+        var client = new ModelClient(SharedHttpClient, config.ModelEndpoint, config.ModelName, TimeSpan.FromSeconds(config.RequestTimeoutSeconds), maxResponseBytes: config.MaxModelResponseBytes);
         await ToolCallingVerifier.RequireToolCallingAsync(client, config.MaxContextCharacters);
 
-        var loop = new ToolCallLoop(client, new ReadFileLinesTool(config.ResolvedAllowedReadRoot), config.MaxContextCharacters);
-        var reviewer = new FileReviewer(loop, config.WorkingTreePath, config.ResolveReviewPrompt(config.WorkingTreePath), config.MaxFileLines, config.MaxContextCharacters, config.PerFileRetryCount);
+        var loop = new ToolCallLoop(client, new ReadFileLinesTool(config.ResolvedAllowedReadRoot, config.MaxFileBytes), config.MaxContextCharacters);
+        var reviewer = new FileReviewer(loop, config.WorkingTreePath, config.ResolveReviewPrompt(config.WorkingTreePath), config.MaxFileLines, config.MaxContextCharacters, config.PerFileRetryCount, config.MaxFileBytes);
 
         int reviewedCount = 0;
         var skipped = new List<(string Path, string Reason)>();
@@ -284,7 +284,7 @@ internal static class Program
                 return null;
             }
 
-            var client = new ModelClient(SharedHttpClient, secondOpinion.Endpoint, secondOpinion.ModelName, TimeSpan.FromSeconds(secondOpinion.RequestTimeoutSeconds), apiKey);
+            var client = new ModelClient(SharedHttpClient, secondOpinion.Endpoint, secondOpinion.ModelName, TimeSpan.FromSeconds(secondOpinion.RequestTimeoutSeconds), apiKey, config.MaxModelResponseBytes);
 
             // Gate: prove endpoint, model and key with a minimal round trip before any code leaves the machine
             await client.CompleteAsync([new ChatMessage { Role = "user", Content = "Reply with the single word READY." }], []);
@@ -309,7 +309,8 @@ internal static class Program
             VerificationResult toolProbe = await ToolCallingVerifier.VerifyAsync(client, config.MaxContextCharacters);
             Log.Information("Second-opinion tool-calling: {Status} ({Detail})", toolProbe.Success ? $"supported, up to {secondOpinion.MaxFileReads} reads per file" : "not supported, validating from the excerpt only", toolProbe.Detail);
 
-            var validator = new SecondOpinionReviewer(client, config.WorkingTreePath, secondOpinion.ResolvePrompt(), config.MaxContextCharacters, secondOpinion.ContextLines, toolProbe.Success, secondOpinion.MaxFileReads);
+            var validator = new SecondOpinionReviewer(client, config.WorkingTreePath, secondOpinion.ResolvePrompt(), config.MaxContextCharacters, secondOpinion.ContextLines, toolProbe.Success, secondOpinion.MaxFileReads,
+                config.MaxFileBytes);
             var writer = new SecondOpinionReportWriter(config.ReportDirectory, runStamp);
             writer.WriteHeader(secondOpinion.ModelName, secondOpinion.Endpoint, sourceReportPath, DateTimeOffset.Now, secondOpinion.ContextLines);
             var jsonReport = new SecondOpinionJsonReport();
@@ -358,7 +359,7 @@ internal static class Program
 
     private static async Task<int> VerifyToolCallingAsync(InformantConfig config)
     {
-        var client = new ModelClient(SharedHttpClient, config.ModelEndpoint, config.ModelName, TimeSpan.FromSeconds(config.RequestTimeoutSeconds));
+        var client = new ModelClient(SharedHttpClient, config.ModelEndpoint, config.ModelName, TimeSpan.FromSeconds(config.RequestTimeoutSeconds), maxResponseBytes: config.MaxModelResponseBytes);
 
         var result = await ToolCallingVerifier.VerifyAsync(client, config.MaxContextCharacters);
         Log.Information("Tool-calling verification against {Endpoint} with model {Model}: {Outcome}. {Detail}", config.ModelEndpoint, config.ModelName, result.Success ? "PASSED" : "FAILED", result.Detail);

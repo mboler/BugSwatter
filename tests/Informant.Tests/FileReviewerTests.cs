@@ -63,6 +63,42 @@ public sealed class FileReviewerTests : IDisposable
     }
 
     [Fact]
+    public async Task SkipsOversizedFileWithExplicitReason()
+    {
+        File.WriteAllText(Path.Combine(_tree.Path, "large.cs"), new string('x', 1025));
+        var handler = new StubHttpMessageHandler();
+        var reviewer = new FileReviewer(CreateLoop(handler), _tree.Path, "system prompt", 800, 100000, 0, 1024);
+
+        FileReviewResult result = await reviewer.ReviewAsync(new ChangedFile("large.cs", ChangeKind.Modified, [new LineRange(1, 1)]));
+
+        Assert.Contains("maxFileBytes", result.SkipReason);
+        Assert.Empty(handler.RequestBodies);
+    }
+
+    [Fact]
+    public async Task SkipsSymbolicLinkWithExplicitReason()
+    {
+        using var outside = new TempDirectory();
+        string target = Path.Combine(outside.Path, "target.cs");
+        string link = Path.Combine(_tree.Path, "linked.cs");
+        File.WriteAllText(target, "class Secret { }");
+        bool created = TryCreateFileSymbolicLink(link, target);
+        Assert.SkipUnless(created, "symbolic links are not available on this test host");
+        try
+        {
+            var handler = new StubHttpMessageHandler();
+            FileReviewResult result = await CreateReviewer(handler).ReviewAsync(new ChangedFile("linked.cs", ChangeKind.Modified, [new LineRange(1, 1)]));
+
+            Assert.Contains("symbolic link", result.SkipReason);
+            Assert.Empty(handler.RequestBodies);
+        }
+        finally
+        {
+            File.Delete(link);
+        }
+    }
+
+    [Fact]
     public async Task RetriesFailedCallsThenSkips()
     {
         WriteLines("flaky.cs", "class Flaky { }");
@@ -150,5 +186,18 @@ public sealed class FileReviewerTests : IDisposable
     {
         using var document = JsonDocument.Parse(requestBody);
         return document.RootElement.GetProperty("messages")[1].GetProperty("content").GetString()!;
+    }
+
+    private static bool TryCreateFileSymbolicLink(string link, string target)
+    {
+        try
+        {
+            File.CreateSymbolicLink(link, target);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+        {
+            return false;
+        }
     }
 }

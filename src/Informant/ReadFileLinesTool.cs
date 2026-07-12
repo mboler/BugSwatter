@@ -34,16 +34,21 @@ public sealed class ReadFileLinesTool
         }
     };
 
-    private readonly string _rootWithSeparator;
-    private readonly StringComparison _pathComparison;
+    private readonly RepositoryFileReader _reader;
 
     /// <summary>Creates the tool confined to <paramref name="allowedReadRoot"/></summary>
-    public ReadFileLinesTool(string allowedReadRoot)
+    public ReadFileLinesTool(string allowedReadRoot, int maxFileBytes = RepositoryFileReader.DefaultMaxFileBytes)
     {
         ArgumentNullException.ThrowIfNull(allowedReadRoot);
 
-        _rootWithSeparator = Path.TrimEndingDirectorySeparator(Path.GetFullPath(allowedReadRoot)) + Path.DirectorySeparatorChar;
-        _pathComparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        _reader = new RepositoryFileReader(allowedReadRoot, maxFileBytes);
+    }
+
+    /// <summary>Creates the tool over an existing bounded repository reader</summary>
+    public ReadFileLinesTool(RepositoryFileReader reader)
+    {
+        ArgumentNullException.ThrowIfNull(reader);
+        _reader = reader;
     }
 
     /// <summary>Parses the raw JSON arguments of a tool call and executes the read; malformed arguments produce a structured error result</summary>
@@ -78,27 +83,6 @@ public sealed class ReadFileLinesTool
             return Error("path is required");
         }
 
-        string fullPath;
-        try
-        {
-            fullPath = Path.GetFullPath(Path.Combine(_rootWithSeparator, path));
-        }
-        catch (Exception ex) when (ex is ArgumentException or PathTooLongException or NotSupportedException)
-        {
-            return Error($"invalid path '{path}': {ex.Message}");
-        }
-
-        if (!fullPath.StartsWith(_rootWithSeparator, _pathComparison))
-        {
-            Log.Warning("read_file_lines rejected path outside the read root: {Path}", path);
-            return Error($"path '{path}' resolves outside the allowed read root; only files inside the repository can be read");
-        }
-
-        if (!File.Exists(fullPath))
-        {
-            return Error($"file not found: {path}");
-        }
-
         if (startLine < 1)
         {
             return Error($"start_line must be 1 or greater, got {startLine}");
@@ -109,46 +93,39 @@ public sealed class ReadFileLinesTool
             return Error($"end_line ({endLine}) must be greater than or equal to start_line ({startLine})");
         }
 
-        string[] lines;
+        RepositoryLineRange result;
         try
         {
-            lines = File.ReadAllLines(fullPath);
+            result = _reader.ReadLines(path, startLine, endLine, MaxLinesPerCall);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (RepositoryFileException ex)
         {
-            return Error($"could not read '{path}': {ex.Message}");
+            if (ex.Error is RepositoryFileError.OutsideRoot or RepositoryFileError.InvalidPath or RepositoryFileError.ReparsePoint)
+            {
+                Log.Warning("read_file_lines rejected unsafe path {Path}: {Reason}", path, ex.Message);
+            }
+
+            return Error(ex.Message);
         }
 
-        if (Array.Exists(lines, line => line.Contains('\0')))
+        if (startLine > result.TotalLines)
         {
-            return Error($"'{path}' appears to be a binary file and cannot be read as text");
-        }
-
-        if (startLine > lines.Length)
-        {
-            return Error($"start_line {startLine} is beyond the end of the file; '{path}' has {lines.Length} lines");
-        }
-
-        int effectiveEnd = Math.Min(endLine, lines.Length);
-        bool capped = effectiveEnd - startLine + 1 > MaxLinesPerCall;
-        if (capped)
-        {
-            effectiveEnd = startLine + MaxLinesPerCall - 1;
+            return Error($"start_line {startLine} is beyond the end of the file; '{path}' has {result.TotalLines} lines");
         }
 
         var builder = new StringBuilder();
-        if (effectiveEnd != endLine)
+        if (result.EffectiveEndLine != endLine)
         {
-            string cappedNote = capped ? $"; at most {MaxLinesPerCall} lines are returned per call, request further ranges as needed" : "";
-            builder.AppendLine($"note: returning lines {startLine}-{effectiveEnd} of '{path}', which has {lines.Length} lines total{cappedNote}");
+            string cappedNote = result.Capped ? $"; at most {MaxLinesPerCall} lines are returned per call, request further ranges as needed" : "";
+            builder.AppendLine($"note: returning lines {startLine}-{result.EffectiveEndLine} of '{path}', which has {result.TotalLines} lines total{cappedNote}");
         }
 
-        for (int lineNumber = startLine; lineNumber <= effectiveEnd; lineNumber++)
+        foreach ((int lineNumber, string text) in result.Lines)
         {
-            builder.AppendLine($"{lineNumber,6} | {lines[lineNumber - 1]}");
+            builder.AppendLine($"{lineNumber,6} | {text}");
         }
 
-        Log.Debug("read_file_lines served {Path} lines {Start}-{End}", path, startLine, effectiveEnd);
+        Log.Debug("read_file_lines served {Path} lines {Start}-{End}", path, startLine, result.EffectiveEndLine);
         return builder.ToString();
     }
 

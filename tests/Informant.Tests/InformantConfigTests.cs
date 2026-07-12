@@ -20,6 +20,8 @@ public sealed class InformantConfigTests : IDisposable
         Assert.Equal(Path.Combine(_directory.Path, "informant.state.json"), config.StateFilePath);
         Assert.Equal(24000, config.MaxContextCharacters);
         Assert.Equal(800, config.MaxFileLines);
+        Assert.Equal(10 * 1024 * 1024, config.MaxFileBytes);
+        Assert.Equal(4 * 1024 * 1024, config.MaxModelResponseBytes);
         Assert.Equal(2, config.PerFileRetryCount);
         Assert.Equal(1800, config.RequestTimeoutSeconds);
         Assert.Null(config.ConsoleLogging);
@@ -89,6 +91,16 @@ public sealed class InformantConfigTests : IDisposable
         WriteConfig(values => values["modelEndpoint"] = "not a url");
         InformantFatalException ex = Assert.Throws<InformantFatalException>(() => InformantConfig.Load(_directory.Path));
         Assert.Contains("modelEndpoint", ex.Message);
+    }
+
+    [Theory]
+    [InlineData("maxFileBytes")]
+    [InlineData("maxModelResponseBytes")]
+    public void NonPositiveByteLimitThrowsFatal(string field)
+    {
+        WriteConfig(values => values[field] = 0);
+        InformantFatalException ex = Assert.Throws<InformantFatalException>(() => InformantConfig.Load(_directory.Path));
+        Assert.Contains(field, ex.Message);
     }
 
     [Fact]
@@ -237,6 +249,30 @@ public sealed class InformantConfigTests : IDisposable
     }
 
     [Fact]
+    public void RepositoryPromptIncludeSymbolicLinkIsRejected()
+    {
+        using var outside = new TempDirectory();
+        string tree = EmptyTree();
+        string link = Path.Combine(tree, "AGENTS.md");
+        File.WriteAllText(Path.Combine(outside.Path, "secret.md"), "outside secret guidance");
+        bool created = TryCreateFileSymbolicLink(link, Path.Combine(outside.Path, "secret.md"));
+        Assert.SkipUnless(created, "symbolic links are not available on this test host");
+        try
+        {
+            WriteConfig(values => values["promptIncludeFiles"] = new[] { "AGENTS.md" });
+
+            string prompt = InformantConfig.Load(_directory.Path).ResolveReviewPrompt(tree);
+
+            Assert.Equal(DefaultReviewPrompt.Text, prompt);
+            Assert.DoesNotContain("outside secret guidance", prompt);
+        }
+        finally
+        {
+            File.Delete(link);
+        }
+    }
+
+    [Fact]
     public void EnvironmentVariableOverridesAConfigValue()
     {
         WriteConfig();
@@ -299,6 +335,19 @@ public sealed class InformantConfigTests : IDisposable
         }
 
         return count;
+    }
+
+    private static bool TryCreateFileSymbolicLink(string link, string target)
+    {
+        try
+        {
+            File.CreateSymbolicLink(link, target);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+        {
+            return false;
+        }
     }
 
     private void WriteConfig(Action<Dictionary<string, object?>>? mutate = null)

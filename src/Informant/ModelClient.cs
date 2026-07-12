@@ -9,6 +9,9 @@ namespace Informant;
 /// <summary>Minimal client for an OpenAI-compatible chat-completions endpoint with native tool-calling. No streaming, one choice, nothing speculative</summary>
 public sealed class ModelClient
 {
+    /// <summary>Default model-response limit of 4 MiB</summary>
+    public const int DefaultMaxResponseBytes = 4 * 1024 * 1024;
+
     private static readonly JsonSerializerOptions JsonOptions = new() { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
 
     private readonly HttpClient _http;
@@ -16,12 +19,14 @@ public sealed class ModelClient
     private readonly string _modelName;
     private readonly TimeSpan _requestTimeout;
     private readonly string? _apiKey;
+    private readonly int _maxResponseBytes;
 
     /// <summary>Creates a client; the HttpClient is injected so tests can script the wire exchange, and an optional API key is sent per request as a bearer token so authenticated cloud endpoints work over the same shared client as local ones</summary>
-    public ModelClient(HttpClient httpClient, string endpoint, string modelName, TimeSpan requestTimeout, string? apiKey = null)
+    public ModelClient(HttpClient httpClient, string endpoint, string modelName, TimeSpan requestTimeout, string? apiKey = null, int maxResponseBytes = DefaultMaxResponseBytes)
     {
         ArgumentNullException.ThrowIfNull(httpClient);
         ArgumentNullException.ThrowIfNull(endpoint);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxResponseBytes);
 
         _http = httpClient;
         try
@@ -44,6 +49,7 @@ public sealed class ModelClient
         _modelName = modelName;
         _requestTimeout = requestTimeout;
         _apiKey = apiKey;
+        _maxResponseBytes = maxResponseBytes;
     }
 
     /// <summary>Sends the conversation with the offered tools and returns the assistant message of the first choice</summary>
@@ -66,9 +72,9 @@ public sealed class ModelClient
                 httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
             }
 
-            using var response = await _http.SendAsync(httpRequest, timeoutSource.Token);
+            using var response = await _http.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, timeoutSource.Token);
 
-            body = await response.Content.ReadAsStringAsync(timeoutSource.Token);
+            body = await ReadResponseBodyAsync(response.Content, timeoutSource.Token);
             if (!response.IsSuccessStatusCode)
             {
                 throw new ModelCallException($"Model endpoint returned {(int)response.StatusCode} {response.StatusCode}: {Summarize(body)}");
@@ -108,5 +114,29 @@ public sealed class ModelClient
         string trimmed = text.Trim();
         
         return trimmed.Length <= 500 ? trimmed : trimmed[..500] + " [truncated]";
+    }
+
+    private async Task<string> ReadResponseBodyAsync(HttpContent content, CancellationToken cancellationToken)
+    {
+        if (content.Headers.ContentLength > _maxResponseBytes)
+        {
+            throw new ModelCallException($"Model response exceeds maxModelResponseBytes limit of {_maxResponseBytes} bytes");
+        }
+
+        await using Stream source = await content.ReadAsStreamAsync(cancellationToken);
+        using var body = new MemoryStream(Math.Min(_maxResponseBytes, 81920));
+        byte[] buffer = new byte[81920];
+        int read;
+        while ((read = await source.ReadAsync(buffer, cancellationToken)) > 0)
+        {
+            if (body.Length + read > _maxResponseBytes)
+            {
+                throw new ModelCallException($"Model response exceeds maxModelResponseBytes limit of {_maxResponseBytes} bytes");
+            }
+
+            body.Write(buffer, 0, read);
+        }
+
+        return Encoding.UTF8.GetString(body.GetBuffer(), 0, checked((int)body.Length));
     }
 }

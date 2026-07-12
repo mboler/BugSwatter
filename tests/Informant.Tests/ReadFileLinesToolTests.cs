@@ -62,7 +62,7 @@ public sealed class ReadFileLinesToolTests : IDisposable
         string outsideFile = Path.Combine(outside.Path, "secret.txt");
         File.WriteAllText(outsideFile, "secret");
         string result = CreateTool().Execute(outsideFile, 1, 1);
-        Assert.Contains("outside the allowed read root", GetError(result));
+        Assert.Contains("must be relative", GetError(result));
     }
 
     [Fact]
@@ -90,11 +90,42 @@ public sealed class ReadFileLinesToolTests : IDisposable
     }
 
     [Fact]
+    public void MaximumIntegerRangeDoesNotOverflow()
+    {
+        WriteLines("file.txt", "one", "two");
+
+        string result = CreateTool().Execute("file.txt", int.MaxValue, int.MaxValue);
+
+        Assert.Contains("beyond the end of the file", GetError(result));
+    }
+
+    [Fact]
     public void BinaryFileReturnsStructuredError()
     {
         File.WriteAllBytes(Path.Combine(_root.Path, "blob.bin"), [0x4D, 0x5A, 0x00, 0x01, 0x02]);
         string result = CreateTool().Execute("blob.bin", 1, 1);
         Assert.Contains("binary", GetError(result));
+    }
+
+    [Fact]
+    public void BinaryMarkerBeyondInitialProbeReturnsStructuredError()
+    {
+        byte[] bytes = [.. Enumerable.Repeat((byte)'a', 9000), 0, (byte)'b'];
+        File.WriteAllBytes(Path.Combine(_root.Path, "late-binary.bin"), bytes);
+
+        string result = CreateTool().Execute("late-binary.bin", 1, 1);
+
+        Assert.Contains("binary", GetError(result));
+    }
+
+    [Fact]
+    public void OversizedFileReturnsStructuredErrorWithoutReturningContent()
+    {
+        File.WriteAllText(Path.Combine(_root.Path, "large.txt"), new string('x', 1025));
+        string result = new ReadFileLinesTool(_root.Path, 1024).Execute("large.txt", 1, 1);
+
+        Assert.Contains("maxFileBytes", GetError(result));
+        Assert.DoesNotContain(new string('x', 100), result);
     }
 
     [Theory]

@@ -74,6 +74,8 @@ Exit code 0 means success; 1 means a fatal condition that is described on stderr
 | `email` | Optional report email, see [Email](#email); requires `secondOpinion` | null |
 | `maxContextCharacters` | Character budget per review call, kept well below the model window | `24000` |
 | `maxFileLines` | Line count above which a file is chunked | `800` |
+| `maxFileBytes` | Maximum source-file size read; larger files are reported as oversized | `10485760` (10 MiB) |
+| `maxModelResponseBytes` | Maximum model HTTP response body before rejection | `4194304` (4 MiB) |
 | `perFileRetryCount` | Retries per file part before skipping | `2` |
 | `requestTimeoutSeconds` | Timeout per model request | `1800` |
 | `logLevel` | Serilog minimum level | `Information` |
@@ -265,6 +267,16 @@ Do not expose Marshal's endpoint to the public internet. The recommended product
 
 ## Design notes
 
-The model interaction uses the endpoint's native tool-calling, not MCP, because Informant owns both sides of a closed loop and needs no interoperability layer. Review is one file at a time; cross-file context is pulled by the model on demand through `read_file_lines`, which caps each response and stops serving content once the conversation exceeds the context budget. Files longer than `maxFileLines` are chunked at logical boundaries via a brace-depth heuristic, never mid-method when a boundary exists. Line ranges come from `git diff -U0` hunk headers, so focus hints bracket exactly the changed lines. If a recorded baseline SHA no longer exists because history was rewritten, the run degrades to a full review instead of failing forever. Per-file failures retry per config and then skip with the reason recorded; one bad file never kills the night's run.
+The model interaction uses the endpoint's native tool-calling, not MCP, because Informant owns both sides of a closed
+loop and needs no interoperability layer. Review is one file at a time; cross-file context is pulled by the model on
+demand through `read_file_lines`, which caps each response and stops serving content once the conversation exceeds the
+context budget. Repository reads reject traversal, absolute paths, symbolic links, junctions, mount points, and other
+reparse points. The tool streams requested ranges rather than retaining the entire file. Files larger than
+`maxFileBytes` are reported as oversized, and model bodies larger than `maxModelResponseBytes` are rejected before JSON
+parsing. Files longer than `maxFileLines` are chunked at logical boundaries via a brace-depth heuristic, never
+mid-method when a boundary exists. Line ranges come from `git diff -U0` hunk headers, so focus hints bracket exactly the
+changed lines. If a recorded baseline SHA no longer exists because history was rewritten, the run degrades to a full
+review instead of failing forever. Per-file failures retry per config and then skip with the reason recorded; one bad
+file never kills the night's run.
 
 The two executables share a small `BugSwatter.Common` library (logging setup, secret resolution, the config loader, the reviewer/dispatcher stdout contract), so a fix to shared plumbing lands in both.

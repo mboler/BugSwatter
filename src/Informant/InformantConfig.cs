@@ -87,6 +87,12 @@ public sealed class InformantConfig
     /// <summary>Line count above which a file is chunked at logical boundaries instead of fed whole</summary>
     public int MaxFileLines { get; init; } = 800;
 
+    /// <summary>Maximum source-file size read into a review, in bytes</summary>
+    public int MaxFileBytes { get; init; } = RepositoryFileReader.DefaultMaxFileBytes;
+
+    /// <summary>Maximum model HTTP response body, in bytes</summary>
+    public int MaxModelResponseBytes { get; init; } = ModelClient.DefaultMaxResponseBytes;
+
     /// <summary>How many times a failed file review is retried before it is logged and skipped</summary>
     public int PerFileRetryCount { get; init; } = 2;
 
@@ -148,6 +154,7 @@ public sealed class InformantConfig
     {
         var builder = new StringBuilder(ResolveBasePrompt().TrimEnd());
         var seen = new HashSet<string>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+        var repositoryReader = new RepositoryFileReader(workingTreePath, MaxFileBytes);
 
         foreach (string pattern in PromptIncludeFiles)
         {
@@ -158,7 +165,19 @@ public sealed class InformantConfig
                     continue;
                 }
 
-                string content = File.ReadAllText(file).Trim();
+                string content;
+                try
+                {
+                    content = Path.IsPathFullyQualified(pattern)
+                        ? File.ReadAllText(file).Trim()
+                        : string.Join(Environment.NewLine, repositoryReader.ReadAllLines(Path.GetRelativePath(workingTreePath, file))).Trim();
+                }
+                catch (RepositoryFileException ex)
+                {
+                    Log.Warning("Skipping repository prompt include {File}: {Reason}", file, ex.Message);
+                    continue;
+                }
+
                 if (content.Length == 0)
                 {
                     continue;
@@ -251,6 +270,8 @@ public sealed class InformantConfig
 
         RequirePositive(MaxContextCharacters, "maxContextCharacters");
         RequirePositive(MaxFileLines, "maxFileLines");
+        RequirePositive(MaxFileBytes, "maxFileBytes");
+        RequirePositive(MaxModelResponseBytes, "maxModelResponseBytes");
         RequirePositive(RequestTimeoutSeconds, "requestTimeoutSeconds");
 
         if (PerFileRetryCount < 0)

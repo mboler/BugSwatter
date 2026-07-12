@@ -7,7 +7,7 @@ namespace Informant;
 public sealed class SecondOpinionReviewer
 {
     private readonly ModelClient _client;
-    private readonly string _treeRoot;
+    private readonly RepositoryFileReader _fileReader;
     private readonly string _systemPrompt;
     private readonly int _maxContentCharacters;
     private readonly int _contextLines;
@@ -21,12 +21,13 @@ public sealed class SecondOpinionReviewer
     /// <param name="contextLines">Lines of surrounding code included on each side of a changed range when the whole file exceeds the budget</param>
     /// <param name="enableToolCalls">When true the validating model is offered read_file_lines to read more of the file on demand; when false it validates from the excerpt only</param>
     /// <param name="maxFileReads">Cap on read_file_lines calls per file when tools are enabled, so a capable model cannot pull the whole tree</param>
-    public SecondOpinionReviewer(ModelClient client, string treeRoot, string systemPrompt, int maxContextCharacters, int contextLines, bool enableToolCalls, int maxFileReads)
+    public SecondOpinionReviewer(ModelClient client, string treeRoot, string systemPrompt, int maxContextCharacters, int contextLines, bool enableToolCalls, int maxFileReads,
+        int maxFileBytes = RepositoryFileReader.DefaultMaxFileBytes)
     {
         ArgumentNullException.ThrowIfNull(client);
 
         _client = client;
-        _treeRoot = treeRoot;
+        _fileReader = new RepositoryFileReader(treeRoot, maxFileBytes);
         _systemPrompt = systemPrompt;
         _maxContentCharacters = Math.Max(2000, maxContextCharacters / 2);
         _contextLines = contextLines;
@@ -34,7 +35,7 @@ public sealed class SecondOpinionReviewer
         // When the validating endpoint supports tool-calling, give it the same read-only file tool the local reviewer
         // uses, confined to the working tree and capped at maxFileReads so it cannot read the whole tree. Otherwise the
         // loop is null and the validation runs from the excerpt alone
-        _toolLoop = enableToolCalls ? new ToolCallLoop(client, new ReadFileLinesTool(treeRoot), maxContextCharacters, maxFileReads) : null;
+        _toolLoop = enableToolCalls ? new ToolCallLoop(client, new ReadFileLinesTool(_fileReader), maxContextCharacters, maxFileReads) : null;
     }
 
     /// <summary>Validates one file's local findings against its code; returns the validation text, or null when the call failed (logged, never thrown)</summary>
@@ -143,10 +144,10 @@ public sealed class SecondOpinionReviewer
         string excerpt;
         try
         {
-            string[] lines = File.ReadAllLines(Path.Combine(_treeRoot, localResult.File.Path));
+            string[] lines = _fileReader.ReadAllLines(localResult.File.Path);
             excerpt = BuildCodeExcerpt(lines, localResult.File.ChangedRanges, _maxContentCharacters, _contextLines);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (RepositoryFileException ex)
         {
             excerpt = $"(the code could not be read: {ex.Message}; judge only what is verifiable without it and mark the rest UNVERIFIABLE)";
         }

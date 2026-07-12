@@ -103,5 +103,20 @@ public sealed class SecondOpinionReviewerTests : IDisposable
         Assert.Contains("the code could not be read", request.RootElement.GetProperty("messages")[1].GetProperty("content").GetString());
     }
 
+    [Fact]
+    public async Task OversizedCodeStillValidatesWithAnExplicitLimitNote()
+    {
+        File.WriteAllText(Path.Combine(_tree.Path, "large.cs"), new string('x', 1025));
+        var handler = new StubHttpMessageHandler();
+        handler.Enqueue(HttpStatusCode.OK, StubHttpMessageHandler.FinalResponse("UNVERIFIABLE"));
+        var reviewer = new SecondOpinionReviewer(new ModelClient(new HttpClient(handler), "https://api.example.test/v1", "frontier-1", TimeSpan.FromSeconds(5), "key"), _tree.Path,
+            "validation system prompt", 100000, 30, false, 5, 1024);
+        var localResult = new FileReviewResult(new ChangedFile("large.cs", ChangeKind.Modified, [new LineRange(1, 1)]), "findings", 1, 1, null);
+
+        Assert.NotNull(await reviewer.ValidateAsync(localResult));
+        using var request = JsonDocument.Parse(handler.RequestBodies[0]);
+        Assert.Contains("maxFileBytes", request.RootElement.GetProperty("messages")[1].GetProperty("content").GetString());
+    }
+
     private SecondOpinionReviewer CreateReviewer(StubHttpMessageHandler handler, bool enableToolCalls = false) => new(new ModelClient(new HttpClient(handler), "https://api.example.test/v1", "frontier-1", TimeSpan.FromSeconds(5), "key"), _tree.Path, "validation system prompt", 100000, 30, enableToolCalls, 5);
 }

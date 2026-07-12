@@ -14,19 +14,19 @@ public sealed record FileReviewResult(ChangedFile File, string? Findings, int Co
 public sealed class FileReviewer
 {
     private readonly ToolCallLoop _loop;
-    private readonly string _treeRoot;
+    private readonly RepositoryFileReader _fileReader;
     private readonly string _systemPrompt;
     private readonly int _maxFileLines;
     private readonly int _maxContentCharacters;
     private readonly int _retryCount;
 
     /// <summary>Creates a reviewer; content per call is capped at half the context budget, leaving the rest for the prompt and on-demand tool reads</summary>
-    public FileReviewer(ToolCallLoop loop, string treeRoot, string systemPrompt, int maxFileLines, int maxContextCharacters, int retryCount)
+    public FileReviewer(ToolCallLoop loop, string treeRoot, string systemPrompt, int maxFileLines, int maxContextCharacters, int retryCount, int maxFileBytes = RepositoryFileReader.DefaultMaxFileBytes)
     {
         ArgumentNullException.ThrowIfNull(loop);
 
         _loop = loop;
-        _treeRoot = treeRoot;
+        _fileReader = new RepositoryFileReader(treeRoot, maxFileBytes);
         _systemPrompt = systemPrompt;
         _maxFileLines = maxFileLines;
         _maxContentCharacters = Math.Max(2000, maxContextCharacters / 2);
@@ -38,12 +38,6 @@ public sealed class FileReviewer
     {
         ArgumentNullException.ThrowIfNull(file);
 
-        string fullPath = Path.Combine(_treeRoot, file.Path);
-        if (!File.Exists(fullPath))
-        {
-            return Skip(file, "file not present in the working tree");
-        }
-
         if (file.Kind is ChangeKind.Modified or ChangeKind.Renamed && file.ChangedRanges.Count == 0)
         {
             return Skip(file, "no line changes (pure rename or metadata-only change)");
@@ -52,11 +46,12 @@ public sealed class FileReviewer
         string[] lines;
         try
         {
-            lines = await File.ReadAllLinesAsync(fullPath, cancellationToken);
+            lines = await _fileReader.ReadAllLinesAsync(file.Path, cancellationToken);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (RepositoryFileException ex)
         {
-            return Skip(file, $"could not read file: {ex.Message}");
+            string reason = ex.Error == RepositoryFileError.NotFound ? "file not present in the working tree" : ex.Message;
+            return Skip(file, reason);
         }
 
         if (lines.Length == 0)

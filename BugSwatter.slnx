@@ -5,6 +5,7 @@
     <Project Path="src/Informant/Informant.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/BugSwatter.Common.Tests/BugSwatter.Common.Tests.csproj" />
     <Project Path="tests/Marshal.Tests/Marshal.Tests.csproj" />
     <Project Path="tests/Informant.Tests/Informant.Tests.csproj" />
   </Folder>

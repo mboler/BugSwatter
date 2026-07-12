@@ -19,7 +19,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Informant\Informant.csproj" />
+    <ProjectReference Include="..\..\src\BugSwatter.Common\BugSwatter.Common.csproj" />
   </ItemGroup>
 
 </Project>

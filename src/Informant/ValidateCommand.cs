@@ -1,4 +1,5 @@
 using System.Net.Sockets;
+using BugSwatter.Common;
 
 namespace Informant;
 
@@ -67,17 +68,10 @@ public static class ValidateCommand
 
     private static async Task<ValidationCheck> ProbeHttpAsync(HttpClient http, string endpoint, string label)
     {
-        // Reachable means the server answered at all; any HTTP status counts, only a connection failure or timeout is a miss
-        using var timeout = new CancellationTokenSource(ProbeTimeout);
-        try
-        {
-            using HttpResponseMessage response = await http.GetAsync($"{endpoint.TrimEnd('/')}/models", timeout.Token);
-            return new ValidationCheck($"{label} reachable", true, $"{endpoint} answered {(int)response.StatusCode}");
-        }
-        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException)
-        {
-            return new ValidationCheck($"{label} reachable", false, $"{endpoint} did not answer: {ex.Message}");
-        }
+        ModelEndpointProbeResult result = await ModelEndpointProbe.CheckAsync(http, endpoint, ProbeTimeout);
+        return result.Reachable
+            ? new ValidationCheck($"{label} reachable", true, $"{endpoint} answered {result.StatusCode}")
+            : new ValidationCheck($"{label} reachable", false, $"{endpoint} did not answer: {result.Error}");
     }
 
     private static async Task<ValidationCheck> ProbeTcpAsync(string host, int port, string label)

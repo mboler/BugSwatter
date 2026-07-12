@@ -26,17 +26,8 @@ public sealed class HttpEndpointHealthChecker : IEndpointHealthChecker
     /// <inheritdoc />
     public async Task<bool> IsReachableAsync(string endpoint, CancellationToken cancellationToken)
     {
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(ProbeTimeout);
-        try
-        {
-            using HttpResponseMessage response = await _http.GetAsync($"{endpoint.TrimEnd('/')}/models", timeout.Token);
-            return true;
-        }
-        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException)
-        {
-            return false;
-        }
+        ModelEndpointProbeResult result = await ModelEndpointProbe.CheckAsync(_http, endpoint, ProbeTimeout, cancellationToken);
+        return result.Reachable;
     }
 }
 

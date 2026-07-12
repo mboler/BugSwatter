@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using BugSwatter.Common;
 using Serilog;
 
 namespace Informant;
@@ -77,7 +78,7 @@ public sealed class ModelClient
             body = await ReadResponseBodyAsync(response.Content, timeoutSource.Token);
             if (!response.IsSuccessStatusCode)
             {
-                throw new ModelCallException($"Model endpoint returned {(int)response.StatusCode} {response.StatusCode}: {Summarize(body)}");
+                throw new ModelCallException($"Model endpoint returned {(int)response.StatusCode} {response.StatusCode}: {TextSummary.Create(body, 500)}");
             }
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -102,18 +103,11 @@ public sealed class ModelClient
         var message = parsed?.Choices is { Count: > 0 } choices ? choices[0].Message : null;
         if (message is null)
         {
-            throw new ModelCallException($"Model response contained no message: {Summarize(body)}");
+            throw new ModelCallException($"Model response contained no message: {TextSummary.Create(body, 500)}");
         }
 
         Log.Debug("Model reply: {ToolCallCount} tool calls, {ContentLength} content characters", message.ToolCalls?.Count ?? 0, message.Content?.Length ?? 0);
         return message;
-    }
-
-    private static string Summarize(string text)
-    {
-        string trimmed = text.Trim();
-        
-        return trimmed.Length <= 500 ? trimmed : trimmed[..500] + " [truncated]";
     }
 
     private async Task<string> ReadResponseBodyAsync(HttpContent content, CancellationToken cancellationToken)
@@ -124,19 +118,12 @@ public sealed class ModelClient
         }
 
         await using Stream source = await content.ReadAsStreamAsync(cancellationToken);
-        using var body = new MemoryStream(Math.Min(_maxResponseBytes, 81920));
-        byte[] buffer = new byte[81920];
-        int read;
-        while ((read = await source.ReadAsync(buffer, cancellationToken)) > 0)
+        byte[]? body = await BoundedStreamReader.ReadAsync(source, _maxResponseBytes, cancellationToken);
+        if (body is null)
         {
-            if (body.Length + read > _maxResponseBytes)
-            {
-                throw new ModelCallException($"Model response exceeds maxModelResponseBytes limit of {_maxResponseBytes} bytes");
-            }
-
-            body.Write(buffer, 0, read);
+            throw new ModelCallException($"Model response exceeds maxModelResponseBytes limit of {_maxResponseBytes} bytes");
         }
 
-        return Encoding.UTF8.GetString(body.GetBuffer(), 0, checked((int)body.Length));
+        return Encoding.UTF8.GetString(body);
     }
 }

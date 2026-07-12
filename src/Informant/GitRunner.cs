@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Text;
+using BugSwatter.Common;
 using Serilog;
 
 namespace Informant;
@@ -94,13 +95,11 @@ public sealed class GitRunner
     {
         var result = await RunAsync(arguments);
 
-        return result.ExitCode != 0 ? throw new InformantFatalException($"git {string.Join(' ', arguments)} failed with exit code {result.ExitCode}: {Summarize(result.StandardError)}") : result.StandardOutput;
-    }
+        if (result.ExitCode != 0)
+        {
+            throw new InformantFatalException($"git {string.Join(' ', arguments)} failed with exit code {result.ExitCode}: {TextSummary.Create(result.StandardError, 2000)}");
+        }
 
-    private static string Summarize(string errorText)
-    {
-        string trimmed = errorText.Trim();
-
-        return trimmed.Length <= 2000 ? trimmed : trimmed[..2000] + " [truncated]";
+        return result.StandardOutput;
     }
 }

@@ -2,6 +2,7 @@ using System.Text.Json;
 
 namespace Informant.Tests;
 
+[Collection("Informant configuration environment")]
 public sealed class SecondOpinionConfigTests : IDisposable
 {
     private readonly TempDirectory _directory = new();

@@ -1,4 +1,5 @@
 using System.Text;
+using BugSwatter.Common;
 using Serilog;
 
 namespace Informant;

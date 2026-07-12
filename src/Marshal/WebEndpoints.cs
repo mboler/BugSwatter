@@ -1,4 +1,5 @@
 using System.Text.Json;
+using BugSwatter.Common;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Serilog;
@@ -154,22 +155,5 @@ public static class WebEndpoints
 
     /// <summary>Reads at most <paramref name="maxBytes"/> from the stream; the Content-Length header cannot be trusted for this because chunked requests carry none</summary>
     /// <returns>The body bytes, or null when the stream held more than the limit</returns>
-    public static async Task<byte[]?> ReadBodyBoundedAsync(Stream input, int maxBytes, CancellationToken cancellationToken = default)
-    {
-        using var buffer = new MemoryStream();
-        byte[] chunk = new byte[16 * 1024];
-
-        int read;
-        while ((read = await input.ReadAsync(chunk, cancellationToken)) > 0)
-        {
-            if (buffer.Length + read > maxBytes)
-            {
-                return null;
-            }
-
-            buffer.Write(chunk, 0, read);
-        }
-
-        return buffer.ToArray();
-    }
+    public static Task<byte[]?> ReadBodyBoundedAsync(Stream input, int maxBytes, CancellationToken cancellationToken = default) => BoundedStreamReader.ReadAsync(input, maxBytes, cancellationToken);
 }

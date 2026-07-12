@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using BugSwatter.Common;
 using Serilog;
 
 namespace Informant;

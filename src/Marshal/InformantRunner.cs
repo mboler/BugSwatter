@@ -100,7 +100,7 @@ public sealed class InformantProcessRunner : IInformantRunner
         string standardOutput = await stdoutTask;
         if (process.ExitCode != 0 && standardError.Length > 0)
         {
-            Log.Warning("Child {FileName} exited {ExitCode} with stderr: {StdErr}", fileName, process.ExitCode, standardError.Length <= 1000 ? standardError : standardError[..1000] + " [truncated]");
+            Log.Warning("Child {FileName} exited {ExitCode} with stderr: {StdErr}", fileName, process.ExitCode, TextSummary.Create(standardError, 1000));
         }
 
         return new ProcessRunResult(process.ExitCode, false, standardOutput);

@@ -154,7 +154,7 @@ internal static class Program
 
         services.AddSingleton(config);
         services.AddSingleton<ReviewQueue>();
-        services.AddSingleton<ISlimShadyRunner, SlimShadyProcessRunner>();
+        services.AddSingleton<IInformantRunner, InformantProcessRunner>();
         services.AddSingleton(new HttpClient());
         services.AddSingleton<IEndpointHealthChecker, HttpEndpointHealthChecker>();
         services.AddSingleton(new BackoffTracker(TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(15)));
@@ -175,7 +175,7 @@ internal static class Program
 
     private static void PrintUsage()
     {
-        Console.WriteLine("Marshal, the SlimShady review dispatcher");
+        Console.WriteLine("Marshal, the Informant review dispatcher");
         Console.WriteLine();
         Console.WriteLine("Usage:");
         Console.WriteLine("  Marshal run --config <path> [--review-all]   run in the foreground (or under a service manager)");

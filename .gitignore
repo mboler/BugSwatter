@@ -6,4 +6,4 @@ reports/
 *.user
 .vs/
 .idea/
-slimshady.state.json
+informant.state.json

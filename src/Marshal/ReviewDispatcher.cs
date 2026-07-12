@@ -3,17 +3,17 @@ using Serilog;
 
 namespace Marshal;
 
-/// <summary>The single serial executor: takes one request at a time from the queue, supervises the SlimShady child run, logs the outcome, and requeues once when a rerun was flagged while the review ran. At most one review runs at any moment because all reviews share one local model endpoint</summary>
+/// <summary>The single serial executor: takes one request at a time from the queue, supervises the Informant child run, logs the outcome, and requeues once when a rerun was flagged while the review ran. At most one review runs at any moment because all reviews share one local model endpoint</summary>
 public sealed class ReviewDispatcher : BackgroundService
 {
     private readonly ReviewQueue _queue;
-    private readonly ISlimShadyRunner _runner;
+    private readonly IInformantRunner _runner;
     private readonly IEndpointHealthChecker _healthChecker;
     private readonly BackoffTracker _backoff;
     private readonly RunHistoryStore _history;
 
     /// <summary>Creates the dispatcher over the shared queue, runner, endpoint health checker, backoff tracker and history store</summary>
-    public ReviewDispatcher(ReviewQueue queue, ISlimShadyRunner runner, IEndpointHealthChecker healthChecker, BackoffTracker backoff, RunHistoryStore history)
+    public ReviewDispatcher(ReviewQueue queue, IInformantRunner runner, IEndpointHealthChecker healthChecker, BackoffTracker backoff, RunHistoryStore history)
     {
         ArgumentNullException.ThrowIfNull(queue);
         ArgumentNullException.ThrowIfNull(runner);
@@ -85,9 +85,9 @@ public sealed class ReviewDispatcher : BackgroundService
     private async Task<bool> IsEndpointHealthyAsync(ReviewRequest request, CancellationToken stoppingToken)
     {
         string key = ReviewQueue.RepositoryKey(request.Job);
-        string? endpoint = JobConfigReader.TryReadModelEndpoint(request.Job.SlimShadyConfigPath);
+        string? endpoint = JobConfigReader.TryReadModelEndpoint(request.Job.InformantConfigPath);
 
-        // No readable endpoint means no check; let SlimShady run and report the problem itself
+        // No readable endpoint means no check; let Informant run and report the problem itself
         if (endpoint is null)
         {
             _backoff.Reset(key);

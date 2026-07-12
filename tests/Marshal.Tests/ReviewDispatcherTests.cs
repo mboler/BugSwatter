@@ -1,7 +1,7 @@
 namespace Marshal.Tests;
 
 /// <summary>Stub runner: records concurrency and run counts without launching anything</summary>
-internal sealed class StubRunner : ISlimShadyRunner
+internal sealed class StubRunner : IInformantRunner
 {
     private int _concurrent;
     private int _maxConcurrent;
@@ -68,7 +68,7 @@ public sealed class ReviewDispatcherTests
 
         for (int index = 0; index < 5; index++)
         {
-            queue.Enqueue(new ReviewJobConfig { Name = $"job{index}", SlimShadyConfigPath = $@"C:\jobs\repo{index}\slimshady.json" }, "test");
+            queue.Enqueue(new ReviewJobConfig { Name = $"job{index}", InformantConfigPath = $@"C:\jobs\repo{index}\informant.json" }, "test");
         }
 
         await dispatcher.StartAsync(CancellationToken.None);
@@ -86,7 +86,7 @@ public sealed class ReviewDispatcherTests
         var queue = new ReviewQueue();
         var runner = new StubRunner { RunDuration = TimeSpan.FromMilliseconds(250) };
         ReviewDispatcher dispatcher = CreateDispatcher(queue, runner, new StubHealthChecker());
-        var job = new ReviewJobConfig { Name = "hot", SlimShadyConfigPath = @"C:\jobs\hot\slimshady.json" };
+        var job = new ReviewJobConfig { Name = "hot", InformantConfigPath = @"C:\jobs\hot\informant.json" };
 
         queue.Enqueue(job, "initial");
         await dispatcher.StartAsync(CancellationToken.None);
@@ -117,7 +117,7 @@ public sealed class ReviewDispatcherTests
         var runner = new StubRunner();
         var dispatcher = new ReviewDispatcher(queue, runner, new StubHealthChecker(), new BackoffTracker(TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(15)), history);
 
-        queue.Enqueue(new ReviewJobConfig { Name = "recorded", SlimShadyConfigPath = @"C:\jobs\recorded\slimshady.json" }, "test-trigger");
+        queue.Enqueue(new ReviewJobConfig { Name = "recorded", InformantConfigPath = @"C:\jobs\recorded\informant.json" }, "test-trigger");
         await dispatcher.StartAsync(CancellationToken.None);
         await WaitUntilAsync(() => runner.TotalRuns == 1, TimeSpan.FromSeconds(10));
         await dispatcher.StopAsync(CancellationToken.None);
@@ -134,7 +134,7 @@ public sealed class ReviewDispatcherTests
     public async Task UnreachableEndpointDefersTheRunThenRunsWhenItRecovers()
     {
         using var directory = new TempDirectory();
-        string configPath = Path.Combine(directory.Path, "slimshady.json");
+        string configPath = Path.Combine(directory.Path, "informant.json");
         File.WriteAllText(configPath, """{ "modelEndpoint": "http://localhost:9/v1" }""");
 
         var queue = new ReviewQueue();
@@ -142,7 +142,7 @@ public sealed class ReviewDispatcherTests
         var checker = new StubHealthChecker { MissesBeforeReachable = 1 };
         ReviewDispatcher dispatcher = CreateDispatcher(queue, runner, checker, new BackoffTracker(TimeSpan.FromMilliseconds(40), TimeSpan.FromMilliseconds(200)));
 
-        queue.Enqueue(new ReviewJobConfig { Name = "flaky", SlimShadyConfigPath = configPath }, "initial");
+        queue.Enqueue(new ReviewJobConfig { Name = "flaky", InformantConfigPath = configPath }, "initial");
         await dispatcher.StartAsync(CancellationToken.None);
 
         // First check misses and defers the run; the scheduled retry re-enqueues, the second check hits, the run happens
@@ -153,7 +153,7 @@ public sealed class ReviewDispatcherTests
         Assert.True(checker.Calls >= 2, $"expected at least two health checks, saw {checker.Calls}");
     }
 
-    private static ReviewDispatcher CreateDispatcher(ReviewQueue queue, ISlimShadyRunner runner, IEndpointHealthChecker checker, BackoffTracker? backoff = null) =>
+    private static ReviewDispatcher CreateDispatcher(ReviewQueue queue, IInformantRunner runner, IEndpointHealthChecker checker, BackoffTracker? backoff = null) =>
         new(queue, runner, checker, backoff ?? new BackoffTracker(TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(15)), new RunHistoryStore(Path.Combine(Path.GetTempPath(), "marshal-history-" + Guid.NewGuid().ToString("N") + ".jsonl")));
 
     private static async Task WaitUntilAsync(Func<bool> condition, TimeSpan timeout)

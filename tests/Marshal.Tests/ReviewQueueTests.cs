@@ -6,8 +6,8 @@ public sealed class ReviewQueueTests
     public void EnqueueAddsDistinctJobs()
     {
         var queue = new ReviewQueue();
-        Assert.Equal(EnqueueResult.Enqueued, queue.Enqueue(Job(@"C:\jobs\a\slimshady.json"), "test"));
-        Assert.Equal(EnqueueResult.Enqueued, queue.Enqueue(Job(@"C:\jobs\b\slimshady.json"), "test"));
+        Assert.Equal(EnqueueResult.Enqueued, queue.Enqueue(Job(@"C:\jobs\a\informant.json"), "test"));
+        Assert.Equal(EnqueueResult.Enqueued, queue.Enqueue(Job(@"C:\jobs\b\informant.json"), "test"));
         Assert.Equal(2, queue.WaitingCount);
     }
 
@@ -15,8 +15,8 @@ public sealed class ReviewQueueTests
     public void DuplicateWaitingRepositoryCoalesces()
     {
         var queue = new ReviewQueue();
-        queue.Enqueue(Job(@"C:\jobs\a\slimshady.json"), "first");
-        Assert.Equal(EnqueueResult.CoalescedWithQueued, queue.Enqueue(Job(@"C:\jobs\a\slimshady.json"), "second"));
+        queue.Enqueue(Job(@"C:\jobs\a\informant.json"), "first");
+        Assert.Equal(EnqueueResult.CoalescedWithQueued, queue.Enqueue(Job(@"C:\jobs\a\informant.json"), "second"));
         Assert.Equal(1, queue.WaitingCount);
     }
 
@@ -24,8 +24,8 @@ public sealed class ReviewQueueTests
     public void RepositoryIdentityIsCaseInsensitiveOnWindows()
     {
         var queue = new ReviewQueue();
-        queue.Enqueue(Job(@"C:\Repo\slimshady.json"), "upper");
-        EnqueueResult second = queue.Enqueue(Job(@"c:\repo\SLIMSHADY.JSON"), "lower");
+        queue.Enqueue(Job(@"C:\Repo\informant.json"), "upper");
+        EnqueueResult second = queue.Enqueue(Job(@"c:\repo\INFORMANT.JSON"), "lower");
 
         if (OperatingSystem.IsWindows())
         {
@@ -44,10 +44,10 @@ public sealed class ReviewQueueTests
         var queue = new ReviewQueue();
         for (int index = 0; index < ReviewQueue.MaxLength; index++)
         {
-            Assert.Equal(EnqueueResult.Enqueued, queue.Enqueue(Job($@"C:\jobs\repo{index}\slimshady.json"), "fill"));
+            Assert.Equal(EnqueueResult.Enqueued, queue.Enqueue(Job($@"C:\jobs\repo{index}\informant.json"), "fill"));
         }
 
-        Assert.Equal(EnqueueResult.DroppedQueueFull, queue.Enqueue(Job(@"C:\jobs\overflow\slimshady.json"), "overflow"));
+        Assert.Equal(EnqueueResult.DroppedQueueFull, queue.Enqueue(Job(@"C:\jobs\overflow\informant.json"), "overflow"));
         Assert.Equal(ReviewQueue.MaxLength, queue.WaitingCount);
     }
 
@@ -55,7 +55,7 @@ public sealed class ReviewQueueTests
     public async Task RunningRepositoryCollapsesTriggersIntoOneRerun()
     {
         var queue = new ReviewQueue();
-        ReviewJobConfig job = Job(@"C:\jobs\a\slimshady.json");
+        ReviewJobConfig job = Job(@"C:\jobs\a\informant.json");
         queue.Enqueue(job, "initial");
         ReviewRequest running = await queue.TakeNextAsync(CancellationToken.None);
         Assert.Equal("initial", running.Reason);
@@ -74,7 +74,7 @@ public sealed class ReviewQueueTests
     public async Task CompleteWithoutPendingRerunLeavesQueueAlone()
     {
         var queue = new ReviewQueue();
-        queue.Enqueue(Job(@"C:\jobs\a\slimshady.json"), "initial");
+        queue.Enqueue(Job(@"C:\jobs\a\informant.json"), "initial");
         await queue.TakeNextAsync(CancellationToken.None);
 
         Assert.False(queue.CompleteRunning());
@@ -85,7 +85,7 @@ public sealed class ReviewQueueTests
     public async Task RepositoryCanBeEnqueuedAgainAfterCompletion()
     {
         var queue = new ReviewQueue();
-        ReviewJobConfig job = Job(@"C:\jobs\a\slimshady.json");
+        ReviewJobConfig job = Job(@"C:\jobs\a\informant.json");
         queue.Enqueue(job, "first");
         await queue.TakeNextAsync(CancellationToken.None);
         queue.CompleteRunning();
@@ -97,10 +97,10 @@ public sealed class ReviewQueueTests
     public async Task DifferentRepositoryEnqueuesNormallyWhileAnotherRuns()
     {
         var queue = new ReviewQueue();
-        queue.Enqueue(Job(@"C:\jobs\a\slimshady.json"), "a");
+        queue.Enqueue(Job(@"C:\jobs\a\informant.json"), "a");
         await queue.TakeNextAsync(CancellationToken.None);
 
-        Assert.Equal(EnqueueResult.Enqueued, queue.Enqueue(Job(@"C:\jobs\b\slimshady.json"), "b"));
+        Assert.Equal(EnqueueResult.Enqueued, queue.Enqueue(Job(@"C:\jobs\b\informant.json"), "b"));
         Assert.Equal(1, queue.WaitingCount);
     }
 
@@ -108,8 +108,8 @@ public sealed class ReviewQueueTests
     public void SnapshotListsWaitingRequestsInOrder()
     {
         var queue = new ReviewQueue();
-        queue.Enqueue(Job(@"C:\jobs\a\slimshady.json"), "first");
-        queue.Enqueue(Job(@"C:\jobs\b\slimshady.json"), "second");
+        queue.Enqueue(Job(@"C:\jobs\a\informant.json"), "first");
+        queue.Enqueue(Job(@"C:\jobs\b\informant.json"), "second");
 
         Assert.Equal([@"C:\jobs\a", @"C:\jobs\b"], queue.SnapshotWaiting().Select(request => request.Job.Name));
     }
@@ -118,8 +118,8 @@ public sealed class ReviewQueueTests
     public async Task RemoveWaitingDropsTheJobAndItsQueueSlot()
     {
         var queue = new ReviewQueue();
-        queue.Enqueue(Job(@"C:\jobs\a\slimshady.json"), "a");
-        queue.Enqueue(Job(@"C:\jobs\b\slimshady.json"), "b");
+        queue.Enqueue(Job(@"C:\jobs\a\informant.json"), "a");
+        queue.Enqueue(Job(@"C:\jobs\b\informant.json"), "b");
 
         Assert.True(queue.RemoveWaiting(@"C:\jobs\a"));
         Assert.Equal(1, queue.WaitingCount);
@@ -134,7 +134,7 @@ public sealed class ReviewQueueTests
     public void RemoveWaitingReturnsFalseWhenNotQueued()
     {
         var queue = new ReviewQueue();
-        queue.Enqueue(Job(@"C:\jobs\a\slimshady.json"), "a");
+        queue.Enqueue(Job(@"C:\jobs\a\informant.json"), "a");
 
         Assert.False(queue.RemoveWaiting("nonexistent"));
         Assert.Equal(1, queue.WaitingCount);
@@ -144,12 +144,12 @@ public sealed class ReviewQueueTests
     public void RemovedRepositoryCanBeEnqueuedAgain()
     {
         var queue = new ReviewQueue();
-        ReviewJobConfig job = Job(@"C:\jobs\a\slimshady.json");
+        ReviewJobConfig job = Job(@"C:\jobs\a\informant.json");
         queue.Enqueue(job, "a");
         queue.RemoveWaiting(@"C:\jobs\a");
 
         Assert.Equal(EnqueueResult.Enqueued, queue.Enqueue(job, "again"));
     }
 
-    private static ReviewJobConfig Job(string configPath) => new() { Name = System.IO.Path.GetDirectoryName(configPath) ?? configPath, SlimShadyConfigPath = configPath };
+    private static ReviewJobConfig Job(string configPath) => new() { Name = System.IO.Path.GetDirectoryName(configPath) ?? configPath, InformantConfigPath = configPath };
 }

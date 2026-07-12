@@ -14,7 +14,7 @@ public static class ServiceInstaller
     public const string ServiceName = "Marshal";
 
     private const string DisplayName = "Marshal review dispatcher";
-    private const string Description = "Watches repositories and dispatches SlimShady code reviews";
+    private const string Description = "Watches repositories and dispatches Informant code reviews";
     private const string SystemdUnitPath = "/etc/systemd/system/marshal.service";
 
     /// <summary>Registers Marshal to start automatically, launching it with the given config path</summary>

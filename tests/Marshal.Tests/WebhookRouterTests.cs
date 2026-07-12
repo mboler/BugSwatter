@@ -7,8 +7,8 @@ public sealed class WebhookRouterTests
     [Fact]
     public void ExtractsGitHubFullName()
     {
-        using var payload = JsonDocument.Parse("""{"ref": "refs/heads/main", "repository": {"full_name": "mboler/SlimShady"}}""");
-        Assert.Equal("mboler/SlimShady", WebhookRouter.ExtractRepository(WebhookProvider.GitHub, payload.RootElement));
+        using var payload = JsonDocument.Parse("""{"ref": "refs/heads/main", "repository": {"full_name": "mboler/BugSwatter"}}""");
+        Assert.Equal("mboler/BugSwatter", WebhookRouter.ExtractRepository(WebhookProvider.GitHub, payload.RootElement));
     }
 
     [Fact]
@@ -37,11 +37,11 @@ public sealed class WebhookRouterTests
     {
         ReviewJobConfig[] jobs =
         [
-            new ReviewJobConfig { Name = "other", SlimShadyConfigPath = "x", Webhook = new JobWebhookConfig { Provider = WebhookProvider.GitHub, Repository = "someone/else" } },
-            new ReviewJobConfig { Name = "target", SlimShadyConfigPath = "y", Webhook = new JobWebhookConfig { Provider = WebhookProvider.GitHub, Repository = "MBoler/SlimShady" } }
+            new ReviewJobConfig { Name = "other", InformantConfigPath = "x", Webhook = new JobWebhookConfig { Provider = WebhookProvider.GitHub, Repository = "someone/else" } },
+            new ReviewJobConfig { Name = "target", InformantConfigPath = "y", Webhook = new JobWebhookConfig { Provider = WebhookProvider.GitHub, Repository = "MBoler/BugSwatter" } }
         ];
 
-        ReviewJobConfig? match = WebhookRouter.MatchJob(jobs, WebhookProvider.GitHub, "mboler/slimshady");
+        ReviewJobConfig? match = WebhookRouter.MatchJob(jobs, WebhookProvider.GitHub, "mboler/bugswatter");
         Assert.NotNull(match);
         Assert.Equal("target", match.Name);
     }
@@ -49,14 +49,14 @@ public sealed class WebhookRouterTests
     [Fact]
     public void ProviderMismatchDoesNotMatch()
     {
-        ReviewJobConfig[] jobs = [new ReviewJobConfig { Name = "gh", SlimShadyConfigPath = "x", Webhook = new JobWebhookConfig { Provider = WebhookProvider.GitHub, Repository = "mboler/SlimShady" } }];
-        Assert.Null(WebhookRouter.MatchJob(jobs, WebhookProvider.AzureDevOps, "mboler/SlimShady"));
+        ReviewJobConfig[] jobs = [new ReviewJobConfig { Name = "gh", InformantConfigPath = "x", Webhook = new JobWebhookConfig { Provider = WebhookProvider.GitHub, Repository = "mboler/BugSwatter" } }];
+        Assert.Null(WebhookRouter.MatchJob(jobs, WebhookProvider.AzureDevOps, "mboler/BugSwatter"));
     }
 
     [Fact]
     public void JobsWithoutWebhookAreIgnored()
     {
-        ReviewJobConfig[] jobs = [new ReviewJobConfig { Name = "quiet", SlimShadyConfigPath = "x" }];
+        ReviewJobConfig[] jobs = [new ReviewJobConfig { Name = "quiet", InformantConfigPath = "x" }];
         Assert.Null(WebhookRouter.MatchJob(jobs, WebhookProvider.GitHub, "anything"));
     }
 }

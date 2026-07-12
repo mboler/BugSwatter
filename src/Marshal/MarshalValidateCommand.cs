@@ -2,7 +2,7 @@ using System.Diagnostics;
 
 namespace Marshal;
 
-/// <summary>Deployment pre-flight for Marshal: validates its own config, checks the SlimShady executable and watch directories, resolves webhook secrets from the environment, and runs "SlimShady validate" for every job so a broken deployment fails here instead of at 3am</summary>
+/// <summary>Deployment pre-flight for Marshal: validates its own config, checks the Informant executable and watch directories, resolves webhook secrets from the environment, and runs "Informant validate" for every job so a broken deployment fails here instead of at 3am</summary>
 public static class MarshalValidateCommand
 {
     /// <summary>Loads the config, runs every check, prints a checklist and returns 0 when all pass or 1 when any fail</summary>
@@ -15,7 +15,7 @@ public static class MarshalValidateCommand
         int failed = 0;
 
         Report(ref failed, true, "config", "loaded and structurally valid");
-        Report(ref failed, File.Exists(config.SlimShadyExecutable), "SlimShady executable", config.SlimShadyExecutable);
+        Report(ref failed, File.Exists(config.InformantExecutable), "Informant executable", config.InformantExecutable);
 
         if (config.Webhook is { Enabled: true } webhook)
         {
@@ -30,8 +30,8 @@ public static class MarshalValidateCommand
                 Report(ref failed, Directory.Exists(job.WatchPath), $"job '{job.Name}' watch path", job.WatchPath);
             }
 
-            (int exitCode, string output) = await RunSlimShadyValidateAsync(config.SlimShadyExecutable, job.SlimShadyConfigPath);
-            Report(ref failed, exitCode == 0, $"job '{job.Name}' SlimShady validate", exitCode == 0 ? "passed" : $"exited {exitCode}");
+            (int exitCode, string output) = await RunInformantValidateAsync(config.InformantExecutable, job.InformantConfigPath);
+            Report(ref failed, exitCode == 0, $"job '{job.Name}' Informant validate", exitCode == 0 ? "passed" : $"exited {exitCode}");
 
             foreach (string line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
             {
@@ -43,11 +43,11 @@ public static class MarshalValidateCommand
         return failed == 0 ? 0 : 1;
     }
 
-    private static async Task<(int ExitCode, string Output)> RunSlimShadyValidateAsync(string executable, string jobConfigPath)
+    private static async Task<(int ExitCode, string Output)> RunInformantValidateAsync(string executable, string jobConfigPath)
     {
         if (!File.Exists(executable))
         {
-            return (-1, "SlimShady executable not found; cannot validate this job");
+            return (-1, "Informant executable not found; cannot validate this job");
         }
 
         var startInfo = new ProcessStartInfo { FileName = executable, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
@@ -58,7 +58,7 @@ public static class MarshalValidateCommand
         using var process = Process.Start(startInfo);
         if (process is null)
         {
-            return (-1, "could not start SlimShady");
+            return (-1, "could not start Informant");
         }
 
         Task<string> stdoutTask = process.StandardOutput.ReadToEndAsync();

@@ -40,21 +40,21 @@ public sealed class HttpEndpointHealthChecker : IEndpointHealthChecker
     }
 }
 
-/// <summary>Reads the model endpoint from a job's SlimShady config with a minimal comment-tolerant JSON read, the same lightweight peek used for report discovery, so Marshal can health-check without parsing the whole SlimShady config format</summary>
+/// <summary>Reads the model endpoint from a job's Informant config with a minimal comment-tolerant JSON read, the same lightweight peek used for report discovery, so Marshal can health-check without parsing the whole Informant config format</summary>
 public static class JobConfigReader
 {
     /// <summary>Returns the modelEndpoint value from the config, or null when it cannot be read</summary>
-    public static string? TryReadModelEndpoint(string slimShadyConfigPath)
+    public static string? TryReadModelEndpoint(string informantConfigPath)
     {
         try
         {
             var options = new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true };
-            using var document = JsonDocument.Parse(File.ReadAllText(slimShadyConfigPath), options);
+            using var document = JsonDocument.Parse(File.ReadAllText(informantConfigPath), options);
             return document.RootElement.TryGetProperty("modelEndpoint", out JsonElement element) ? element.GetString() : null;
         }
         catch (Exception)
         {
-            // catch-all: an unreadable config just means the health check is skipped and SlimShady itself reports the problem
+            // catch-all: an unreadable config just means the health check is skipped and Informant itself reports the problem
             return null;
         }
     }

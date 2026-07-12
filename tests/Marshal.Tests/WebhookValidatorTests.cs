@@ -10,7 +10,7 @@ public sealed class WebhookValidatorTests
     [Fact]
     public void GitHubValidSignaturePasses()
     {
-        byte[] body = Encoding.UTF8.GetBytes("""{"repository": {"full_name": "mboler/SlimShady"}}""");
+        byte[] body = Encoding.UTF8.GetBytes("""{"repository": {"full_name": "mboler/Informant"}}""");
         string header = "sha256=" + Convert.ToHexString(HMACSHA256.HashData(Encoding.UTF8.GetBytes(Secret), body)).ToLowerInvariant();
 
         Assert.True(WebhookValidator.ValidateGitHubSignature(body, header, Secret));
@@ -19,7 +19,7 @@ public sealed class WebhookValidatorTests
     [Fact]
     public void GitHubTamperedBodyFails()
     {
-        byte[] body = Encoding.UTF8.GetBytes("""{"repository": {"full_name": "mboler/SlimShady"}}""");
+        byte[] body = Encoding.UTF8.GetBytes("""{"repository": {"full_name": "mboler/Informant"}}""");
         string header = "sha256=" + Convert.ToHexString(HMACSHA256.HashData(Encoding.UTF8.GetBytes(Secret), body)).ToLowerInvariant();
         byte[] tampered = Encoding.UTF8.GetBytes("""{"repository": {"full_name": "attacker/evil"}}""");
 

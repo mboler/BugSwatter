@@ -2,10 +2,10 @@
   <Folder Name="/src/">
     <Project Path="src/BugSwatter.Common/BugSwatter.Common.csproj" />
     <Project Path="src/Marshal/Marshal.csproj" />
-    <Project Path="src/SlimShady/SlimShady.csproj" />
+    <Project Path="src/Informant/Informant.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Marshal.Tests/Marshal.Tests.csproj" />
-    <Project Path="tests/SlimShady.Tests/SlimShady.Tests.csproj" />
+    <Project Path="tests/Informant.Tests/Informant.Tests.csproj" />
   </Folder>
 </Solution>

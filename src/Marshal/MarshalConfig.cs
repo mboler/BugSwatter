@@ -24,14 +24,14 @@ public sealed record JobWebhookConfig
     public string Repository { get; init; } = "";
 }
 
-/// <summary>One repository Marshal watches: where its SlimShady config lives and which triggers enqueue it</summary>
+/// <summary>One repository Marshal watches: where its Informant config lives and which triggers enqueue it</summary>
 public sealed record ReviewJobConfig
 {
     /// <summary>Display name used in logs</summary>
     public string Name { get; init; } = "";
 
-    /// <summary>Path of the SlimShady config for this repository; Marshal passes it to SlimShady via --config</summary>
-    public string SlimShadyConfigPath { get; init; } = "";
+    /// <summary>Path of the Informant config for this repository; Marshal passes it to Informant via --config</summary>
+    public string InformantConfigPath { get; init; } = "";
 
     /// <summary>Daily local times (HH:mm) at which the job is enqueued; null or empty for no schedule</summary>
     public IReadOnlyList<string>? Schedule { get; init; }
@@ -69,13 +69,13 @@ public sealed record WebhookSettings
     public string? AzureDevOpsSecret { get; init; }
 }
 
-/// <summary>Marshal configuration: the SlimShady executable it dispatches, global dispatch settings, and the jobs it watches</summary>
+/// <summary>Marshal configuration: the Informant executable it dispatches, global dispatch settings, and the jobs it watches</summary>
 public sealed class MarshalConfig
 {
-    /// <summary>Full path of the SlimShady executable Marshal launches for each review</summary>
-    public string SlimShadyExecutable { get; init; } = "";
+    /// <summary>Full path of the Informant executable Marshal launches for each review</summary>
+    public string InformantExecutable { get; init; } = "";
 
-    /// <summary>Hard timeout per SlimShady run; a child exceeding it is killed and the run marked failed</summary>
+    /// <summary>Hard timeout per Informant run; a child exceeding it is killed and the run marked failed</summary>
     public int PerRunTimeoutMinutes { get; init; } = 360;
 
     /// <summary>Quiet window after the last file change before a watched job is enqueued</summary>
@@ -140,14 +140,14 @@ public sealed class MarshalConfig
 
     private void Validate()
     {
-        if (string.IsNullOrWhiteSpace(SlimShadyExecutable))
+        if (string.IsNullOrWhiteSpace(InformantExecutable))
         {
-            throw new MarshalFatalException("Config field 'slimShadyExecutable' is required");
+            throw new MarshalFatalException("Config field 'informantExecutable' is required");
         }
 
-        if (!File.Exists(SlimShadyExecutable))
+        if (!File.Exists(InformantExecutable))
         {
-            throw new MarshalFatalException($"slimShadyExecutable does not exist: {SlimShadyExecutable}");
+            throw new MarshalFatalException($"informantExecutable does not exist: {InformantExecutable}");
         }
 
         if (PerRunTimeoutMinutes <= 0)
@@ -203,14 +203,14 @@ public sealed class MarshalConfig
             throw new MarshalFatalException("Every job needs a non-empty 'name'");
         }
 
-        if (string.IsNullOrWhiteSpace(job.SlimShadyConfigPath))
+        if (string.IsNullOrWhiteSpace(job.InformantConfigPath))
         {
-            throw new MarshalFatalException($"Job '{job.Name}' needs a 'slimShadyConfigPath'");
+            throw new MarshalFatalException($"Job '{job.Name}' needs a 'informantConfigPath'");
         }
 
-        if (!File.Exists(job.SlimShadyConfigPath))
+        if (!File.Exists(job.InformantConfigPath))
         {
-            throw new MarshalFatalException($"Job '{job.Name}': SlimShady config not found at {job.SlimShadyConfigPath}");
+            throw new MarshalFatalException($"Job '{job.Name}': Informant config not found at {job.InformantConfigPath}");
         }
 
         foreach (string time in job.Schedule ?? [])

@@ -67,15 +67,15 @@ public sealed class ReviewQueue
         }
     }
 
-    /// <summary>Repository identity for duplicate detection: the job's SlimShady config path, normalized, compared case-insensitively on Windows</summary>
+    /// <summary>Repository identity for duplicate detection: the job's Informant config path, normalized, compared case-insensitively on Windows</summary>
     public static string RepositoryKey(ReviewJobConfig job)
     {
         ArgumentNullException.ThrowIfNull(job);
-        return Path.GetFullPath(job.SlimShadyConfigPath);
+        return Path.GetFullPath(job.InformantConfigPath);
     }
 
     /// <summary>Enqueues a review need, coalescing duplicates and flagging a rerun when the repository is currently running</summary>
-    /// <param name="job">The repository to review; its SlimShady config path is the identity used for coalescing</param>
+    /// <param name="job">The repository to review; its Informant config path is the identity used for coalescing</param>
     /// <param name="reason">Human-readable trigger description carried into the dispatch log</param>
     /// <returns>What happened to the request, already logged; tests assert on it and callers may ignore it</returns>
     public EnqueueResult Enqueue(ReviewJobConfig job, string reason)

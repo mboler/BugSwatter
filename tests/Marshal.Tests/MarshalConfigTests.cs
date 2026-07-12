@@ -29,11 +29,11 @@ public sealed class MarshalConfigTests : IDisposable
     }
 
     [Fact]
-    public void MissingSlimShadyExecutableIsFatal()
+    public void MissingInformantExecutableIsFatal()
     {
-        string path = WriteConfig(mutate: values => values["slimShadyExecutable"] = Path.Combine(_directory.Path, "ghost.exe"));
+        string path = WriteConfig(mutate: values => values["informantExecutable"] = Path.Combine(_directory.Path, "ghost.exe"));
         MarshalFatalException ex = Assert.Throws<MarshalFatalException>(() => MarshalConfig.Load(path));
-        Assert.Contains("slimShadyExecutable", ex.Message);
+        Assert.Contains("informantExecutable", ex.Message);
     }
 
     [Fact]
@@ -124,12 +124,12 @@ public sealed class MarshalConfigTests : IDisposable
 
     private string WriteConfig(Action<Dictionary<string, object?>>? mutate = null, string[]? schedule = null, bool jobWebhook = false, bool webhookEnabled = false)
     {
-        string fakeExe = Path.Combine(_directory.Path, "SlimShady.exe");
+        string fakeExe = Path.Combine(_directory.Path, "Informant.exe");
         File.WriteAllText(fakeExe, "stub");
-        string fakeJobConfig = Path.Combine(_directory.Path, "slimshady.json");
+        string fakeJobConfig = Path.Combine(_directory.Path, "informant.json");
         File.WriteAllText(fakeJobConfig, "{}");
 
-        var job = new Dictionary<string, object?> { ["name"] = "job-a", ["slimShadyConfigPath"] = fakeJobConfig };
+        var job = new Dictionary<string, object?> { ["name"] = "job-a", ["informantConfigPath"] = fakeJobConfig };
         if (schedule is not null)
         {
             job["schedule"] = schedule;
@@ -137,10 +137,10 @@ public sealed class MarshalConfigTests : IDisposable
 
         if (jobWebhook)
         {
-            job["webhook"] = new Dictionary<string, object?> { ["provider"] = "gitHub", ["repository"] = "mboler/SlimShady" };
+            job["webhook"] = new Dictionary<string, object?> { ["provider"] = "gitHub", ["repository"] = "mboler/Informant" };
         }
 
-        var values = new Dictionary<string, object?> { ["slimShadyExecutable"] = fakeExe, ["jobs"] = new[] { job } };
+        var values = new Dictionary<string, object?> { ["informantExecutable"] = fakeExe, ["jobs"] = new[] { job } };
         if (webhookEnabled)
         {
             values["webServer"] = new Dictionary<string, object?> { ["enabled"] = true, ["bindAddress"] = "localhost", ["port"] = 5000 };

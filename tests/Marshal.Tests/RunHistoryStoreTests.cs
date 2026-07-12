@@ -61,9 +61,9 @@ public sealed class RunHistoryStoreTests : IDisposable
     [Fact]
     public void MaxSeverityIsReadFromTheValidatedCompanion()
     {
-        string reportPath = Path.Combine(_directory.Path, "SlimShady-Report-2026-07-11_10-00-00.md");
+        string reportPath = Path.Combine(_directory.Path, "Informant-Report-2026-07-11_10-00-00.md");
         File.WriteAllText(reportPath, "report");
-        File.WriteAllText(Path.Combine(_directory.Path, "SlimShady-Report-2026-07-11_10-00-00-validated.json"), """{ "maxSeverity": "High" }""");
+        File.WriteAllText(Path.Combine(_directory.Path, "Informant-Report-2026-07-11_10-00-00-validated.json"), """{ "maxSeverity": "High" }""");
 
         Assert.Equal("High", RunHistoryStore.TryReadMaxSeverity(reportPath));
     }
@@ -73,9 +73,9 @@ public sealed class RunHistoryStoreTests : IDisposable
     {
         // After a second opinion runs, the newest report Marshal discovers is the validated report itself,
         // so the discovered path ends with -validated.md; the companion json must still be found
-        string validatedReportPath = Path.Combine(_directory.Path, "SlimShady-Report-2026-07-11_10-00-00-validated.md");
+        string validatedReportPath = Path.Combine(_directory.Path, "Informant-Report-2026-07-11_10-00-00-validated.md");
         File.WriteAllText(validatedReportPath, "validated report");
-        File.WriteAllText(Path.Combine(_directory.Path, "SlimShady-Report-2026-07-11_10-00-00-validated.json"), """{ "maxSeverity": "High" }""");
+        File.WriteAllText(Path.Combine(_directory.Path, "Informant-Report-2026-07-11_10-00-00-validated.json"), """{ "maxSeverity": "High" }""");
 
         Assert.Equal("High", RunHistoryStore.TryReadMaxSeverity(validatedReportPath));
     }
@@ -83,7 +83,7 @@ public sealed class RunHistoryStoreTests : IDisposable
     [Fact]
     public void MaxSeverityIsNullWhenNoCompanion()
     {
-        Assert.Null(RunHistoryStore.TryReadMaxSeverity(Path.Combine(_directory.Path, "SlimShady-Report-x.md")));
+        Assert.Null(RunHistoryStore.TryReadMaxSeverity(Path.Combine(_directory.Path, "Informant-Report-x.md")));
         Assert.Null(RunHistoryStore.TryReadMaxSeverity(null));
     }
 }

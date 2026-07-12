@@ -14,7 +14,7 @@ Contributions are welcome. Found a bug, smoothed a rough edge, added something u
 
 BugSwatter is an unattended, scheduled code-review harness. On a timer or on demand, it refreshes a dedicated clone of a configured branch, computes exactly what changed since its last run, and feeds each changed file to a locally hosted AI model that reviews it and reports findings. Findings land in a timestamped Markdown report on disk. An optional Second Opinion stage can then have a stronger model, cloud or local, validate those findings against the actual code and write a separate validated report. Acting on findings is deliberately out of scope.
 
-It ships as two executables: the reviewer (`SlimShady`), the harness above, and the dispatcher (`Marshal`), an optional long-running supervisor that watches repositories and runs the reviewer on schedule, file-change, or webhook triggers, with a dashboard and a small local API over the run history.
+It ships as two executables: the reviewer (`Informant`), the harness above, and the dispatcher (`Marshal`), an optional long-running supervisor that watches repositories and runs the reviewer on schedule, file-change, or webhook triggers, with a dashboard and a small local API over the run history.
 
 - **Deterministic harness, judgment-only model.** The AI can only read code through one confined tool; it never writes, executes, or runs git.
 - **Local-first.** The review model is your own endpoint (LM Studio, llama.cpp, Ollama, a gateway); code never leaves your network unless you opt into a cloud Second Opinion.
@@ -27,10 +27,10 @@ It ships as two executables: the reviewer (`SlimShady`), the harness above, and 
 
 ```text
 cd C:\jobs\my-repo-review        # the directory that will hold this job's config
-SlimShady init                   # writes slimshady.json and review-prompt.txt
-notepad slimshady.json           # set repository, branch, working tree, git path, endpoint, model
-SlimShady verify                 # prove the model does tool-calling before anything else
-SlimShady                        # run a review
+Informant init                   # writes informant.json and review-prompt.txt
+notepad informant.json           # set repository, branch, working tree, git path, endpoint, model
+Informant verify                 # prove the model does tool-calling before anything else
+Informant                        # run a review
 ```
 
 The first run reviews every tracked file and records the reviewed tip SHA; each later run reviews only what changed since. Reports land in the report directory, named by run timestamp, and are never auto-deleted.

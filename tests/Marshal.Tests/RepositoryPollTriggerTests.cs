@@ -166,12 +166,13 @@ public sealed class RepositoryPollTriggerTests : IDisposable
         ReviewJobConfig job = CreateJob(BaselineSha, "0 */5 * * * *");
         var queue = new ReviewQueue();
         var reader = new FakeTipReader(BaselineSha);
-        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 7, 12, 12, 0, 0, TimeSpan.Zero));
+        var clock = new TrackingFakeTimeProvider(new DateTimeOffset(2026, 7, 12, 12, 0, 0, TimeSpan.Zero));
         var config = new MarshalConfig { Jobs = [job] };
         var trigger = new RepositoryPollTrigger(queue, config, reader, clock);
 
         await trigger.StartAsync(CancellationToken.None);
         await WaitForAsync(() => reader.CallCount == 1);
+        await WaitForAsync(() => clock.TimerCount == 1);
 
         clock.Advance(TimeSpan.FromMinutes(4));
         await Task.Yield();
@@ -179,6 +180,7 @@ public sealed class RepositoryPollTriggerTests : IDisposable
 
         clock.Advance(TimeSpan.FromMinutes(1));
         await WaitForAsync(() => reader.CallCount == 2);
+        await WaitForAsync(() => clock.TimerCount == 2);
 
         clock.Advance(TimeSpan.FromMinutes(10));
         await WaitForAsync(() => reader.CallCount == 3);
@@ -256,7 +258,7 @@ public sealed class RepositoryPollTriggerTests : IDisposable
 
     private static async Task WaitForAsync(Func<bool> condition)
     {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         while (!condition())
         {
             await Task.Delay(10, timeout.Token);
@@ -280,6 +282,24 @@ public sealed class RepositoryPollTriggerTests : IDisposable
         {
             Interlocked.Increment(ref _callCount);
             return Result is Exception exception ? Task.FromException<string>(exception) : Task.FromResult((string)Result);
+        }
+    }
+
+    private sealed class TrackingFakeTimeProvider : FakeTimeProvider
+    {
+        private int _timerCount;
+
+        public TrackingFakeTimeProvider(DateTimeOffset startDateTime) : base(startDateTime)
+        {
+        }
+
+        public int TimerCount => Volatile.Read(ref _timerCount);
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            ITimer timer = base.CreateTimer(callback, state, dueTime, period);
+            Interlocked.Increment(ref _timerCount);
+            return timer;
         }
     }
 

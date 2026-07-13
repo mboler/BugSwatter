@@ -19,6 +19,8 @@ BugSwatter is self-hosted and ships as two applications:
 
 The primary review can stay on your network through LM Studio, llama.cpp, Ollama, or another OpenAI-compatible endpoint. A second opinion can use another local model or a cloud model to validate findings and assign severity.
 
+BugSwatter is deliberately not a general-purpose agentic coding harness. The models do not get a shell, MCP servers or adapters, Git access, general filesystem access, or tools that can edit code. Their only model-directed action is asking Informant for a bounded range of numbered lines through its application-owned `read_file_lines` tool. Informant validates every request and either performs the read itself or refuses it. The model can ask for context and return review text; it cannot execute actions on your machine.
+
 ## Quick start
 
 Install Git and .NET 10, extract the appropriate release archive into `C:\BugSwatter\bin` or `/opt/bugswatter`, and create a directory for one review job:
@@ -43,14 +45,18 @@ The first successful run reviews all tracked files. Later `changed` runs compare
 - **Local-first:** keep primary review code on your network
 - **Changed-file reviews:** after the first run, review only changes since the last successfully completed primary review
 - **Second opinion:** optionally ask a different local or cloud model to confirm findings and assign severity
-- **Read-only model tools:** models can request repository file ranges, but cannot write files, execute commands, or run Git
+- **No agentic harness:** models can request bounded, read-only line ranges through Informant's single application-owned tool, but cannot write files, execute commands, or invoke Git; no MCP server or adapter is involved
 - **Multiple triggers:** use daily schedules, outbound repository polling, filesystem watching, GitHub webhooks, or Azure DevOps service hooks
 - **Unattended operation:** run Marshal in the foreground, as a Windows service, or as a systemd service
 - **No installer or bundled runtime:** GitHub Releases provide framework-dependent Windows and Linux archives for machines with .NET 10 installed
 
 ## Important safety boundaries
 
-Informant owns and destructively refreshes the absolute `workingTreePath` in its configuration. Never point it at a checkout where you work. Ownership records are validated before destructive Git operations, and repository file reads reject symbolic links, junctions, mount points, other reparse points, absolute paths, and paths outside the configured root.
+The model does not control Git. Informant itself uses application-controlled Git operations to clone the configured repository, detect changes, read baseline versions of deleted files, and refresh its dedicated working tree. Model output is never converted into a command line, and the model cannot choose Git commands or arguments.
+
+Working-tree refresh is intentionally destructive: Informant uses `fetch`, `reset --hard`, and `clean -fdx` to make its dedicated clone match the configured branch. Before doing that, it validates matching ownership records inside and outside the working tree, the canonical path, repository URL, branch, origin remote, `.git` directory, and reparse-point boundaries. Never point `workingTreePath` at a checkout where you work.
+
+The `read_file_lines` tool can return at most 400 numbered lines per call from a bounded text file inside the repository root. It rejects absolute paths, paths outside the root, symbolic links, junctions, mount points, other reparse points, binary files, and oversized files. This uses ordinary OpenAI-compatible model tool calling through Informant, not MCP, and gives the model no direct filesystem access.
 
 Marshal's optional dashboard is HTTP-only and has no authentication or authorization. Anyone who can reach it can see operational details, enqueue reviews, and remove waiting jobs. Bind it to `localhost` unless you deliberately place it on a trusted internal or VPN network. Never expose it directly to the public internet.
 

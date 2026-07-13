@@ -26,6 +26,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting.Systemd" />
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" />
+    <PackageReference Include="NCrontab" />
     <PackageReference Include="Serilog.Extensions.Hosting" />
     <PackageReference Include="Serilog.Sinks.Console" />
     <PackageReference Include="Serilog.Sinks.File" />
@@ -38,6 +39,7 @@
   <ItemGroup>
     <ProjectReference Include="..\BugSwatter.AI\BugSwatter.AI.csproj" />
     <ProjectReference Include="..\BugSwatter.Common\BugSwatter.Common.csproj" />
+    <ProjectReference Include="..\BugSwatter.Git\BugSwatter.Git.csproj" />
   </ItemGroup>
 
 </Project>

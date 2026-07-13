@@ -74,6 +74,18 @@ public sealed class ReviewQueue
         return Path.GetFullPath(job.InformantConfigPath);
     }
 
+    /// <summary>Returns whether the repository is already waiting or currently under review</summary>
+    public bool IsQueuedOrRunning(ReviewJobConfig job)
+    {
+        ArgumentNullException.ThrowIfNull(job);
+        string key = RepositoryKey(job);
+
+        lock (_gate)
+        {
+            return _waitingKeys.Contains(key) || _runningKey is not null && KeyComparer.Equals(key, _runningKey);
+        }
+    }
+
     /// <summary>Enqueues a review need, coalescing duplicates and flagging a rerun when the repository is currently running</summary>
     /// <param name="job">The repository to review; its Informant config path is the identity used for coalescing</param>
     /// <param name="reason">Human-readable trigger description carried into the dispatch log</param>

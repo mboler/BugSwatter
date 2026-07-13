@@ -94,6 +94,21 @@ public sealed class ReviewQueueTests
     }
 
     [Fact]
+    public async Task ReportsWhetherRepositoryIsQueuedOrRunning()
+    {
+        var queue = new ReviewQueue();
+        ReviewJobConfig job = Job(@"C:\jobs\a\informant.json");
+
+        Assert.False(queue.IsQueuedOrRunning(job));
+        queue.Enqueue(job, "first");
+        Assert.True(queue.IsQueuedOrRunning(job));
+        await queue.TakeNextAsync(CancellationToken.None);
+        Assert.True(queue.IsQueuedOrRunning(job));
+        queue.CompleteRunning();
+        Assert.False(queue.IsQueuedOrRunning(job));
+    }
+
+    [Fact]
     public async Task DifferentRepositoryEnqueuesNormallyWhileAnotherRuns()
     {
         var queue = new ReviewQueue();

@@ -24,7 +24,10 @@ public sealed class GitRunner
     }
 
     /// <summary>Runs git with the given arguments and returns the exit code and captured output</summary>
-    public async Task<GitResult> RunAsync(params string[] arguments)
+    public Task<GitResult> RunAsync(params string[] arguments) => RunAsync(CancellationToken.None, arguments);
+
+    /// <summary>Runs git with the given arguments and returns the exit code and captured output, stopping the process tree when cancelled</summary>
+    public async Task<GitResult> RunAsync(CancellationToken cancellationToken, params string[] arguments)
     {
         var startInfo = new ProcessStartInfo
         {
@@ -54,9 +57,10 @@ public sealed class GitRunner
         Task<string> stderrTask = process.StandardError.ReadToEndAsync();
 
         using var timeoutSource = new CancellationTokenSource(GitTimeout);
+        using var linkedSource = CancellationTokenSource.CreateLinkedTokenSource(timeoutSource.Token, cancellationToken);
         try
         {
-            await process.WaitForExitAsync(timeoutSource.Token);
+            await process.WaitForExitAsync(linkedSource.Token);
         }
         catch (OperationCanceledException)
         {
@@ -76,6 +80,11 @@ public sealed class GitRunner
             catch (Exception)
             {
                 // catch-all: output of a killed process is best effort and must not mask the timeout error below
+            }
+
+            if (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
 
             throw new GitOperationException($"git {string.Join(' ', arguments)} did not finish within {GitTimeout.TotalMinutes:0} minutes and was killed");

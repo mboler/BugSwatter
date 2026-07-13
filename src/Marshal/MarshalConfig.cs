@@ -24,6 +24,19 @@ public sealed record JobWebhookConfig
     public string Repository { get; init; } = "";
 }
 
+/// <summary>Outbound repository polling schedule, using an Azure Functions-style NCRONTAB expression or a .NET TimeSpan value</summary>
+public sealed record RepositoryPollSettings
+{
+    /// <summary>Default schedule: poll at second zero every five minutes</summary>
+    public const string DefaultSchedule = "0 */5 * * * *";
+
+    /// <summary>Whether outbound polling runs for this job</summary>
+    public bool Enabled { get; init; } = true;
+
+    /// <summary>Six-field NCRONTAB, five-field crontab, or TimeSpan schedule; no schedule may fire more than once per minute</summary>
+    public string Schedule { get; init; } = DefaultSchedule;
+}
+
 /// <summary>One repository Marshal watches: where its Informant config lives and which triggers enqueue it</summary>
 public sealed record ReviewJobConfig
 {
@@ -54,6 +67,9 @@ public sealed record ReviewJobConfig
 
     /// <summary>Webhook mapping; null when webhooks do not trigger this job</summary>
     public JobWebhookConfig? Webhook { get; init; }
+
+    /// <summary>Outbound remote-branch polling; null when polling is disabled</summary>
+    public RepositoryPollSettings? Poll { get; init; }
 
     internal void SetConfigDirectory(string configDirectory)
     {
@@ -295,6 +311,23 @@ public sealed class MarshalConfig
         if (job.Webhook is not null && string.IsNullOrWhiteSpace(job.Webhook.Repository))
         {
             throw new MarshalFatalException($"Job '{job.Name}': webhook mapping needs a 'repository' identifier");
+        }
+
+        if (job.Poll is not null)
+        {
+            try
+            {
+                PollSchedule.Parse(job.Poll.Schedule);
+            }
+            catch (FormatException ex)
+            {
+                throw new MarshalFatalException($"Job '{job.Name}': poll.schedule is invalid: {ex.Message}", ex);
+            }
+
+            if (job.Poll.Enabled && JobConfigReader.TryReadRepositoryPollTarget(job.InformantConfigPath) is null)
+            {
+                throw new MarshalFatalException($"Job '{job.Name}': polling requires repositoryUrl, branch and gitExecutablePath in its Informant config");
+            }
         }
     }
 }

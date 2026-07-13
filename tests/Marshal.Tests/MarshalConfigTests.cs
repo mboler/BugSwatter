@@ -19,6 +19,7 @@ public sealed class MarshalConfigTests : IDisposable
         Assert.Equal("Information", config.LogLevel);
         ReviewJobConfig job = Assert.Single(config.Jobs);
         Assert.Equal("job-a", job.Name);
+        Assert.Null(job.Poll);
     }
 
     [Fact]
@@ -42,6 +43,56 @@ public sealed class MarshalConfigTests : IDisposable
         string path = WriteConfig(schedule: ["25:99"]);
         MarshalFatalException ex = Assert.Throws<MarshalFatalException>(() => MarshalConfig.Load(path));
         Assert.Contains("25:99", ex.Message);
+    }
+
+    [Fact]
+    public void PollBlockUsesFiveMinuteDefault()
+    {
+        string path = WriteConfig(mutate: values => ((Dictionary<string, object?>[])values["jobs"]!)[0]["poll"] = new Dictionary<string, object?> { ["enabled"] = true });
+
+        MarshalConfig config = MarshalConfig.Load(path);
+
+        Assert.Equal(RepositoryPollSettings.DefaultSchedule, Assert.Single(config.Jobs).Poll!.Schedule);
+    }
+
+    [Theory]
+    [InlineData("0 * * * * *")]
+    [InlineData("0 30 2 * * Mon-Fri")]
+    [InlineData("00:01:00")]
+    [InlineData("30.00:00:00")]
+    public void ValidPollSchedulesLoad(string schedule)
+    {
+        string path = WriteConfig(mutate: values => ((Dictionary<string, object?>[])values["jobs"]!)[0]["poll"] = new Dictionary<string, object?> { ["schedule"] = schedule });
+
+        Assert.Equal(schedule, MarshalConfig.Load(path).Jobs[0].Poll!.Schedule);
+    }
+
+    [Theory]
+    [InlineData("*/30 * * * * *")]
+    [InlineData("00:00:59")]
+    [InlineData("invalid")]
+    public void InvalidPollSchedulesAreFatal(string schedule)
+    {
+        string path = WriteConfig(mutate: values => ((Dictionary<string, object?>[])values["jobs"]!)[0]["poll"] = new Dictionary<string, object?> { ["schedule"] = schedule });
+
+        MarshalFatalException ex = Assert.Throws<MarshalFatalException>(() => MarshalConfig.Load(path));
+
+        Assert.Contains("poll.schedule", ex.Message);
+    }
+
+    [Fact]
+    public void PollingWithoutRepositoryTargetIsFatal()
+    {
+        string path = WriteConfig(mutate: values =>
+        {
+            var jobs = (Dictionary<string, object?>[])values["jobs"]!;
+            File.WriteAllText((string)jobs[0]["informantConfigPath"]!, "{}");
+            jobs[0]["poll"] = new Dictionary<string, object?> { ["enabled"] = true };
+        });
+
+        MarshalFatalException ex = Assert.Throws<MarshalFatalException>(() => MarshalConfig.Load(path));
+
+        Assert.Contains("requires repositoryUrl", ex.Message);
     }
 
     [Fact]
@@ -157,6 +208,9 @@ public sealed class MarshalConfigTests : IDisposable
         Environment.SetEnvironmentVariable("MARSHAL_WebServer__Port", "5055");
         Environment.SetEnvironmentVariable("MARSHAL_Jobs__0__Name", "environment-job");
         Environment.SetEnvironmentVariable("MARSHAL_Jobs__0__InformantConfigPath", alternateConfig);
+        Environment.SetEnvironmentVariable("MARSHAL_Jobs__0__Poll__Enabled", "true");
+        Environment.SetEnvironmentVariable("MARSHAL_Jobs__0__Poll__Schedule", "00:10:00");
+        File.WriteAllText(alternateConfig, """{ "repositoryUrl": "https://example.test/repository.git", "branch": "main" }""");
         try
         {
             MarshalConfig config = MarshalConfig.Load(path);
@@ -165,6 +219,7 @@ public sealed class MarshalConfigTests : IDisposable
             Assert.Equal(5055, config.WebServer!.Port);
             Assert.Equal("environment-job", Assert.Single(config.Jobs).Name);
             Assert.Equal(alternateConfig, config.Jobs[0].InformantConfigPath);
+            Assert.Equal("00:10:00", config.Jobs[0].Poll!.Schedule);
         }
         finally
         {
@@ -172,6 +227,8 @@ public sealed class MarshalConfigTests : IDisposable
             Environment.SetEnvironmentVariable("MARSHAL_WebServer__Port", null);
             Environment.SetEnvironmentVariable("MARSHAL_Jobs__0__Name", null);
             Environment.SetEnvironmentVariable("MARSHAL_Jobs__0__InformantConfigPath", null);
+            Environment.SetEnvironmentVariable("MARSHAL_Jobs__0__Poll__Enabled", null);
+            Environment.SetEnvironmentVariable("MARSHAL_Jobs__0__Poll__Schedule", null);
         }
     }
 
@@ -180,7 +237,7 @@ public sealed class MarshalConfigTests : IDisposable
         string fakeExe = Path.Combine(_directory.Path, "Informant.exe");
         File.WriteAllText(fakeExe, "stub");
         string fakeJobConfig = Path.Combine(_directory.Path, "informant.json");
-        File.WriteAllText(fakeJobConfig, "{}");
+        File.WriteAllText(fakeJobConfig, """{ "repositoryUrl": "https://example.test/repository.git", "branch": "main", "gitExecutablePath": "git" }""");
 
         var job = new Dictionary<string, object?> { ["name"] = "job-a", ["informantConfigPath"] = fakeJobConfig };
         if (schedule is not null)

@@ -149,6 +149,8 @@ internal static class Program
         services.AddSingleton<IInformantRunner, InformantProcessRunner>();
         services.AddSingleton(new HttpClient());
         services.AddSingleton<IEndpointHealthChecker, HttpEndpointHealthChecker>();
+        services.AddSingleton(TimeProvider.System);
+        services.AddSingleton<IRepositoryTipReader, GitRepositoryTipReader>();
         services.AddSingleton(new BackoffTracker(TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(15)));
         services.AddSingleton(new RunHistoryStore(config.HistoryFilePath));
         services.AddSingleton<MarshalStatus>();
@@ -162,6 +164,11 @@ internal static class Program
         if (config.Jobs.Any(job => job.WatchPath is not null))
         {
             services.AddHostedService<FileWatchTrigger>();
+        }
+
+        if (config.Jobs.Any(job => job.Poll is { Enabled: true }))
+        {
+            services.AddHostedService<RepositoryPollTrigger>();
         }
     }
 

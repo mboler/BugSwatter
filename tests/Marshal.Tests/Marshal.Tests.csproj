@@ -10,11 +10,18 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
     <PackageReference Include="xunit.v3" />
   </ItemGroup>
 
   <ItemGroup>
     <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\TestSupport\TempDirectory.cs" Link="TestSupport\SharedTempDirectory.cs" />
+    <Compile Include="..\TestSupport\TestGit.cs" Link="TestSupport\TestGit.cs" />
+    <Compile Include="..\TestSupport\TestRepository.cs" Link="TestSupport\TestRepository.cs" />
   </ItemGroup>
 
   <ItemGroup>

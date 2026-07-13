@@ -49,6 +49,7 @@ public static class WebEndpoints
         {
             name = job.Name,
             schedule = job.Schedule ?? [],
+            pollSchedule = job.Poll?.Schedule,
             watchPath = job.WatchPath,
             webhook = job.Webhook is null ? null : (object)new { provider = job.Webhook.Provider.ToString(), repository = job.Webhook.Repository }
         })));

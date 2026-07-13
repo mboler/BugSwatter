@@ -18,6 +18,7 @@ public sealed class InformantConfigTests : IDisposable
         Assert.Equal("main", config.Branch);
         Assert.Equal(ReviewMode.Changed, config.ReviewMode);
         Assert.Equal(Path.Combine(_directory.Path, "reports"), config.ReportDirectory);
+        Assert.Equal(31, config.ReportRetentionDays);
         Assert.Equal(Path.Combine(_directory.Path, "informant.state.json"), config.StateFilePath);
         Assert.Equal(24000, config.MaxContextCharacters);
         Assert.Equal(800, config.MaxFileLines);
@@ -102,6 +103,30 @@ public sealed class InformantConfigTests : IDisposable
         WriteConfig(values => values[field] = 0);
         InformantFatalException ex = Assert.Throws<InformantFatalException>(() => InformantConfig.Load(_directory.Path));
         Assert.Contains(field, ex.Message);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-2)]
+    public void InvalidReportRetentionThrowsFatal(int days)
+    {
+        WriteConfig(values => values["reportRetentionDays"] = days);
+
+        InformantFatalException ex = Assert.Throws<InformantFatalException>(() => InformantConfig.Load(_directory.Path));
+
+        Assert.Contains("reportRetentionDays", ex.Message);
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(1)]
+    [InlineData(31)]
+    [InlineData(365)]
+    public void ValidReportRetentionLoads(int days)
+    {
+        WriteConfig(values => values["reportRetentionDays"] = days);
+
+        Assert.Equal(days, InformantConfig.Load(_directory.Path).ReportRetentionDays);
     }
 
     [Fact]
@@ -285,6 +310,21 @@ public sealed class InformantConfigTests : IDisposable
         finally
         {
             Environment.SetEnvironmentVariable("INFORMANT_ModelName", null);
+        }
+    }
+
+    [Fact]
+    public void EnvironmentVariableOverridesReportRetention()
+    {
+        WriteConfig();
+        Environment.SetEnvironmentVariable("INFORMANT_ReportRetentionDays", "45");
+        try
+        {
+            Assert.Equal(45, InformantConfig.Load(_directory.Path).ReportRetentionDays);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("INFORMANT_ReportRetentionDays", null);
         }
     }
 

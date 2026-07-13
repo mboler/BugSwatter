@@ -1,0 +1,17 @@
+namespace Informant.Tests;
+
+public sealed class InitCommandTests : IDisposable
+{
+    private readonly TempDirectory _directory = new();
+
+    public void Dispose() => _directory.Dispose();
+
+    [Fact]
+    public void StarterConfigIncludesDefaultReportRetention()
+    {
+        Assert.Equal(0, InitCommand.Run(_directory.Path));
+
+        string config = File.ReadAllText(Path.Combine(_directory.Path, InformantConfig.FileName));
+        Assert.Contains("\"reportRetentionDays\": 31", config);
+    }
+}

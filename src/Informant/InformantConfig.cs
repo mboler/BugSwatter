@@ -61,6 +61,9 @@ public sealed class InformantConfig
         init => _reportDirectory = value;
     }
 
+    /// <summary>Days completed report artifacts are retained; -1 keeps them forever</summary>
+    public int ReportRetentionDays { get; init; } = 31;
+
     /// <summary>Path of the JSON state file holding baseline SHAs keyed by repository and branch, resolved from the configuration directory when relative</summary>
     public string StateFilePath
     {
@@ -273,6 +276,11 @@ public sealed class InformantConfig
         RequirePositive(MaxFileBytes, "maxFileBytes");
         RequirePositive(MaxModelResponseBytes, "maxModelResponseBytes");
         RequirePositive(RequestTimeoutSeconds, "requestTimeoutSeconds");
+
+        if (ReportRetentionDays != -1 && ReportRetentionDays < 1)
+        {
+            throw new InformantFatalException($"reportRetentionDays must be -1 to keep reports forever or at least 1 day, got {ReportRetentionDays}");
+        }
 
         if (PerFileRetryCount < 0)
         {

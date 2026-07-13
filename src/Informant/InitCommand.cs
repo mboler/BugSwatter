@@ -34,6 +34,9 @@ public static class InitCommand
           "reviewMode": "changed",
 
           "reportDirectory": "reports",
+
+          // Delete recognized report artifacts after this many days; -1 keeps them forever
+          "reportRetentionDays": 31,
           "stateFilePath": "informant.state.json",
 
           // Inline prompt text wins over the prompt file; when both are null the built-in default is used

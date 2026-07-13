@@ -88,6 +88,7 @@ internal static class Program
     {
         var stopwatch = Stopwatch.StartNew();
         DateTimeOffset startedAt = DateTimeOffset.Now;
+        ApplyReportRetention(config);
 
         PrintDestructiveTreeWarning(config);
         Log.Information("Informant run starting: repository {Repository}, branch {Branch}, mode {Mode}", config.RepositoryUrl, config.Branch, config.ReviewMode);
@@ -184,6 +185,24 @@ internal static class Program
 
         EmitReportPath(primaryReportPath);
         return 0;
+    }
+
+    private static void ApplyReportRetention(InformantConfig config)
+    {
+        try
+        {
+            var retention = new ReportRetentionService(config.ReportDirectory, config.ReportRetentionDays, TimeProvider.System);
+            ReportRetentionResult result = retention.DeleteExpired();
+            if (result.DeletedCount > 0)
+            {
+                Log.Information("Report retention deleted {Count} artifacts older than {Days} days from {Directory}", result.DeletedCount, config.ReportRetentionDays, config.ReportDirectory);
+            }
+        }
+        catch (Exception ex)
+        {
+            // catch-all: retention is housekeeping and must never prevent the configured review from running.
+            Log.Warning("Report retention could not run for {Directory}: {Reason}; continuing the review", config.ReportDirectory, ex.Message);
+        }
     }
 
     /// <summary>Prints the run's primary report path, or "none" when no report was produced, on its own stdout line so a parent supervisor such as Marshal records the exact artifact instead of guessing the newest file by timestamp. Emitted only when output is redirected, so an interactive run's console stays clean and relies on the logged path instead</summary>

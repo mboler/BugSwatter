@@ -166,5 +166,12 @@ public sealed class ReviewQueueTests
         Assert.Equal(EnqueueResult.Enqueued, queue.Enqueue(job, "again"));
     }
 
-    private static ReviewJobConfig Job(string configPath) => new() { Name = System.IO.Path.GetDirectoryName(configPath) ?? configPath, InformantConfigPath = configPath };
+    private static ReviewJobConfig Job(string configPath)
+    {
+        int separator = Math.Max(configPath.LastIndexOf('\\'), configPath.LastIndexOf('/'));
+        string displayName = separator < 0 ? configPath : configPath[..separator];
+        string portableIdentity = configPath.Replace(':', '_').Replace('\\', Path.DirectorySeparatorChar).Replace('/', Path.DirectorySeparatorChar);
+        string identityPath = Path.Combine(Path.GetTempPath(), "marshal-review-queue-tests", portableIdentity);
+        return new ReviewJobConfig { Name = displayName, InformantConfigPath = identityPath };
+    }
 }

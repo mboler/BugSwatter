@@ -23,6 +23,8 @@ The primary review can stay on your network through LM Studio, llama.cpp, Ollama
 
 Install Git and .NET 10, extract the appropriate release archive into `C:\BugSwatter\bin` or `/opt/bugswatter`, and create a directory for one review job:
 
+The Windows executables are not code-signed, so Windows may identify them as coming from an unknown publisher or display a SmartScreen warning. Download releases only from this GitHub repository and verify the archive against `SHA256SUMS.txt` before running it.
+
 ```text
 mkdir C:\BugSwatter\jobs\sample
 cd C:\BugSwatter\jobs\sample

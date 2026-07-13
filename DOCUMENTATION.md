@@ -64,6 +64,8 @@ winget install Microsoft.DotNet.AspNetCore.10
 
 Download the Windows archive and `SHA256SUMS.txt` from the same GitHub Release. Compare the published checksum before extracting:
 
+The Windows executables are not code-signed, so Windows may identify them as coming from an unknown publisher or display a SmartScreen warning. Download releases only from this GitHub repository, and proceed only after the archive's checksum matches `SHA256SUMS.txt`.
+
 ```powershell
 Get-FileHash .\BugSwatter-0.5.0-win-x64.zip -Algorithm SHA256
 Expand-Archive .\BugSwatter-0.5.0-win-x64.zip -DestinationPath C:\BugSwatter\releases

@@ -9,7 +9,7 @@ public sealed record SecondOpinionConfig
     private bool _pathsResolved;
     private string? _promptFile;
 
-    /// <summary>OpenAI-compatible base URL of the validating endpoint, cloud (for example https://api.openai.com/v1) or local (for example http://192.0.2.13:1234/v1)</summary>
+    /// <summary>OpenAI-compatible base URL of the validating endpoint, cloud (for example https://api.openai.com/v1) or local (for example http://validator.example.test:1234/v1)</summary>
     public string Endpoint { get; init; } = "";
 
     /// <summary>Model name passed to the endpoint</summary>

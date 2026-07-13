@@ -55,7 +55,7 @@ Prefer narrowly scoped, read-only repository credentials. Restrict secret files 
 
 ## Dependency policy
 
-CI inspects resolved direct and transitive NuGet dependencies, rejects `Newtonsoft.Json`, lists non-Microsoft packages, and reports known NuGet vulnerabilities. This is a guardrail, not a substitute for reviewing dependency updates. Security issues in `System.Text.Json`, .NET, model servers, Git, operating systems, and other dependencies still require normal patch monitoring.
+CI checks the current tracked tree for private-network addresses, local paths, private-key headers, high-signal token formats, and the legacy reviewer name. It also inspects resolved direct and transitive NuGet dependencies, rejects `Newtonsoft.Json`, lists non-Microsoft packages, and reports known NuGet vulnerabilities. These are guardrails, not substitutes for reviewing commits and dependency updates. Security issues in `System.Text.Json`, .NET, model servers, Git, operating systems, and other dependencies still require normal patch monitoring.
 
 ## Not a vulnerability
 

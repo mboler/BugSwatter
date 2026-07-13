@@ -66,6 +66,10 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
+      - name: Check public-content policy
+        shell: pwsh
+        run: ./scripts/check-public-content.ps1
+
       - name: Reject Newtonsoft.Json and list third-party packages
         shell: pwsh
         run: ./scripts/check-dependencies.ps1

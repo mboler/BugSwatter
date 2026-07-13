@@ -24,6 +24,7 @@ Clone your fork and create a focused branch. Restore, build, and test from the r
 dotnet restore BugSwatter.slnx
 dotnet build BugSwatter.slnx -c Release --no-restore
 dotnet test BugSwatter.slnx -c Release --no-build --no-restore
+./scripts/check-public-content.ps1
 ./scripts/check-dependencies.ps1
 ```
 
@@ -68,7 +69,7 @@ BUGSWATTER_EMAIL_IT_FROM=<verified sender>
 BUGSWATTER_EMAIL_IT_TO=<recipient>
 ```
 
-Never put live values into a test file or commit them. Live tests can consume compute, tokens, or paid service capacity and can send real email. Run them only against resources you own and intend to use.
+Never put live values into a test file or commit them. Use reserved example domains rather than private network addresses in committed examples. Live tests can consume compute, tokens, or paid service capacity and can send real email. Run them only against resources you own and intend to use.
 
 ## Pull requests
 

@@ -583,10 +583,11 @@ Install the .NET 10 SDK and PowerShell 7, then run:
 dotnet restore BugSwatter.slnx
 dotnet build BugSwatter.slnx -c Release --no-restore
 dotnet test BugSwatter.slnx -c Release --no-build --no-restore
+./scripts/check-public-content.ps1
 ./scripts/check-dependencies.ps1
 ```
 
-The dependency-policy script restores every project, inspects resolved direct and transitive NuGet packages, fails if `Newtonsoft.Json` appears, and lists resolved non-Microsoft packages. CI also reports known NuGet vulnerabilities. `System.Text.Json` is not hard-pinned by policy; normal dependency review and vulnerability monitoring remain necessary.
+The public-content policy rejects private IPv4 addresses, user-profile and known local-source paths, private-key headers, high-signal token and access-key formats, and the legacy reviewer name in the current tracked tree. The dependency-policy script restores every project, inspects resolved direct and transitive NuGet packages, fails if `Newtonsoft.Json` appears, and lists resolved non-Microsoft packages. CI runs both policies and reports known NuGet vulnerabilities. `System.Text.Json` is not hard-pinned by policy; normal dependency review and vulnerability monitoring remain necessary.
 
 Build local framework-dependent release archives with:
 

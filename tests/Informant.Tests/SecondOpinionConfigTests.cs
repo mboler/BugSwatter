@@ -31,7 +31,7 @@ public sealed class SecondOpinionConfigTests : IDisposable
     [Fact]
     public void KeylessLocalEndpointIsAccepted()
     {
-        WriteConfig(secondOpinion: new Dictionary<string, object?> { ["endpoint"] = "http://192.0.2.13:1234/v1", ["modelName"] = "local-validator" });
+        WriteConfig(secondOpinion: new Dictionary<string, object?> { ["endpoint"] = "http://validator.example.test:1234/v1", ["modelName"] = "local-validator" });
 
         SecondOpinionConfig secondOpinion = InformantConfig.Load(_directory.Path).SecondOpinion!;
         Assert.False(secondOpinion.RequiresApiKey);
@@ -42,10 +42,10 @@ public sealed class SecondOpinionConfigTests : IDisposable
     [Fact]
     public void ContextLinesIsConfigurableAndValidated()
     {
-        WriteConfig(secondOpinion: new Dictionary<string, object?> { ["endpoint"] = "http://192.0.2.13:1234/v1", ["modelName"] = "local-validator", ["contextLines"] = 12 });
+        WriteConfig(secondOpinion: new Dictionary<string, object?> { ["endpoint"] = "http://validator.example.test:1234/v1", ["modelName"] = "local-validator", ["contextLines"] = 12 });
         Assert.Equal(12, InformantConfig.Load(_directory.Path).SecondOpinion!.ContextLines);
 
-        WriteConfig(secondOpinion: new Dictionary<string, object?> { ["endpoint"] = "http://192.0.2.13:1234/v1", ["modelName"] = "local-validator", ["contextLines"] = 0 });
+        WriteConfig(secondOpinion: new Dictionary<string, object?> { ["endpoint"] = "http://validator.example.test:1234/v1", ["modelName"] = "local-validator", ["contextLines"] = 0 });
         Assert.Throws<InformantFatalException>(() => InformantConfig.Load(_directory.Path));
     }
 

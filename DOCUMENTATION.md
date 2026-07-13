@@ -1,142 +1,249 @@
 # BugSwatter documentation
 
-BugSwatter ships as two executables: the reviewer (`Informant`) and the dispatcher (`Marshal`). This document covers both in full. For a short overview see the [README](README.md).
-
-## Disclaimer
-
-Use BugSwatter at your own risk. It drives AI models that you choose and configure, and running AI models can cost money — cloud endpoints in particular typically bill per token, and options that let a model read more of your code (such as the second opinion's per-file read budget) increase that usage. You alone are responsible for understanding the configuration and how the tool interacts with the models you point it at, for any costs a run incurs, and for verifying on a small scope that it behaves as you expect before you run it unattended. To the maximum extent permitted by law the software is provided "as is", without warranty of any kind, and the authors and contributors accept no liability for any cost, loss, or damage of any kind arising from its use, including but not limited to runaway token consumption or unexpected charges. Confirm proper behaviour yourself before trusting it unattended.
+BugSwatter consists of `Informant`, which performs one code-review run, and `Marshal`, which dispatches Informant for one or more repositories. This guide covers installation, configuration, operation, deployment, and maintenance. See the [README](README.md) for a shorter introduction.
 
 ## Contents
 
-- [Safety model](#safety-model)
 - [Requirements](#requirements)
+- [Install a release](#install-a-release)
+- [Informant quick start](#informant-quick-start)
+- [Safety model](#safety-model)
 - [Informant commands](#informant-commands)
-- [Configuration](#configuration)
+- [Informant configuration](#informant-configuration)
 - [Environment-variable overrides](#environment-variable-overrides)
-- [Secrets and unattended deployment](#secrets-and-unattended-deployment)
-- [Reports](#reports)
-- [Second Opinion](#second-opinion)
+- [Secrets](#secrets)
+- [Reports, baselines, and retention](#reports-baselines-and-retention)
+- [Second opinion](#second-opinion)
 - [Email](#email)
-- [Building and publishing](#building-and-publishing)
-- [Marshal, the review dispatcher](#marshal-the-review-dispatcher)
+- [Marshal](#marshal)
+- [Marshal configuration](#marshal-configuration)
+- [Triggers](#triggers)
+- [Dashboard and API](#dashboard-and-api)
+- [Windows service deployment](#windows-service-deployment)
+- [Linux systemd deployment](#linux-systemd-deployment)
+- [Git credentials for polling and reviews](#git-credentials-for-polling-and-reviews)
+- [Cost and retention controls](#cost-and-retention-controls)
+- [Build, test, and release](#build-test-and-release)
 - [Design notes](#design-notes)
-
-## Safety model
-
-The architecture separates hands from judgment. Informant, the deterministic harness, owns every capability with side effects: git operations, file reading, tool execution, report writing. The model is a judgment-only component whose sole capability is one read-only tool, `read_file_lines`, invoked through native OpenAI-style tool-calling. The model can never write, delete, execute, or run git, so a hallucinating model running unattended at 2 a.m. has no hands to cause damage with.
-
-Three guardrails protect the rest of the machine:
-
-- The working tree is always the absolute path declared in config. The current directory only selects which config file to load; nothing destructive ever targets it.
-- On first use Informant clones the branch and writes matching versioned ownership JSON to `.informant` and a sibling
-  `<tree>.informant-claim.json` file. Before every destructive refresh it verifies the claim ID, canonical path,
-  repository, branch, `.git` directory, and `origin` remote. A missing, copied, legacy, malformed, or mismatched record
-  stops the run before `fetch`, `reset`, or `clean`.
-- The `read_file_lines` tool rejects any path that resolves outside the configured read root, returns structured errors the model can recover from, and never throws into the run.
-
-Tool-calling is a hard requirement. Before any review, Informant verifies that the configured model actually performs tool-calling through the configured endpoint by making it read a probe file and echo a token that exists nowhere else. If that round trip fails, the run aborts with a clear message. There is no silent text-only fallback.
 
 ## Requirements
 
-.NET 10 runtime, a git executable, and an OpenAI-compatible endpoint hosting a tool-calling-capable model (LM Studio, a LiteLLM gateway, llama-server, Ollama, and similar all work). Windows x64 is the primary target and Linux x64 is supported; the git path is a config value so both work unchanged.
+Running BugSwatter requires:
+
+- A supported x64 Windows or Linux system
+- Git, including credentials that the running account can use when repositories are private
+- .NET 10
+- An OpenAI-compatible endpoint for the primary review model
+- A model that supports OpenAI-style tool calling for the primary review
+
+The first release has no primary-model API-key setting. The primary endpoint must accept requests without application-level authentication, normally because it is a local model server or an internal gateway. Keep such an endpoint on a trusted network. The optional second opinion supports an API-key reference.
+
+The framework-dependent release archives do not include .NET. Informant needs the .NET 10 runtime. Marshal also hosts Kestrel when its web server is enabled, so installing both the .NET 10 runtime and ASP.NET Core 10 runtime is the simplest supported deployment. The .NET 10 SDK includes both and is sufficient on development machines.
+
+Use `dotnet --list-runtimes` to confirm that `Microsoft.NETCore.App 10.*` and `Microsoft.AspNetCore.App 10.*` are installed. Current platform-specific installation instructions are maintained in the [.NET installation documentation](https://learn.microsoft.com/dotnet/core/install/).
+
+## Install a release
+
+Each GitHub Release contains:
+
+- `BugSwatter-<version>-win-x64.zip`
+- `BugSwatter-<version>-linux-x64.tar.gz`
+- `SHA256SUMS.txt`
+
+Each archive contains framework-dependent, single-file Informant and Marshal executables plus the project documentation and license. There is no installer.
+
+### Windows
+
+Install Git and the .NET 10 runtimes. With Windows Package Manager, an elevated terminal can use:
+
+```powershell
+winget install Git.Git
+winget install Microsoft.DotNet.Runtime.10
+winget install Microsoft.DotNet.AspNetCore.10
+```
+
+Download the Windows archive and `SHA256SUMS.txt` from the same GitHub Release. Compare the published checksum before extracting:
+
+```powershell
+Get-FileHash .\BugSwatter-0.5.0-win-x64.zip -Algorithm SHA256
+Expand-Archive .\BugSwatter-0.5.0-win-x64.zip -DestinationPath C:\BugSwatter\releases
+Move-Item C:\BugSwatter\releases\BugSwatter-0.5.0-win-x64 C:\BugSwatter\bin
+C:\BugSwatter\bin\Informant.exe help
+```
+
+Adapt the version in these examples to the release you downloaded.
+
+### Linux
+
+Install Git and your distribution's .NET 10 and ASP.NET Core 10 runtime packages. Package names vary by distribution. On supported Ubuntu releases they are normally `dotnet-runtime-10.0` and `aspnetcore-runtime-10.0`.
+
+After comparing the archive's SHA-256 value with `SHA256SUMS.txt`:
+
+```bash
+sudo mkdir -p /opt/bugswatter
+sudo tar -xzf BugSwatter-0.5.0-linux-x64.tar.gz -C /opt/bugswatter --strip-components=1
+sudo chmod 755 /opt/bugswatter/Informant /opt/bugswatter/Marshal
+/opt/bugswatter/Informant help
+```
+
+## Informant quick start
+
+Use a separate configuration directory for each repository:
+
+```powershell
+New-Item -ItemType Directory C:\BugSwatter\jobs\sample
+Set-Location C:\BugSwatter\jobs\sample
+C:\BugSwatter\bin\Informant.exe init
+notepad informant.json
+C:\BugSwatter\bin\Informant.exe validate
+C:\BugSwatter\bin\Informant.exe verify
+C:\BugSwatter\bin\Informant.exe
+```
+
+`Informant init` writes a commented `informant.json` and `review-prompt.txt`. At minimum, edit `repositoryUrl`, `branch`, `workingTreePath`, `gitExecutablePath`, `modelEndpoint`, and `modelName`.
+
+The `workingTreePath` must be an absolute path dedicated to Informant. It is cloned when missing and destructively reset and cleaned on later runs. Never use your development checkout.
+
+`validate` checks configuration, paths, endpoint reachability, and required secret references. `verify` performs the stronger tool-calling probe required by a real review. Run both as the same operating-system account that will run Informant unattended.
+
+## Safety model
+
+The architecture separates deterministic operations from model judgment. Informant owns Git operations, repository reads, report writes, and state. The primary model receives one read-only tool, `read_file_lines`. The model cannot write files, execute commands, run Git, or change the configured working tree.
+
+Before Informant refreshes an existing working tree, it validates matching ownership records inside the tree and beside it. Validation covers the claim identifier, canonical path, repository, branch, `.git` directory, and `origin` remote. Missing, copied, malformed, legacy, or mismatched ownership records stop the run before `fetch`, `reset`, or `clean`.
+
+Repository reads reject:
+
+- Absolute paths and paths resolving outside the allowed root
+- Symbolic links
+- Directory symbolic links
+- Windows junctions and other reparse points
+- Mount points encountered as reparse points
+- Binary and oversized files
+
+The rejection applies to each path component, not only the final file. Informant does not follow a link even when its target remains inside the repository.
+
+Tool calling is a hard gate. Informant creates a probe file containing an unpredictable token, asks the model to read it through the tool, and requires the correct token in the result. A model that ignores the tool or invents a result cannot begin a review.
+
+These controls limit what the model can do, but they do not make model findings authoritative. Review reports manually before acting on them. See [SECURITY.md](SECURITY.md) for the broader threat model and known limitations.
 
 ## Informant commands
 
 | Command | Effect |
 | --- | --- |
 | `Informant [--config <path>]` | Run a review |
-| `Informant init` | Write a starter `informant.json` and `review-prompt.txt` into the current directory |
-| `Informant verify [--config <path>]` | Run only the tool-calling verification gate, exit 0 on pass |
-| `Informant validate [--config <path>]` | Check config, endpoint reachability and secrets without running a review, exit 0 on pass |
-| `Informant help` | Show usage |
+| `Informant init` | Write starter files in the current directory without overwriting existing files |
+| `Informant validate [--config <path>]` | Validate configuration, endpoint reachability, paths, and secrets |
+| `Informant verify [--config <path>]` | Prove that the primary model performs tool calling |
+| `Informant help` | Show command-line help |
 
-`--config` names the config file explicitly, which removes any dependency on the current working directory; a scheduler or Marshal can invoke `Informant --config D:\jobs\my-repo\informant.json` from anywhere. Relative paths inside the config (reports, state, logs, prompt file) resolve against the config file's directory. Without `--config`, `informant.json` is read from the current directory.
+Without `--config`, Informant reads `informant.json` from the current directory. Quote paths containing spaces:
 
-Exit code 0 means success; 1 means a fatal condition that is described on stderr and in the log.
+```powershell
+Informant.exe --config "C:\BugSwatter Jobs\sample\informant.json"
+```
 
-## Configuration
+Relative paths inside a configuration file resolve from that file's directory, not from the process working directory. `workingTreePath` is the exception and must be absolute.
 
-`informant.json` is read from the current working directory, or from the file named by `--config`. Comments and trailing commas are allowed. Relative paths resolve against the directory the config was loaded from; the working tree path must be absolute.
+Exit code `0` means the command completed successfully. Exit code `1` means a fatal condition was written to standard error and the configured log.
+
+## Informant configuration
+
+JSON comments and trailing commas are supported.
 
 | Field | Meaning | Default |
 | --- | --- | --- |
 | `repositoryUrl` | Git remote to clone and review | required |
 | `branch` | Branch to review | required |
-| `workingTreePath` | Absolute path of the tree Informant owns and destructively refreshes | required |
-| `gitExecutablePath` | Full path of the git executable | required |
-| `modelEndpoint` | OpenAI-compatible base URL, for example `http://localhost:1234/v1` | required |
-| `modelName` | Model identifier passed to the endpoint | required |
-| `allowedReadRoot` | Directory the read tool is confined to | working tree |
+| `workingTreePath` | Absolute path of the dedicated tree Informant owns and refreshes | required |
+| `gitExecutablePath` | Git executable path | required |
+| `modelEndpoint` | OpenAI-compatible primary model base URL | required |
+| `modelName` | Model identifier sent to the endpoint | required |
+| `allowedReadRoot` | Root available to `read_file_lines` | working tree |
 | `reviewMode` | `changed` or `full` | `changed` |
-| `reportDirectory` | Where reports and change lists are written | `reports` |
-| `stateFilePath` | JSON file holding baseline SHAs keyed by repo and branch | `informant.state.json` |
-| `reviewPrompt` | Inline prompt text, wins over the file | null |
-| `reviewPromptFile` | Path to the prompt file | `review-prompt.txt` via init |
-| `promptIncludeFiles` | Glob patterns for Markdown guidance files appended to the prompt | none (the starter config opts in with `["AGENTS.md"]`) |
-| `secondOpinion` | Optional validation pass by a stronger model, see [Second Opinion](#second-opinion) | null |
-| `email` | Optional report email, see [Email](#email); requires `secondOpinion` | null |
-| `maxContextCharacters` | Character budget per review call, kept well below the model window | `24000` |
-| `maxFileLines` | Line count above which a file is chunked | `800` |
-| `maxFileBytes` | Maximum source-file size read; larger files are reported as oversized | `10485760` (10 MiB) |
-| `maxModelResponseBytes` | Maximum model HTTP response body before rejection | `4194304` (4 MiB) |
-| `perFileRetryCount` | Retries per file part before skipping | `2` |
-| `requestTimeoutSeconds` | Timeout per model request | `1800` |
+| `reportDirectory` | Report and change-list directory | `reports` |
+| `reportRetentionDays` | Days to keep managed report artifacts; `-1` keeps them forever | `31` |
+| `stateFilePath` | Completed-review baseline state | `informant.state.json` |
+| `reviewPrompt` | Inline primary review prompt | null |
+| `reviewPromptFile` | Prompt file used when inline text is absent | built-in prompt, or `review-prompt.txt` from `init` |
+| `promptIncludeFiles` | Root-level Markdown globs or absolute guidance-file paths appended to the prompt | empty; starter config uses `AGENTS.md` |
+| `maxContextCharacters` | Character budget per primary review conversation | `24000` |
+| `maxFileLines` | File size in lines above which logical chunking begins | `800` |
+| `maxFileBytes` | Maximum source-file bytes read | `10485760` |
+| `maxModelResponseBytes` | Maximum model response body bytes | `4194304` |
+| `perFileRetryCount` | Retries after a failed file-part review | `2` |
+| `requestTimeoutSeconds` | Timeout for each primary model request | `1800` |
 | `logLevel` | Serilog minimum level | `Information` |
-| `logFilePath` | Rolling log file path | `logs/informant-.log` |
-| `consoleLogging` | `true` forces console logging on, `false` off, `null` auto-detects | `null` |
+| `logFilePath` | Daily rolling log path | `logs/informant-.log` |
+| `consoleLogging` | Force console logging on or off; null auto-detects | null |
+| `secondOpinion` | Optional validation model settings | null |
+| `email` | Optional report email settings; requires a second opinion | null |
 
-The context budget is characters, not tokens; roughly four characters approximate one token for typical source. It is deliberately conservative because local models reason better over a modest amount of relevant context than over a packed window.
+`reviewPrompt` takes precedence over `reviewPromptFile`; the built-in prompt is used when neither supplies content. Relative `promptIncludeFiles` patterns match only at the reviewed repository root. The included Markdown is repository-supplied model guidance, so review those files as part of your prompt policy.
 
-The review prompt is assembled from three layers: the base prompt (inline `reviewPrompt` wins, else `reviewPromptFile`, else the built-in default), plus every Markdown file matched by `promptIncludeFiles`. Relative patterns match at the working-tree root, so a repository that carries its own `AGENTS.md` (or `AGENT*.md`, or whatever patterns you configure) has that guidance appended to its review; absolute paths name exact files, and an empty list disables the mechanism. Everything is editable without recompiling.
+The context budget is measured in characters, not tokens. Lower values reduce prompt size and cost but can reduce useful context. Higher values can slow local inference and increase cloud charges.
 
 ## Environment-variable overrides
 
-Both apps load their JSON config through the standard .NET configuration system, so an environment variable can override any config key. Variables are prefixed and use a double underscore as the section separator:
+Both applications layer prefixed environment variables over JSON configuration. A double underscore separates nested sections:
 
-- `INFORMANT_` for the reviewer, `MARSHAL_` for the dispatcher.
-- `INFORMANT_ModelName=gpt-x` overrides the top-level `modelName`.
-- `INFORMANT_SecondOpinion__ModelName=gpt-x` overrides the nested `secondOpinion.modelName`.
+```text
+INFORMANT_ModelName=review-model
+INFORMANT_SecondOpinion__ModelName=validator-model
+INFORMANT_ReportRetentionDays=45
+MARSHAL_PerRunTimeoutMinutes=240
+MARSHAL_WebServer__Port=5055
+MARSHAL_Jobs__0__Poll__Schedule=0 */10 * * * *
+```
 
-Only prefixed variables participate, so unrelated machine variables never bleed into the config. This is the usual layered pattern: a JSON file for the baseline, environment variables for per-environment overrides. For secrets specifically, prefer the `file:` references below rather than overriding a value with a machine-wide variable.
+Only variables beginning with `INFORMANT_` or `MARSHAL_` participate. Environment values override JSON values. Run `Informant validate` or `Marshal validate` in the final service environment to confirm the effective configuration.
 
-## Secrets and unattended deployment
+## Secrets
 
-Every secret in a config (SMTP password, ACS connection string, second-opinion API key, and Marshal's webhook secrets) is a reference, never a literal, in one of two forms:
+The following sensitive Informant values accept only a runtime reference, never a literal:
 
-- `env:VARIABLE_NAME` reads the value from an environment variable.
-- `file:PATH` reads it from a file, trimmed of trailing whitespace; a relative path resolves against the config's directory.
+- `secondOpinion.apiKey`
+- `email.password`
+- `email.acsConnectionString`
 
-For a Windows service, a systemd unit, or a cron job, prefer `file:`. A service runs under its own account and sees the machine-wide environment, not your user environment, so an `env:` secret set as a user variable is invisible to it, while a machine-wide variable is readable by every process on the box. A `file:` secret sidesteps both: put each secret in its own file and restrict it to the account that runs the tool (`icacls` on Windows, `chmod 600` on Linux), the same pattern as an SSH key or `.pgpass`.
+The Windows `--service-password` command-line option also accepts only a reference. Two forms are supported:
 
-Three more things bite when the tool starts automatically rather than from your logged-in session:
+- `env:VARIABLE_NAME` reads an environment variable
+- `file:PATH` reads a file and trims trailing whitespace
 
-- **File access and the service account.** The account needs read access to the executables, configs, git, and prompt files, and read-write access to the working tree (refreshed destructively every run), reports, logs, history, and state. Keep all of it under a path that account owns (for example `C:\BugSwatter`), not under a user profile, and grant a dedicated least-privilege account Modify on that tree rather than running as an all-powerful account.
-- **Git credentials for private repositories.** An unattended account has its own credential store; a token you authenticated interactively is not visible to it. Give the service account its own read-only deploy key or a fine-grained read-only token, or point it at a public repository or a local mirror. Cloning fails fast rather than hanging, because interactive git prompts are disabled.
-- **Working directory.** Both executables anchor their relative config paths to the config's own directory on load, so a service whose working directory is a system folder still writes logs, history, and reports beside its config.
+A relative `file:` path resolves from the relevant configuration directory. Restrict secret files to the service identity. On Windows, use an ACL appropriate to the account. On Linux, use ownership plus mode `600` where practical.
 
-## Reports
+Marshal webhook secrets may be literal strings or `env:` and `file:` references. Literals are convenient for a small internal deployment but leave the secret in the configuration file. Protect that file accordingly and do not commit it.
 
-One report per run, named `Informant-Report-<timestamp>.md`. A deterministic metadata header records repository, branch,
-mode, baseline and tip SHAs, the review model and its endpoint, the context budget, the run's start, completion and
-duration, and the reviewed and skipped counts. Each reviewed file gets its own clearly delimited section with its
-changed line ranges and the model's findings verbatim; skipped files are listed with reasons. Deleted files are reviewed
-from the immutable baseline Git object with instructions to check surviving references and removal consequences.
-Sections are appended as each file completes, so a crashed run keeps everything finished up to that point, and pending
-markers left in the header mean the run did not complete. The model's text is only ever findings content: structure,
-metadata, and any cross-file summary are written by the harness, never generated by the model.
+Do not embed tokens in `repositoryUrl`. Use Git's credential manager, a read-only deploy key, or another credential mechanism owned by the account running Marshal and Informant.
 
-A `Informant-Changes-<timestamp>.json` file accompanies each report, recording the exact changed-file set and line ranges the run reviewed.
+## Reports, baselines, and retention
 
-A run that finds nothing to review writes no artifacts at all: the baseline is recorded, one completion line is logged, and no report or change-set file is created.
+A review with work to do writes:
 
-## Second Opinion
+- `Informant-Report-<timestamp>.md`
+- `Informant-Changes-<timestamp>.json`
+- `Informant-Report-<timestamp>-validated.md` when the second opinion completes
+- `Informant-Report-<timestamp>-validated.json` when the second opinion completes
 
-When the `secondOpinion` config block is present, each run gets a second stage after the local review completes: every reviewed file's findings are sent, together with the referenced code read fresh from the working tree, to a stronger model (a cloud frontier model or a stronger local one) that validates each claim against the actual code. It confirms the real findings with calibrated severity, discards false positives, and produces a verdict per file. The result is written as a separate `Informant-Report-<timestamp>-validated.md` next to the original; the local report is never modified.
+The primary report records repository, branch, review mode, baseline and tip SHAs, model identity, timing, reviewed files, changed line ranges, findings, skipped files, and completion status. Sections are appended as files complete, so a process failure retains finished work and leaves an incomplete marker in the report.
+
+Deleted files are reviewed from the immutable baseline Git object. The prompt asks the model to examine surviving references and consequences of removal. Renames and filenames containing spaces or leading or trailing spaces are parsed from Git's null-delimited output rather than whitespace splitting.
+
+In `changed` mode, the first run reviews the full tracked tree. Informant advances the stored baseline only after every changed file is either fully reviewed or deliberately classified as not reviewable, such as a binary, empty, oversized, metadata-only, or symbolic-link file. A failed or partially reviewed file leaves the previous baseline unchanged so the next run retries the incomplete change set. A completed second opinion is additive and does not control primary baseline advancement.
+
+When the tip already equals the baseline, Informant writes no report artifacts. If rewritten history makes the baseline unreachable, Informant performs a full review instead of remaining stuck.
+
+At the beginning of each run, retention deletes top-level managed artifacts whose last-write time is older than `reportRetentionDays`. The default is 31 days. Set `-1` to keep reports forever. Retention recognizes only exact Informant report and change-list filename patterns, does not recurse into subdirectories, does not delete logs or state, and refuses symbolic-link or reparse-point artifacts and directories. Cleanup failures are logged but do not prevent the review.
+
+## Second opinion
+
+The optional second opinion sends the primary findings and relevant code excerpts to a second OpenAI-compatible model. It writes separate Markdown and JSON validation reports without changing the primary report.
 
 ```jsonc
 "secondOpinion": {
-  "endpoint": "https://api.openai.com/v1",
-  "modelName": "gpt-5",
+  "endpoint": "https://api.example.com/v1",
+  "modelName": "validator-model",
   "apiKey": "env:INFORMANT_SECOND_OPINION_KEY",
   "prompt": null,
   "promptFile": null,
@@ -149,28 +256,27 @@ When the `secondOpinion` config block is present, each run gets a second stage a
 
 | Field | Meaning | Default |
 | --- | --- | --- |
-| `endpoint` | OpenAI-compatible endpoint, cloud or local | required |
-| `modelName` | Validating model | required |
-| `apiKey` | `env:` or `file:` reference; omit for local endpoints that need no auth | null |
-| `prompt` / `promptFile` | Inline text wins, else the file, else the built-in default | null |
-| `requestTimeoutSeconds` | Timeout per validation request | `1800` |
-| `contextLines` | Lines of surrounding code kept around each changed range in the excerpt | `30` |
-| `maxFileReads` | Cap on `read_file_lines` calls the validator may make per file when its endpoint supports tool-calling | `5` |
-| `reviewSkippedFiles` | Also send the validator files the local reviewer could not review, for a fresh look | `true` |
+| `endpoint` | Validator base URL | required |
+| `modelName` | Validator model identifier | required |
+| `apiKey` | `env:` or `file:` reference; omit for an unauthenticated local endpoint | null |
+| `prompt` | Inline validation prompt | null |
+| `promptFile` | Validation prompt file used when inline text is absent | built-in prompt |
+| `requestTimeoutSeconds` | Timeout for each validation request | `1800` |
+| `contextLines` | Source lines retained around changed ranges | `30` |
+| `maxFileReads` | Additional repository reads allowed per file when the validator supports tools | `5` |
+| `reviewSkippedFiles` | Ask the validator to review files the primary model could not complete | `true` |
 
-The API key is never stored in the config file: `apiKey` must be an `env:` or `file:` reference when present, read at runtime; literal keys are rejected at load. If a referenced source is unset when a run reaches the second pass, the pass is skipped with a logged error and the local review stands; nothing is sent anywhere without it. Before any code leaves the machine, the pass verifies the endpoint, model and key with a minimal round trip.
+The validator endpoint is probed before code is sent. Tool calling is optional for the validator. When supported, it can request more lines through the same confined read-only tool, limited by `maxFileReads`. Otherwise it works from the supplied excerpt.
 
-The local reviewer must support tool-calling; the validating model need not. At the start of the pass Informant probes the validating endpoint: when it supports tool-calling, the validator is offered the same read-only `read_file_lines` tool, confined to the working tree and capped at `maxFileReads` calls per file, so it can pull more of a file to check something the local reviewer may have missed, without reading the whole tree; when it does not, the pass runs from the excerpt alone. With `reviewSkippedFiles` on (the default), a changed file the local pass could not review is sent to the validator for a fresh review rather than left silently unreviewed; set it false to validate only files that produced findings and save cost.
+A public-cloud validator receives findings, code excerpts, and any extra lines it requests. Disable the second opinion or use an internal model for repositories whose code must remain on your network. The validator provider may retain prompts or metadata according to its own terms.
 
-**Privacy trade-off, decide per repository:** a cloud Second Opinion sends the local model's findings and the referenced code excerpts to an external API, plus any additional lines the validator reads on its own initiative when the endpoint supports tool-calling. For non-sensitive repositories that is a fair exchange for better validation. For sensitive code, do not enable a public-cloud second opinion. A validating model on your own network keeps everything inside the firewall and needs no API key. The feature is opt-in per config so this stays a conscious choice.
-
-Alongside the Markdown validated report, the pass writes a machine-readable `Informant-Report-<timestamp>-validated.json` (confirmed and discarded findings, per-file severity, and a run-level maximum), which drives the email severity gate and the Marshal dashboard.
+Structured findings are parsed for severity. Unparseable model output is retained as prose and marked with undetermined severity rather than being silently treated as no findings.
 
 ## Email
 
-When an `email` block is present, Informant emails the reports at the end of a run. Email is gated on a completed Second Opinion, so it never fires for a raw local review, and it is gated on severity so it only interrupts you when it matters. Every decision is recorded as an Email delivery section appended to the validated report, noting whether the mail was sent, skipped or failed, when, the provider, and the recipients.
+Email runs only after a second opinion completes. Each attempt is appended to the validated Markdown report as sent, skipped, or failed. An email-provider failure does not fail the completed review or remove reports.
 
-Two transports are supported via `provider`: plain SMTP (the default, using the framework's built-in client, so the tool carries no third-party email or crypto dependency; works with any STARTTLS or unencrypted relay including Microsoft 365 SMTP AUTH) and Azure Communication Services Email. Implicit TLS on port 465 is not supported by the built-in SMTP client; use 587 with STARTTLS.
+SMTP example:
 
 ```jsonc
 "email": {
@@ -178,135 +284,333 @@ Two transports are supported via `provider`: plain SMTP (the default, using the 
   "smtpHost": "smtp.internal",
   "smtpPort": 587,
   "useStartTls": true,
-  "from": "bugswatter@you.com",
-  "to": ["dev@you.com", "lead@you.com"],
+  "from": "bugswatter@example.com",
+  "to": ["developer@example.com"],
   "username": "bugswatter",
-  "password": "env:INFORMANT_SMTP_PASSWORD",
+  "password": "file:secrets/smtp-password.txt",
   "sendOn": "high",
   "attachReports": true
 }
 ```
 
-For the ACS provider set `"provider": "azureCommunicationServices"`, a `from` on a domain verified in the ACS resource, and `"acsConnectionString": "env:..."` (an `env:` or `file:` reference). `sendOn` reads the second-opinion severities: `high` sends only on a confirmed high or critical, `medium` on any confirmed medium or worse, `always` whenever the pass ran. When the model returns no parseable structured findings, the email is sent anyway with a "severity undetermined" note rather than risk dropping a real finding. A missing secret skips the email and leaves the reports on disk. Email requires `secondOpinion`, enforced at config load.
+The SMTP transport supports STARTTLS, normally on port 587, and unencrypted internal relays. The built-in SMTP client does not support implicit TLS on port 465.
 
-## Building and publishing
+Azure Communication Services Email example:
 
-```text
-dotnet build                       # develop
-dotnet test BugSwatter.slnx         # full suite (xUnit v3 on Microsoft Testing Platform)
-dotnet publish src/Informant -c Release -r win-x64
-dotnet publish src/Informant -c Release -r linux-x64
-dotnet publish src/Marshal   -c Release -r win-x64
-dotnet publish src/Marshal   -c Release -r linux-x64
+```jsonc
+"email": {
+  "provider": "azureCommunicationServices",
+  "from": "DoNotReply@verified.example.com",
+  "to": ["developer@example.com"],
+  "acsConnectionString": "env:INFORMANT_ACS_CONNECTION",
+  "sendOn": "high",
+  "attachReports": true
+}
 ```
 
-Publishing produces one framework-dependent single-file executable per runtime identifier (the .NET 10 runtime must be installed on the target). The shared `BugSwatter.Common` library is merged into each executable. To produce a fully self-contained executable that bundles the runtime, add `-p:SelfContained=true`. Because Marshal hosts Kestrel, its target box needs the **ASP.NET Core 10 runtime** (`dotnet --list-runtimes` should show `Microsoft.AspNetCore.App 10.*`); Informant needs only the base .NET runtime.
+The ACS sender address must belong to a domain configured in the ACS resource. A completed ACS operation confirms that ACS accepted the send operation, not that the recipient inbox delivered or displayed the message.
 
-## Marshal, the review dispatcher
+`sendOn` can be `always`, `medium`, or `high`. When severity is undetermined because structured model output was not parseable, Informant sends the email regardless of the threshold so a potentially important report is not suppressed.
 
-Marshal is a long-running supervisor that watches one or more repositories and, on a trigger, runs Informant against the relevant one. Marshal reviews nothing itself. One executable runs three ways: as a console app in the foreground, as a Windows service, or as a Linux systemd service; the hosting integrations detect their context automatically.
+## Marshal
 
-```text
-Marshal run --config D:\marshal\marshal.json [--review-all]
-Marshal validate --config D:\marshal\marshal.json              (pre-flight check, exit 0 on pass)
-Marshal install --config D:\marshal\marshal.json [service options]   (register as service or systemd unit; needs admin)
-Marshal remove [--use-sc]                                             (unregister)
-```
+Marshal is an optional long-running dispatcher. It reviews no code itself. Triggers enqueue jobs, and one serial worker launches Informant for each job.
 
-On Windows, `install` and `remove` talk to the Service Control Manager directly through the API by default; pass `--use-sc` to shell out to sc.exe instead. Omitting `--service-user` installs Marshal as LocalSystem. That is convenient and powerful, but a defect or compromised dependency would then have nearly unrestricted control of the machine. Prefer a dedicated least-privilege account when practical:
+| Command | Effect |
+| --- | --- |
+| `Marshal run --config <path> [--review-all]` | Run in the foreground or under a service manager |
+| `Marshal validate --config <path>` | Validate Marshal and run `Informant validate` for every job |
+| `Marshal install --config <path> [service options]` | Register an automatic Windows or systemd service |
+| `Marshal remove [--use-sc]` | Stop and unregister the installed service |
+| `Marshal help` | Show command-line help |
 
-```powershell
-$env:MARSHAL_SERVICE_PASSWORD = Read-Host "Service password" -MaskInput
-Marshal install --config D:\marshal\marshal.json `
-  --service-user ".\BugSwatter" `
-  --service-password "env:MARSHAL_SERVICE_PASSWORD"
-Remove-Item Env:MARSHAL_SERVICE_PASSWORD
-```
+`--review-all` enqueues every configured job once at startup, then continues with normal triggers. Without it, Marshal starts quietly except that repository polling performs one check at startup.
 
-`--service-password` accepts only an `env:` or `file:` reference, never a literal, and a relative `file:` path resolves beside the Marshal config. Custom accounts always use the default Service Control Manager API; combining `--service-user` with `--use-sc` is rejected so a password can never appear in an `sc.exe` process command line. Built-in accounts and group-managed service accounts that do not use a password need only `--service-user`. The account must have the **Log on as a service** right and the filesystem and Git permissions described earlier. After installation, remove the temporary environment variable or tightly ACL and, when operationally appropriate, delete the password file.
+All jobs share one bounded in-memory queue with a single consumer. Duplicate work for the same Informant configuration coalesces. A trigger received while that repository is running creates at most one rerun. The queue holds up to 128 entries and is not persisted across restarts.
 
-On Linux, `install --service-user bugswatter` writes `User=bugswatter` into the systemd unit; omitting it leaves systemd's root default. Linux service installation does not accept `--service-password`. Executable and config paths are quoted in both Windows and systemd service definitions, including paths containing spaces.
+Each Informant child has a configurable timeout. Timeout or Marshal shutdown kills the complete Informant process tree where the operating system permits it. Before starting a job, Marshal probes its model endpoint. Unreachable endpoints use per-repository exponential backoff from 30 seconds to 15 minutes.
 
-`validate` loads the config, checks the Informant executable and each job's watch path, resolves webhook secrets, and runs `Informant validate` for every job. `--review-all` enqueues every configured repository once at startup and then keeps watching; without it Marshal starts quiet and acts only on triggers. When Marshal is stopped while Informant is running, it cancels the review and kills the complete Informant child-process tree before shutdown returns.
+## Marshal configuration
 
 ```jsonc
 {
-  "informantExecutable": "D:\\deploy\\Informant.exe",
+  "informantExecutable": "C:\\BugSwatter\\bin\\Informant.exe",
   "perRunTimeoutMinutes": 360,
   "fileWatchDebounceSeconds": 300,
   "logLevel": "Information",
   "logFilePath": "logs/marshal-.log",
-  "consoleLogging": null,
   "historyFilePath": "history/marshal-history.jsonl",
-  "webServer": { "enabled": true, "bindAddress": "localhost", "port": 5000 },
-  "webhook": {
+  "consoleLogging": null,
+  "webServer": {
     "enabled": true,
-    "gitHubSecret": "env:MARSHAL_GITHUB_SECRET",
-    "azureDevOpsSecret": "env:MARSHAL_ADO_SECRET"
+    "bindAddress": "localhost",
+    "port": 5000
+  },
+  "webhook": {
+    "enabled": false,
+    "gitHubSecret": null,
+    "azureDevOpsSecret": null
   },
   "jobs": [
     {
-      "name": "bugswatter-main",
-      "informantConfigPath": "D:\\jobs\\bugswatter\\informant.json",
+      "name": "sample-main",
+      "informantConfigPath": "C:\\BugSwatter\\jobs\\sample\\informant.json",
       "schedule": ["03:00"],
-      "watchPath": "D:\\source\\example\\repository",
-      "webhook": { "provider": "gitHub", "repository": "mboler/BugSwatter" }
+      "watchPath": null,
+      "poll": {
+        "enabled": true,
+        "schedule": "0 */5 * * * *"
+      }
     }
   ]
 }
 ```
 
-### Dispatch model
+| Field | Meaning | Default |
+| --- | --- | --- |
+| `informantExecutable` | Informant executable launched for reviews | required |
+| `perRunTimeoutMinutes` | Hard timeout for each child review | `360` |
+| `fileWatchDebounceSeconds` | Quiet period before a filesystem trigger fires | `300` |
+| `logLevel` | Serilog minimum level | `Information` |
+| `logFilePath` | Daily rolling log path | `logs/marshal-.log` |
+| `historyFilePath` | Append-only completed-run JSON Lines history | `history/marshal-history.jsonl` |
+| `consoleLogging` | Force console logging on or off; null auto-detects | null |
+| `webServer` | Dashboard, API, and webhook listener settings | null, no listener |
+| `webhook` | Global webhook enablement and secrets | null |
+| `jobs` | Repository job configurations | empty |
 
-All reviews share the single local model endpoint, so Marshal runs at most one Informant review at a time, globally: triggers feed a bounded queue (128 entries; overflow dropped with a warning) consumed by a single serial executor. Duplicates coalesce by repository identity (the job's Informant config path, compared case-insensitively on Windows). If a trigger arrives for the repository currently under review, the running review is never killed: a single pending-rerun flag is set, and when the run finishes that repository is enqueued once more. Each child runs as `Informant --config <job config>` under supervision; a child exceeding the per-run timeout (default 6 hours) has its whole process tree killed. Marshal reads the report path Informant prints on stdout, so it records the exact artifact rather than guessing by timestamp. The queue is in-memory and transient: a restart starts quiet, or re-kick everything with `--review-all`.
+Each job supports:
 
-Before launching a job Marshal health-checks that job's model endpoint. If it is unreachable the run is deferred and the job re-queued after a per-repository exponential backoff (30 seconds doubling to a 15 minute cap, reset on the first success), so a down endpoint becomes a slow poll rather than a doomed launch.
+| Field | Meaning | Default |
+| --- | --- | --- |
+| `name` | Unique operator-facing name | required |
+| `informantConfigPath` | Informant configuration for the repository | required |
+| `schedule` | Daily local times in `HH:mm` form | null |
+| `watchPath` | Existing directory watched recursively | null |
+| `poll` | Outbound branch-tip polling settings | null |
+| `webhook` | Provider and repository mapping | null |
 
-### Web server, dashboard and API
+Paths relative to `marshal.json` resolve from its directory. Quote a `--config` path containing spaces. JSON string values may contain spaces without special treatment beyond normal JSON escaping.
 
-With a `webServer` block Marshal runs a Kestrel listener serving a self-contained dashboard and a small JSON API. The dashboard shows current status, the configured jobs with a **Run now** button each (and a **Cancel** button while a job is queued), and the recent run history. The dashboard exposes repository names and findings, and the API has no authentication, so bind the listener to an internal or VPN-reachable interface only. Omit the `webServer` block entirely to run with no web server and no open port.
+## Triggers
+
+Triggers can be combined on one job. Queue coalescing prevents simultaneous duplicate runs.
+
+### Daily schedules
+
+`schedule` contains local wall-clock times. The example `"schedule": ["03:00", "15:30"]` runs daily at 3:00 a.m. and 3:30 p.m. in the machine's local time zone. Daylight-saving transitions therefore affect these triggers as ordinary local times.
+
+### Repository polling
+
+Polling is the simplest choice when Marshal cannot accept inbound internet connections. Marshal runs `git ls-remote` against the exact configured branch and compares its remote tip with Informant's last completed-review baseline. It does not fetch or modify the working tree during the poll. A difference enqueues Informant, which performs the normal protected refresh and review.
+
+Polling checks once when Marshal starts and then follows the configured UTC schedule. It accepts:
+
+- Six-field Azure Functions-style NCRONTAB: second, minute, hour, day, month, day of week
+- Traditional five-field crontab: minute, hour, day, month, day of week
+- An invariant .NET `TimeSpan` interval
+
+No schedule may run more often than once per minute. In a six-field expression, the seconds field must be exactly `0`.
+
+| Expression | Meaning |
+| --- | --- |
+| `0 */5 * * * *` | Every five minutes, default |
+| `0 */10 * * * *` | Every ten minutes |
+| `0 0 * * * *` | At the start of every UTC hour |
+| `0 0 2 * * *` | Daily at 02:00 UTC |
+| `0 0 3 * * 1` | Mondays at 03:00 UTC |
+| `0 0 3 1 * *` | First day of each month at 03:00 UTC |
+| `00:10:00` | Every ten minutes measured from startup |
+| `7.00:00:00` | Every seven days measured from startup |
+
+NCRONTAB day-of-week values use `0` for Sunday through `6` for Saturday. Prefer NCRONTAB for wall-clock UTC schedules and `TimeSpan` for elapsed intervals.
+
+Polling uses the Git credentials of the Marshal service account. A public repository normally needs no secret. Private GitHub and Azure DevOps repositories require credentials that work non-interactively for that same account.
+
+### Filesystem changes
+
+`watchPath` recursively watches changed, created, deleted, and renamed events. A two-second internal check observes the configured quiet window, default five minutes, so a large checkout or build burst normally creates one review. Filesystem watchers can overflow at the operating-system level; Marshal logs watcher errors. Repository polling or schedules are more reliable for remote source-control changes.
+
+### Webhooks
+
+Enable the global webhook listener and add a mapping to each relevant job:
+
+```jsonc
+"webServer": { "enabled": true, "bindAddress": "0.0.0.0", "port": 5000 },
+"webhook": {
+  "enabled": true,
+  "gitHubSecret": "file:secrets/github-webhook.txt",
+  "azureDevOpsSecret": "file:secrets/azure-webhook.txt"
+},
+"jobs": [
+  {
+    "name": "github-sample",
+    "informantConfigPath": "jobs/github/informant.json",
+    "webhook": { "provider": "gitHub", "repository": "owner/repository" }
+  },
+  {
+    "name": "ado-sample",
+    "informantConfigPath": "jobs/ado/informant.json",
+    "webhook": { "provider": "azureDevOps", "repository": "Repository Name" }
+  }
+]
+```
+
+GitHub uses `POST /webhook/github`, an `X-Hub-Signature-256` HMAC-SHA256 signature, and `X-GitHub-Delivery` for deduplication. Only `push` enqueues a review; authenticated `ping` succeeds without enqueueing.
+
+Azure DevOps uses `POST /webhook/azuredevops` with HTTP Basic authentication. The configured `azureDevOpsSecret` is the password. Configure a **Code pushed** service hook with **All** resource details so the repository is present in the payload. The root event ID provides deduplication.
+
+Webhook bodies are limited to 1 MiB. Accepted delivery IDs are retained in memory for 24 hours, up to 4,096 IDs. Duplicate deliveries return `202 Accepted`. A full review queue returns `503` and releases the delivery ID so the provider can retry. Restarting Marshal clears the deduplication cache.
+
+## Dashboard and API
+
+When `webServer.enabled` is true, Marshal serves HTTP only. HTTPS and certificate management are intentionally outside the first public release.
 
 | Route | Method | Purpose |
 | --- | --- | --- |
-| `/` and `/dashboard` | GET | The self-contained dashboard page |
-| `/health` | GET | Liveness: status, uptime, running job, queue depth |
-| `/api/status` | GET | Status JSON |
-| `/api/history` | GET | Recent completed runs |
-| `/api/jobs` | GET | Configured jobs and their triggers |
-| `/api/jobs/{name}/run` | POST | Manually enqueue a configured job |
-| `/api/queue` | GET | What is running and what is waiting |
-| `/api/queue/{name}` | DELETE | Cancel a waiting review (never the one running) |
-| `/webhook/github` | POST | GitHub webhook (HMAC-SHA256), when webhooks are enabled |
-| `/webhook/azuredevops` | POST | Azure DevOps webhook (basic auth), when webhooks are enabled |
+| `/` and `/dashboard` | GET | Dashboard |
+| `/health` | GET | Liveness, uptime, running job, and queue depth |
+| `/api/status` | GET | Process and queue status |
+| `/api/history` | GET | Up to 100 recent completed runs |
+| `/api/jobs` | GET | Jobs, repository mappings, paths, and triggers |
+| `/api/jobs/{name}/run` | POST | Enqueue a job |
+| `/api/queue` | GET | Running and waiting jobs |
+| `/api/queue/{name}` | DELETE | Remove a waiting job |
+| `/webhook/github` | POST | GitHub push webhook when enabled |
+| `/webhook/azuredevops` | POST | Azure DevOps push webhook when enabled |
 
-Each completed run is appended to `historyFilePath` (a JSON-lines file: job, trigger, timing, exit code, outcome, report path, and the max confirmed severity), which the dashboard reads, so history survives restarts even though the queue does not.
+There is no dashboard or API authentication, authorization, CSRF protection, TLS, or rate limiting. Any client that can reach the listener can inspect operational details, trigger model usage, or cancel waiting work. HTTP traffic can be read or modified by any party able to observe the network path. Azure DevOps Basic credentials are not confidential without a protected transport such as a trusted VPN.
 
-### Triggers
+The intended deployment is `localhost` or a trusted internal network with firewall or VPN controls. Do not expose the listener directly to the public internet. For remote access on a trusted LAN, bind an internal address or `0.0.0.0` and add a narrowly scoped host-firewall rule. Omit `webServer` entirely when the dashboard and webhooks are not needed. Outbound polling works without an open inbound port.
 
-Time triggers fire daily at each configured local time. Filesystem triggers watch a directory (subdirectories included) and enqueue after changes settle for the debounce window (default 5 minutes), so a checkout touching thousands of files coalesces into one review.
+The history API includes report paths and the jobs API includes configured watch paths and repository identifiers. The dashboard does not serve report file contents, but the metadata can still be sensitive.
 
-Webhook triggers listen on `/webhook/github` and `/webhook/azuredevops`. GitHub posts are validated against the shared secret via the `X-Hub-Signature-256` HMAC-SHA256 header; Azure DevOps service hooks use basic-auth credentials whose password is the shared secret. Validation is mandatory and uses fixed-time comparison; failures are rejected with 401. Request bodies are capped at 1 MiB, enforced during the read so chunked requests cannot bypass it.
+## Windows service deployment
 
-Only repository push events enqueue work: `X-GitHub-Event: push` for GitHub and `eventType: git.push` for Azure DevOps. An authenticated GitHub `ping` succeeds without enqueueing, and other authenticated event types are acknowledged and ignored. When configuring Azure DevOps, select **Code pushed** and send **All** resource details so `resource.repository` is present for job routing.
+Run the following from an elevated PowerShell prompt after configuration validation:
 
-Provider retries are deduplicated by `X-GitHub-Delivery` for GitHub and the root payload `id` for Azure DevOps. Marshal retains up to 4,096 accepted IDs in memory for 24 hours. A duplicate receives `202 Accepted` without creating another review. The cache is intentionally bounded and process-local, so restarting Marshal clears it. If the review queue is full, Marshal releases the ID and returns 503 so the provider can retry instead of silently losing the event.
+```powershell
+C:\BugSwatter\bin\Marshal.exe validate --config "C:\BugSwatter\config\marshal.json"
+C:\BugSwatter\bin\Marshal.exe install --config "C:\BugSwatter\config\marshal.json"
+sc.exe start Marshal
+```
 
-### Webhook deployment topology
+Without `--service-user`, the installed service runs as LocalSystem. LocalSystem has extensive local privileges. A defect, malicious repository input, compromised dependency, or exposed dashboard would therefore have a larger impact. It also uses the machine account for network access and does not inherit your interactive Git credentials. Use LocalSystem only after accepting those risks and restricting the machine, configuration, and network listener.
 
-Do not expose Marshal's endpoint to the public internet. The recommended production path posts to a small public-facing endpoint (a relay or an existing route) that forwards the request down a VPN tunnel to Marshal on the internal network. Bind Marshal's listener to an internal or VPN-reachable interface only. Signature validation is required on every path regardless. On Windows, binding a non-localhost address as a non-admin console process requires a one-time URL reservation (`netsh http add urlacl url=http://+:5000/ user=<account>`); running as a service avoids this.
+For a normal custom account, supply its password through an environment or file reference:
+
+```powershell
+$env:MARSHAL_SERVICE_PASSWORD = Read-Host "Service password" -MaskInput
+C:\BugSwatter\bin\Marshal.exe install `
+  --config "C:\BugSwatter\config\marshal.json" `
+  --service-user ".\BugSwatter" `
+  --service-password "env:MARSHAL_SERVICE_PASSWORD"
+Remove-Item Env:MARSHAL_SERVICE_PASSWORD
+sc.exe start Marshal
+```
+
+A managed service account or built-in identity that needs no password can use `--service-user` without `--service-password`. The account must have **Log on as a service**, read and execute access to the binaries, read access to configuration and secret files, and modify access to working trees, state, reports, history, and logs.
+
+Custom accounts use the native Service Control Manager API. `--use-sc` is an optional fallback for LocalSystem installation and removal only; it is rejected with `--service-user` so a password cannot appear in an `sc.exe` command line.
+
+To remove the service from an elevated prompt:
+
+```powershell
+C:\BugSwatter\bin\Marshal.exe remove
+```
+
+Removal requests a stop before deleting the service. Marshal cancellation kills a running Informant child process tree before shutdown completes where supported.
+
+## Linux systemd deployment
+
+Create a dedicated account and data directories, then grant only the access the service needs. After `Marshal validate` succeeds as that account, install from a root shell:
+
+```bash
+sudo /opt/bugswatter/Marshal install --config "/etc/bugswatter/marshal.json" --service-user bugswatter
+sudo systemctl start marshal
+sudo systemctl status marshal
+```
+
+The installer writes `/etc/systemd/system/marshal.service`, runs `systemctl daemon-reload`, and enables the unit for startup. It quotes executable and configuration paths, including spaces. `--service-user` writes `User=`. Linux installation does not accept `--service-password`; configure account access and Git credentials through normal Linux mechanisms.
+
+Omitting `--service-user` leaves systemd's root default. Root has the same broad-impact concerns as LocalSystem and is not the recommended default for an exposed or multi-purpose host.
+
+Remove the unit with:
+
+```bash
+sudo /opt/bugswatter/Marshal remove
+```
+
+The generated unit restarts Marshal after failures with a ten-second delay. Use `journalctl -u marshal` along with the configured rolling log for diagnosis.
+
+## Git credentials for polling and reviews
+
+Marshal polling and Informant cloning run as the operating-system identity that launched them. Existing interactive credentials are useful only when Marshal runs as that same user. Windows services, LocalSystem, custom service accounts, root, and dedicated systemd users each have separate credential and SSH-key stores.
+
+Before unattended deployment, run a noninteractive check as the final identity:
+
+```text
+git ls-remote --exit-code --heads <repository-url> refs/heads/<branch>
+```
+
+For private repositories, prefer a repository-scoped read-only deploy key or a fine-grained token with read-only contents access. Azure DevOps users can use a read-only repository token or SSH key. Store credentials with the platform's Git credential helper or protected SSH files. Do not put credentials in `informant.json`, `marshal.json`, command history, repository URLs, or this repository.
+
+Polling every five or ten minutes is normally inexpensive because `ls-remote` reads branch references and launches Informant only when the remote tip differs from the completed-review baseline. Consider provider rate limits when configuring many repositories or very short intervals.
+
+## Cost and retention controls
+
+The first review of a repository is a full tracked-tree review. Start with a small repository or temporary branch to estimate model speed and cost.
+
+Useful controls include:
+
+- Keep `reviewMode` as `changed`; `full` reviews the complete tree every run
+- Poll every five or ten minutes unless faster detection has operational value
+- Reduce `maxContextCharacters` and `maxFileLines` carefully to limit prompt size
+- Keep `maxFileBytes` and `maxModelResponseBytes` bounded
+- Reduce second-opinion `contextLines` and `maxFileReads`
+- Set `reviewSkippedFiles` to false if second-model coverage is less important than cost
+- Use `sendOn` to reduce email volume
+- Use `reportRetentionDays` to cap report storage, or `-1` only when indefinite retention is intentional
+- Monitor local accelerator utilization and cloud-provider usage alerts independently of BugSwatter
+
+Marshal's queue is bounded and serial, so a trigger burst does not create simultaneous model calls. A trigger arriving during a run may still schedule one rerun. Repository changes during an incomplete review remain behind the old baseline and will be reconsidered later.
+
+## Build, test, and release
+
+Install the .NET 10 SDK and PowerShell 7, then run:
+
+```powershell
+dotnet restore BugSwatter.slnx
+dotnet build BugSwatter.slnx -c Release --no-restore
+dotnet test BugSwatter.slnx -c Release --no-build --no-restore
+./scripts/check-dependencies.ps1
+```
+
+The dependency-policy script restores every project, inspects resolved direct and transitive NuGet packages, fails if `Newtonsoft.Json` appears, and lists resolved non-Microsoft packages. CI also reports known NuGet vulnerabilities. `System.Text.Json` is not hard-pinned by policy; normal dependency review and vulnerability monitoring remain necessary.
+
+Build local framework-dependent release archives with:
+
+```powershell
+./scripts/package-release.ps1 -Runtime win-x64
+./scripts/package-release.ps1 -Runtime linux-x64
+```
+
+The Linux archive should be produced on Linux so executable permission bits are set correctly. The script reads the version from `Directory.Build.props`, refuses to overwrite an existing archive, and can validate an expected `v<version>` tag.
+
+GitHub Actions runs build, test, dependency policy, vulnerability reporting, and package smoke tests on Windows and Linux for pushes and pull requests. Pushing a tag such as `v0.5.0` first runs the same CI, builds both archives, writes `SHA256SUMS.txt`, and creates a GitHub Release. The tag must exactly match the version in `Directory.Build.props`. Release packages remain framework-dependent and do not bundle .NET.
+
+Opt-in integration tests are skipped in ordinary CI. Live model tests require `INFORMANT_IT=1`, `INFORMANT_IT_ENDPOINT`, and `INFORMANT_IT_MODEL`; optional second-opinion coverage also uses `INFORMANT_IT_SO_ENDPOINT` and `INFORMANT_IT_SO_MODEL`. The ACS email test uses `BUGSWATTER_EMAIL_IT=1`, `BUGSWATTER_EMAIL_IT_ACS_CONNECTION`, `BUGSWATTER_EMAIL_IT_FROM`, and `BUGSWATTER_EMAIL_IT_TO`. Never commit those values.
 
 ## Design notes
 
-The model interaction uses the endpoint's native tool-calling, not MCP, because Informant owns both sides of a closed
-loop and needs no interoperability layer. Review is one file at a time; cross-file context is pulled by the model on
-demand through `read_file_lines`, which caps each response and stops serving content once the conversation exceeds the
-context budget. Repository reads reject traversal, absolute paths, symbolic links, junctions, mount points, and other
-reparse points. The tool streams requested ranges rather than retaining the entire file. Files larger than
-`maxFileBytes` are reported as oversized, and model bodies larger than `maxModelResponseBytes` are rejected before JSON
-parsing. Files longer than `maxFileLines` are chunked at logical boundaries via a brace-depth heuristic, never
-mid-method when a boundary exists. Line ranges come from `git diff -U0` hunk headers, so focus hints bracket exactly the
-changed lines. If a recorded baseline SHA no longer exists because history was rewritten, the run degrades to a full
-review instead of failing forever. Per-file failures retry per config and then skip with the reason recorded; one bad
-file never kills the night's run.
+The model interaction uses native OpenAI-compatible tool calling because Informant owns both sides of a closed read-only loop. Review is one file at a time. Changed line ranges come from `git diff -U0`, while the model can request additional repository ranges through `read_file_lines`.
 
-The two executables share a small `BugSwatter.Common` library (logging setup, secret resolution, the config loader, the reviewer/dispatcher stdout contract), so a fix to shared plumbing lands in both.
+Files longer than `maxFileLines` are divided at logical brace-depth boundaries where possible. The reader streams bounded ranges and rejects bodies beyond configured byte limits. Per-file failures retry and then remain recorded as failed or partial without discarding completed report sections.
+
+Shared infrastructure lives in focused libraries: `BugSwatter.Common` for configuration, logging, safe paths, secrets, and common contracts; `BugSwatter.Git` for Git execution and working-tree ownership; `BugSwatter.AI` for model protocol and tool loops; and `BugSwatter.Email` for SMTP and ACS transports. Informant and Marshal contain application-specific orchestration.
+
+## Disclaimer
+
+Use BugSwatter at your own risk. You are responsible for the repositories, credentials, model endpoints, network exposure, retention, and costs you configure. Model reviews can miss defects and produce false findings. Cloud endpoints can charge per token and receive source code. Validate behavior on a small scope before unattended use.
+
+The software is provided "as is", without warranty of any kind, to the maximum extent permitted by law. The authors and contributors accept no liability for cost, loss, missed defects, incorrect findings, security incidents, or other damage arising from its use.

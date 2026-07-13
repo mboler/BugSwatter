@@ -74,7 +74,7 @@ try
         Copy-Item -LiteralPath $executablePath -Destination (Join-Path $packageDirectory $executableName)
     }
 
-    foreach ($fileName in "README.md", "DOCUMENTATION.md", "LICENSE", "NOTICE")
+    foreach ($fileName in "README.md", "DOCUMENTATION.md", "SECURITY.md", "CONTRIBUTING.md", "LICENSE", "NOTICE")
     {
         Copy-Item -LiteralPath (Join-Path $repositoryRoot $fileName) -Destination (Join-Path $packageDirectory $fileName)
     }

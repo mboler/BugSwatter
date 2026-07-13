@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  workflow_call:
+  push:
+    branches:
+      - main
+      - "hardening/**"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build and test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            runtime: linux-x64
+          - os: windows-latest
+            runtime: win-x64
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install .NET 10 SDK
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore BugSwatter.slnx
+
+      - name: Build
+        run: dotnet build BugSwatter.slnx -c Release --no-restore
+
+      - name: Test
+        run: dotnet test BugSwatter.slnx -c Release --no-build --no-restore
+
+      - name: Smoke-test release packaging
+        shell: pwsh
+        run: ./scripts/package-release.ps1 -Runtime '${{ matrix.runtime }}' -OutputDirectory '${{ runner.temp }}/bugswatter-package-smoke' -NoRestore
+
+  dependency-policy:
+    name: Dependency policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install .NET 10 SDK
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Reject Newtonsoft.Json and list third-party packages
+        shell: pwsh
+        run: ./scripts/check-dependencies.ps1
+
+      - name: Report known NuGet vulnerabilities
+        run: dotnet list BugSwatter.slnx package --vulnerable --include-transitive --no-restore

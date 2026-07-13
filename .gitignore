@@ -3,6 +3,7 @@ obj/
 publish/
 logs/
 reports/
+artifacts/
 *.user
 .vs/
 .idea/

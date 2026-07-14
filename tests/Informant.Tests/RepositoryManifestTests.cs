@@ -59,7 +59,7 @@ public sealed class RepositoryManifestTests
     [Fact]
     public void WithChangesAnnotatesCurrentEntriesAndAddsDeletedTombstones()
     {
-        var current = new RepositoryManifestEntry("current.cs", "100644", "blob", "object", 10, 1, ".cs", true, RepositoryManifestDisposition.Text);
+        var current = new RepositoryManifestEntry("current.cs", "100644", "blob", "object", 10, 1, "hash", ".cs", true, RepositoryManifestDisposition.Text);
         var manifest = new RepositoryManifest("repository", "main", "tree", "baseline", "tip", ReviewMode.Changed, "1970-01-01_00-00-00", DateTimeOffset.UnixEpoch, [current]);
         ChangedFile[] changes =
         [
@@ -92,7 +92,7 @@ public sealed class RepositoryManifestTests
     public void ManifestFileContainsMetadataButNoSourceContent()
     {
         using var reports = new TempDirectory();
-        var entry = new RepositoryManifestEntry("source.cs", "100644", "blob", "object", 20, 2, ".cs", true, RepositoryManifestDisposition.Text, ChangeKind.Modified);
+        var entry = new RepositoryManifestEntry("source.cs", "100644", "blob", "object", 20, 2, "hash", ".cs", true, RepositoryManifestDisposition.Text, ChangeKind.Modified);
         var manifest = new RepositoryManifest("repository", "main", "tree", "baseline", "tip", ReviewMode.Changed, "1970-01-01_00-00-00", DateTimeOffset.UnixEpoch, [entry]);
 
         string path = RepositoryManifestFile.Write(reports.Path, "2026-07-14_01-02-03", manifest);

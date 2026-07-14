@@ -305,15 +305,15 @@ Planned commit: `Add per-run repository manifest`
 
 ### Phase 2: Bounded reads and audit trace
 
-- [ ] Make the current manifest an allowlist for every model file request
-- [ ] Add line and character response bounds with explicit partial-result metadata
-- [ ] Recheck the live path and symbolic-link chain immediately before every read
-- [ ] Add append-only JSONL trace writing
-- [ ] Record tool requests, context selections, outcomes, counts, and reasons without source bodies
-- [ ] Integrate trace artifacts with retention and report summary metadata
-- [ ] Add tests for traversal, unknown files, symlink swaps, oversized ranges, exhausted budgets, repeated invalid requests, and trace redaction
-- [ ] Build the solution and run the affected tests
-- [ ] Update this document with results
+- [x] Make the current manifest an allowlist for every model file request
+- [x] Add line and character response bounds with explicit partial-result metadata
+- [x] Recheck the live path and symbolic-link chain immediately before every read
+- [x] Add append-only JSONL trace writing
+- [x] Record tool requests, context selections, outcomes, counts, and reasons without source bodies
+- [x] Integrate trace artifacts with retention and report summary metadata
+- [x] Add tests for traversal, unknown files, symlink swaps, oversized ranges, exhausted budgets, repeated invalid requests, and trace redaction
+- [x] Build the solution and run the affected tests
+- [x] Update this document with results
 
 Planned commit: `Audit and bound model file requests`
 
@@ -459,3 +459,4 @@ At minimum, automated coverage must include:
 | --- | --- | --- | --- | --- |
 | 2026-07-14 | Plan | Approved | Decisions approved, feature branch created, and no production code changed | `Document adaptive repository review overhaul` |
 | 2026-07-14 | 1 | Complete | Immutable Git-tree catalog and bounded common file inspection added; no-change integration proves in-memory recalculation without artifacts or a model call; solution build has zero warnings; 556 tests ran, 550 passed, and 6 opt-in live tests skipped | `Add per-run repository manifest` |
+| 2026-07-14 | 2 | Complete | Manifest-gated live reads now verify path, type, size, line count, and SHA-256 content; tool results have explicit line and character bounds; controller selections and model tool activity are written to a metadata-only retained JSONL trace; 571 tests ran, 565 passed, and 6 opt-in live tests skipped | `Audit and bound model file requests` |

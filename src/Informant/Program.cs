@@ -139,14 +139,17 @@ internal static class Program
         Log.Information("Repository manifest persisted to {Path}", manifestPath);
         string changesPath = ChangeSetFile.Write(config.ReportDirectory, runStamp, baselineSha, tipSha, config.ReviewMode, files);
         Log.Information("Change set with {Count} files persisted to {Path}", files.Count, changesPath);
+        using var trace = new ReviewTraceWriter(config.ReportDirectory, runStamp);
+        trace.WriteManifestCreated(manifest);
+        var traceContext = new ReviewTraceContext();
 
         IReadOnlyList<PrimaryModelTarget> modelTargets = config.GetPrimaryModelTargets();
-        var report = new ReportWriter(config.ReportDirectory, runStamp, config.ModelName, config.ModelEndpoint, config.MaxContextCharacters, config.MaxFileLines, modelTargets);
+        var report = new ReportWriter(config.ReportDirectory, runStamp, config.ModelName, config.ModelEndpoint, config.MaxContextCharacters, config.MaxFileLines, modelTargets, trace.TraceFileName);
         report.WriteHeader(config.RepositoryUrl, config.Branch, config.ReviewMode, baselineSha, tipSha, startedAt);
 
         progress.ReportPhase("Verifying primary model", config.ModelName, "primary");
         string reviewPrompt = config.ResolveReviewPrompt(config.WorkingTreePath);
-        IPrimaryModelSession[] sessions = [.. modelTargets.Select(target => CreatePrimaryModelSession(target, config, reviewPrompt, git, progress))];
+        IPrimaryModelSession[] sessions = [.. modelTargets.Select(target => CreatePrimaryModelSession(target, config, reviewPrompt, git, progress, manifest, trace, traceContext))];
         var reviewer = new PrimaryModelFailoverReviewer(sessions, target => progress.ReportModelTarget(target.ModelName, target.Name));
         await reviewer.InitializeAsync();
 
@@ -156,6 +159,7 @@ internal static class Program
         for (int index = 0; index < files.Count; index++)
         {
             var file = files[index];
+            traceContext.UnitId = file.Path;
             Log.Information("Reviewing {Path} ({Position}/{Count})", file.Path, index + 1, files.Count);
             PrimaryModelTarget activeTarget = reviewer.ActiveTarget ?? modelTargets[^1];
             progress.ReportFile("Primary review", activeTarget.ModelName, activeTarget.Name, file.Path, index + 1, files.Count);
@@ -191,10 +195,11 @@ internal static class Program
 
         // The second pass is strictly additive: the local review, its report and the baseline are already settled above
         string primaryReportPath = report.ReportPath;
+        bool traceSummaryWritten = false;
         if (config.SecondOpinion is { } secondOpinion)
         {
             progress.ReportPhase("Selecting second opinion");
-            SecondOpinionOutcome? outcome = await RunSecondOpinionAsync(secondOpinion, config, git, results, runStamp, report.ReportPath, progress);
+            SecondOpinionOutcome? outcome = await RunSecondOpinionAsync(secondOpinion, config, git, results, runStamp, report.ReportPath, progress, manifest, trace, traceContext);
 
             if (outcome is not null)
             {
@@ -204,10 +209,18 @@ internal static class Program
                 // Email is gated on a completed second opinion, so it only fires when there is a validated report to send
                 if (config.Email is { } email)
                 {
+                    report.AppendTraceSummary(trace.Summary);
+                    traceSummaryWritten = true;
                     progress.ReportPhase("Sending email");
                     await SendReportEmailAsync(email, config, outcome, report.ReportPath);
                 }
             }
+        }
+
+        traceContext.UnitId = null;
+        if (!traceSummaryWritten)
+        {
+            report.AppendTraceSummary(trace.Summary);
         }
 
         if (baselineAdvanced)
@@ -222,12 +235,16 @@ internal static class Program
         return baselineAdvanced ? 0 : 1;
     }
 
-    private static IPrimaryModelSession CreatePrimaryModelSession(PrimaryModelTarget target, InformantConfig config, string reviewPrompt, GitRunner git, ReviewProgressReporter progress)
+    private static IPrimaryModelSession CreatePrimaryModelSession(PrimaryModelTarget target, InformantConfig config, string reviewPrompt, GitRunner git, ReviewProgressReporter progress,
+        RepositoryManifest manifest, ReviewTraceWriter trace, ReviewTraceContext traceContext)
     {
         var client = new ModelClient(SharedHttpClient, target.Endpoint, target.ModelName, TimeSpan.FromSeconds(config.RequestTimeoutSeconds), maxResponseBytes: config.MaxModelResponseBytes,
             progressObserver: progress.ObserveModelCall);
-        var loop = new ToolCallLoop(client, new ReadFileLinesTool(config.ResolvedAllowedReadRoot, config.MaxFileBytes), config.MaxContextCharacters);
-        var reviewer = new FileReviewer(loop, config.WorkingTreePath, reviewPrompt, config.MaxFileLines, config.MaxContextCharacters, config.PerFileRetryCount, config.MaxFileBytes, git);
+        int maxResultCharacters = ReadFileLinesTool.ResultCharactersForContext(config.MaxContextCharacters);
+        var readTool = new ReadFileLinesTool(config.ResolvedAllowedReadRoot, config.MaxFileBytes, manifest, maxResultCharacters, trace.CreateReadObserver(target.ModelName, target.Name, traceContext));
+        var loop = new ToolCallLoop(client, readTool, config.MaxContextCharacters, auditObserver: trace.CreateToolObserver(target.ModelName, target.Name, traceContext));
+        var reviewer = new FileReviewer(loop, config.WorkingTreePath, reviewPrompt, config.MaxFileLines, config.MaxContextCharacters, config.PerFileRetryCount, config.MaxFileBytes, git,
+            trace.CreateContextSelectionObserver(target.ModelName, target.Name, traceContext));
         return new PrimaryModelSession(target, client, reviewer, config.MaxContextCharacters);
     }
 
@@ -339,7 +356,7 @@ internal static class Program
     }
 
     private static async Task<SecondOpinionOutcome?> RunSecondOpinionAsync(SecondOpinionConfig secondOpinion, InformantConfig config, GitRunner git, IReadOnlyList<FileReviewResult> results, string runStamp,
-        string sourceReportPath, ReviewProgressReporter progress)
+        string sourceReportPath, ReviewProgressReporter progress, RepositoryManifest manifest, ReviewTraceWriter trace, ReviewTraceContext traceContext)
     {
         var stopwatch = Stopwatch.StartNew();
         try
@@ -387,7 +404,8 @@ internal static class Program
             Log.Information("Second-opinion tool-calling: {Status} ({Detail})", toolStatus, toolProbe.Detail);
 
             var validator = new SecondOpinionReviewer(client, config.WorkingTreePath, secondOpinion.ResolvePrompt(), config.MaxContextCharacters, secondOpinion.ContextLines, enableToolCalls, secondOpinion.MaxFileReads,
-                config.MaxFileBytes, git);
+                config.MaxFileBytes, git, manifest, ReadFileLinesTool.ResultCharactersForContext(config.MaxContextCharacters), trace.CreateReadObserver(selectedModel.ModelName, selection.ProfileName, traceContext),
+                trace.CreateToolObserver(selectedModel.ModelName, selection.ProfileName, traceContext));
             var writer = new SecondOpinionReportWriter(config.ReportDirectory, runStamp);
             writer.WriteHeader(selection, sourceReportPath, DateTimeOffset.Now, secondOpinion.ContextLines);
             var jsonReport = new SecondOpinionJsonReport();
@@ -397,6 +415,7 @@ internal static class Program
             for (int index = 0; index < toValidate.Count; index++)
             {
                 var result = toValidate[index];
+                traceContext.UnitId = $"second-opinion:{result.File.Path}";
                 Log.Information("Second opinion for {Path} ({Position}/{Count})", result.File.Path, index + 1, toValidate.Count);
                 progress.ReportFile("Second-opinion review", selectedModel.ModelName, selection.ProfileName, result.File.Path, index + 1, toValidate.Count);
 

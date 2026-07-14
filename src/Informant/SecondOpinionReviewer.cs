@@ -25,8 +25,15 @@ public sealed class SecondOpinionReviewer
     /// <param name="contextLines">Lines of surrounding code included on each side of a changed range when the whole file exceeds the budget</param>
     /// <param name="enableToolCalls">When true the validating model is offered read_file_lines to read more of the file on demand; when false it validates from the excerpt only</param>
     /// <param name="maxFileReads">Cap on read_file_lines calls per file when tools are enabled, so a capable model cannot pull the whole tree</param>
+    /// <param name="maxFileBytes">Maximum permitted live repository file size</param>
+    /// <param name="git">Optional Git runner used to read deleted baseline content</param>
+    /// <param name="manifest">Current run manifest used as the model read allowlist</param>
+    /// <param name="maxToolResultCharacters">Optional serialized tool-result character limit</param>
+    /// <param name="readAuditObserver">Optional metadata-only repository-read observer</param>
+    /// <param name="toolAuditObserver">Optional metadata-only generic tool-call observer</param>
     public SecondOpinionReviewer(ModelClient client, string treeRoot, string systemPrompt, int maxContextCharacters, int contextLines, bool enableToolCalls, int maxFileReads,
-        int maxFileBytes = RepositoryFileReader.DefaultMaxFileBytes, GitRunner? git = null)
+        int maxFileBytes = RepositoryFileReader.DefaultMaxFileBytes, GitRunner? git = null, RepositoryManifest? manifest = null, int? maxToolResultCharacters = null,
+        Action<RepositoryReadAuditEvent>? readAuditObserver = null, Action<ModelToolCallAuditEvent>? toolAuditObserver = null)
     {
         ArgumentNullException.ThrowIfNull(client);
 
@@ -42,7 +49,11 @@ public sealed class SecondOpinionReviewer
         // When the validating endpoint supports tool-calling, give it the same read-only file tool the local reviewer
         // uses, confined to the working tree and capped at maxFileReads so it cannot read the whole tree. Otherwise the
         // loop is null and the validation runs from the excerpt alone
-        _toolLoop = enableToolCalls ? new ToolCallLoop(client, new ReadFileLinesTool(_fileReader), maxContextCharacters, maxFileReads) : null;
+        if (enableToolCalls)
+        {
+            int toolResultCharacters = maxToolResultCharacters ?? ReadFileLinesTool.ResultCharactersForContext(maxContextCharacters);
+            _toolLoop = new ToolCallLoop(client, new ReadFileLinesTool(_fileReader, manifest, toolResultCharacters, readAuditObserver), maxContextCharacters, maxFileReads, toolAuditObserver);
+        }
     }
 
     /// <summary>Validates one file's local findings against its code; returns the validation text, or null when the call failed (logged, never thrown)</summary>

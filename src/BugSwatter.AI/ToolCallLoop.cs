@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Serilog;
 
@@ -5,6 +6,25 @@ namespace BugSwatter.AI;
 
 /// <summary>Outcome of one completed tool-call conversation</summary>
 public sealed record LoopResult(string FinalContent, int ToolCallCount);
+
+/// <summary>Disposition of one tool call handled by the generic conversation loop</summary>
+public enum ModelToolCallOutcome
+{
+    /// <summary>The configured tool executed and returned a result</summary>
+    Executed,
+
+    /// <summary>The model requested a tool that was not exposed</summary>
+    UnknownTool,
+
+    /// <summary>The configured per-conversation call count was exhausted</summary>
+    CallBudgetRejected,
+
+    /// <summary>The conversation character budget was already exhausted</summary>
+    ContextBudgetRejected
+}
+
+/// <summary>Metadata-only observation of one tool call handled by the conversation loop</summary>
+public sealed record ModelToolCallAuditEvent(string? ToolName, ModelToolCallOutcome Outcome, int ArgumentsCharacters, int ResultCharacters, long DurationMilliseconds);
 
 /// <summary>Drives a tool-call and tool-result exchange: system and user prompt in, final assistant text out. The caller executes every tool and feeds the result back; the model never touches anything directly</summary>
 public sealed class ToolCallLoop
@@ -16,13 +36,16 @@ public sealed class ToolCallLoop
     private readonly Dictionary<string, IModelTool> _toolsByName;
     private readonly int _maxConversationCharacters;
     private readonly int _maxToolCalls;
+    private readonly Action<ModelToolCallAuditEvent>? _auditObserver;
 
     /// <summary>Creates a loop bound to one client, one tool and a conversation character budget</summary>
     /// <param name="client">The model client that runs each completion round</param>
     /// <param name="tool">The tool exposed to the model</param>
     /// <param name="maxConversationCharacters">Character budget for the running conversation; once it is exceeded further tool reads are refused so the model finishes with what it has</param>
     /// <param name="maxToolCalls">Hard cap on how many tool calls are honored; further calls are refused so the model finishes. Defaults to unlimited (bounded only by the round limit and the character budget)</param>
-    public ToolCallLoop(ModelClient client, IModelTool tool, int maxConversationCharacters, int maxToolCalls = int.MaxValue) : this(client, [tool], maxConversationCharacters, maxToolCalls)
+    /// <param name="auditObserver">Optional metadata-only observer for tool dispatch outcomes</param>
+    public ToolCallLoop(ModelClient client, IModelTool tool, int maxConversationCharacters, int maxToolCalls = int.MaxValue, Action<ModelToolCallAuditEvent>? auditObserver = null)
+        : this(client, [tool], maxConversationCharacters, maxToolCalls, auditObserver)
     { }
 
     /// <summary>Creates a loop bound to one client, one or more tools and a conversation character budget</summary>
@@ -30,7 +53,8 @@ public sealed class ToolCallLoop
     /// <param name="tools">Distinctly named tools exposed to the model</param>
     /// <param name="maxConversationCharacters">Character budget for the running conversation; once it is exceeded further tool calls are refused so the model finishes with what it has</param>
     /// <param name="maxToolCalls">Hard cap on how many tool calls are honored; further calls are refused so the model finishes. Defaults to unlimited (bounded only by the round limit and the character budget)</param>
-    public ToolCallLoop(ModelClient client, IReadOnlyList<IModelTool> tools, int maxConversationCharacters, int maxToolCalls = int.MaxValue)
+    /// <param name="auditObserver">Optional metadata-only observer for tool dispatch outcomes</param>
+    public ToolCallLoop(ModelClient client, IReadOnlyList<IModelTool> tools, int maxConversationCharacters, int maxToolCalls = int.MaxValue, Action<ModelToolCallAuditEvent>? auditObserver = null)
     {
         ArgumentNullException.ThrowIfNull(client);
         ArgumentNullException.ThrowIfNull(tools);
@@ -61,6 +85,7 @@ public sealed class ToolCallLoop
         _definitions = [.. tools.Select(tool => tool.Definition)];
         _maxConversationCharacters = maxConversationCharacters;
         _maxToolCalls = maxToolCalls;
+        _auditObserver = auditObserver;
     }
 
     /// <summary>Runs the exchange until the model returns a final text answer; throws <see cref="ModelCallException"/> on empty answers or when the round limit is hit</summary>
@@ -87,9 +112,17 @@ public sealed class ToolCallLoop
             foreach (ToolCall call in reply.ToolCalls)
             {
                 toolCallCount++;
-                string result = toolCallCount > _maxToolCalls
-                    ? """{"error": "tool-call budget reached; no more tool calls are allowed, finish with the information already available"}"""
-                    : ExecuteCall(call, messages);
+                string result;
+                if (toolCallCount > _maxToolCalls)
+                {
+                    result = """{"error": "tool-call budget reached; no more tool calls are allowed, finish with the information already available"}""";
+                    Observe(new ModelToolCallAuditEvent(call.Function?.Name, ModelToolCallOutcome.CallBudgetRejected, call.Function?.Arguments?.Length ?? 0, result.Length, 0));
+                }
+                else
+                {
+                    result = ExecuteCall(call, messages);
+                }
+
                 messages.Add(new ChatMessage { Role = "tool", ToolCallId = call.Id, Content = result });
             }
         }
@@ -99,22 +132,45 @@ public sealed class ToolCallLoop
 
     private string ExecuteCall(ToolCall call, List<ChatMessage> messages)
     {
+        long started = Stopwatch.GetTimestamp();
         string? name = call.Function?.Name;
         if (name is null || !_toolsByName.TryGetValue(name, out IModelTool? tool))
         {
             Log.Warning("Model called unknown tool {Tool}", name ?? "(null)");
-            return JsonSerializer.Serialize(new { error = $"unknown tool '{name}'; available tools: {string.Join(", ", _toolsByName.Keys)}" });
+            string result = JsonSerializer.Serialize(new { error = $"unknown tool '{name}'; available tools: {string.Join(", ", _toolsByName.Keys)}" });
+            Observe(new ModelToolCallAuditEvent(name, ModelToolCallOutcome.UnknownTool, call.Function?.Arguments?.Length ?? 0, result.Length, ElapsedMilliseconds(started)));
+            return result;
         }
 
         // Once the conversation exceeds the budget, stop feeding more tool content; the model must finish with what it has
         if (ConversationCharacters(messages) > _maxConversationCharacters)
         {
             Log.Warning("Conversation exceeded the {Budget} character budget; further tool calls are refused", _maxConversationCharacters);
-            return """{"error": "context budget exhausted; no more tool content can be provided, finish with the information already available"}""";
+            const string result = """{"error": "context budget exhausted; no more tool content can be provided, finish with the information already available"}""";
+            Observe(new ModelToolCallAuditEvent(name, ModelToolCallOutcome.ContextBudgetRejected, call.Function?.Arguments?.Length ?? 0, result.Length, ElapsedMilliseconds(started)));
+            return result;
         }
 
-        return tool.Execute(call.Function?.Arguments ?? "");
+        string toolResult = tool.Execute(call.Function?.Arguments ?? "");
+        Observe(new ModelToolCallAuditEvent(name, ModelToolCallOutcome.Executed, call.Function?.Arguments?.Length ?? 0, toolResult.Length, ElapsedMilliseconds(started)));
+        return toolResult;
     }
 
-    private static int ConversationCharacters(List<ChatMessage> messages) => messages.Sum(message => message.Content?.Length ?? 0);
+    private void Observe(ModelToolCallAuditEvent auditEvent)
+    {
+        try
+        {
+            _auditObserver?.Invoke(auditEvent);
+        }
+        catch (Exception ex)
+        {
+            // Catch-all: optional audit telemetry must never alter tool dispatch or model results.
+            Log.Warning("Model tool-call audit observer failed: {Reason}", ex.Message);
+        }
+    }
+
+    private static long ConversationCharacters(List<ChatMessage> messages) => messages.Sum(message => (long)(message.Content?.Length ?? 0)
+        + (message.ToolCalls?.Sum(call => (call.Id?.Length ?? 0) + (call.Function?.Name?.Length ?? 0) + (call.Function?.Arguments?.Length ?? 0)) ?? 0));
+
+    private static long ElapsedMilliseconds(long started) => (long)Stopwatch.GetElapsedTime(started).TotalMilliseconds;
 }

@@ -156,6 +156,17 @@ public sealed class InformantConfigTests : IDisposable
         Assert.Contains(field, ex.Message);
     }
 
+    /// <summary>Verifies a context budget too small for one useful bounded tool response is rejected</summary>
+    [Fact]
+    public void ContextBudgetTooSmallForBoundedToolResultsThrowsFatal()
+    {
+        WriteConfig(values => values["maxContextCharacters"] = ReadFileLinesTool.MinimumMaxResultCharacters * 4 - 1);
+
+        InformantFatalException exception = Assert.Throws<InformantFatalException>(() => InformantConfig.Load(_directory.Path));
+
+        Assert.Contains("maxContextCharacters", exception.Message);
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(-2)]

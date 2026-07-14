@@ -41,6 +41,9 @@ public sealed record FileReviewResult(ChangedFile File, FileReviewStatus Status,
     public bool FullyReviewed => Status == FileReviewStatus.Reviewed;
 }
 
+/// <summary>Metadata describing one source range initially selected by the controller for a model review</summary>
+public sealed record ReviewContextSelectionEvent(string Path, int StartLine, int EndLine, int LineCount, int ContentCharacters);
+
 /// <summary>Decides whether a completed primary pass is safe to record as the new baseline</summary>
 public static class ReviewCompletion
 {
@@ -64,10 +67,12 @@ public sealed class FileReviewer
     private readonly int _maxContentCharacters;
     private readonly int _retryCount;
     private readonly int _maxFileBytes;
+    private readonly Action<ReviewContextSelectionEvent>? _contextObserver;
 
     /// <summary>Creates a reviewer; content per call is capped at half the context budget, leaving the rest for the prompt and on-demand tool reads</summary>
+    /// <param name="contextObserver">Optional metadata-only observer for source ranges initially selected by the controller</param>
     public FileReviewer(ToolCallLoop loop, string treeRoot, string systemPrompt, int maxFileLines, int maxContextCharacters, int retryCount, int maxFileBytes = RepositoryFileReader.DefaultMaxFileBytes,
-        GitRunner? git = null)
+        GitRunner? git = null, Action<ReviewContextSelectionEvent>? contextObserver = null)
     {
         ArgumentNullException.ThrowIfNull(loop);
 
@@ -80,6 +85,7 @@ public sealed class FileReviewer
         _maxContentCharacters = Math.Max(2000, maxContextCharacters / 2);
         _retryCount = retryCount;
         _maxFileBytes = maxFileBytes;
+        _contextObserver = contextObserver;
     }
 
     /// <summary>Reviews the file and returns findings, a skip, or a partial result; never throws for per-file failures</summary>
@@ -122,6 +128,8 @@ public sealed class FileReviewer
 
         for (int index = 0; index < chunks.Count; index++)
         {
+            SourceChunk chunk = chunks[index];
+            ObserveContextSelection(new ReviewContextSelectionEvent(file.Path, chunk.StartLine, chunk.EndLine, chunk.EndLine - chunk.StartLine + 1, CountCharacters(lines, chunk)));
             string userPrompt = BuildUserPrompt(file, lines, chunks[index], index + 1, chunks.Count);
 
             PrimaryReviewPart? partReview = await RunWithRetriesAsync(file, index + 1, chunks.Count, userPrompt, cancellationToken);
@@ -192,6 +200,30 @@ public sealed class FileReviewer
     }
 
     private static bool IsExpectedExclusion(RepositoryFileError error) => error is RepositoryFileError.ReparsePoint or RepositoryFileError.TooLarge or RepositoryFileError.Binary;
+
+    private void ObserveContextSelection(ReviewContextSelectionEvent selection)
+    {
+        try
+        {
+            _contextObserver?.Invoke(selection);
+        }
+        catch (Exception ex)
+        {
+            // Catch-all: optional audit telemetry must never alter source selection or model results.
+            Log.Warning("Review context observer failed: {Reason}", ex.Message);
+        }
+    }
+
+    private static int CountCharacters(string[] lines, SourceChunk chunk)
+    {
+        int characters = 0;
+        for (int index = chunk.StartLine - 1; index < chunk.EndLine; index++)
+        {
+            characters += lines[index].Length;
+        }
+
+        return characters;
+    }
 
     private static string BuildUserPrompt(ChangedFile file, string[] lines, SourceChunk chunk, int part, int totalParts)
     {

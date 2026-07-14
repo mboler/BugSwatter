@@ -35,8 +35,8 @@ public enum RepositoryManifestDisposition
 }
 
 /// <summary>Metadata for one current or deleted repository path in a review run</summary>
-public sealed record RepositoryManifestEntry(string Path, string? GitMode, string? GitObjectType, string? GitObjectId, long? SizeBytes, int? LineCount, string Extension, bool RootLevel,
-    RepositoryManifestDisposition Disposition, ChangeKind? ChangeKind = null, string? ContentRevision = null)
+public sealed record RepositoryManifestEntry(string Path, string? GitMode, string? GitObjectType, string? GitObjectId, long? SizeBytes, int? LineCount, string? ContentHash, string Extension,
+    bool RootLevel, RepositoryManifestDisposition Disposition, ChangeKind? ChangeKind = null, string? ContentRevision = null)
 {
     /// <summary>Whether the entry has bounded text available to a review</summary>
     public bool Reviewable => Disposition is RepositoryManifestDisposition.Text or RepositoryManifestDisposition.DeletedFromTip;
@@ -75,7 +75,7 @@ public sealed record RepositoryManifest(string RepositoryUrl, string Branch, str
             RepositoryManifestDisposition disposition = changedFile.Kind == ChangeKind.Deleted
                 ? RepositoryManifestDisposition.DeletedFromTip
                 : RepositoryManifestDisposition.Missing;
-            entriesByPath[changedFile.Path] = new RepositoryManifestEntry(changedFile.Path, null, null, null, null, null, Path.GetExtension(changedFile.Path),
+            entriesByPath[changedFile.Path] = new RepositoryManifestEntry(changedFile.Path, null, null, null, null, null, null, Path.GetExtension(changedFile.Path),
                 IsRootLevel(changedFile.Path), disposition, changedFile.Kind, changedFile.ContentRevision);
         }
 

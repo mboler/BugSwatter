@@ -132,6 +132,25 @@ public sealed class ToolCallLoopTests
         Assert.Contains("context budget exhausted", messages[messages.GetArrayLength() - 1].GetProperty("content").GetString());
     }
 
+    /// <summary>Verifies audit events contain bounded metadata and report context refusal without retaining tool bodies</summary>
+    [Fact]
+    public async Task AuditObserverRecordsArgumentLengthsAndContextRejectionWithoutBodies()
+    {
+        var events = new List<ModelToolCallAuditEvent>();
+        var tool = new ScriptedTool("test_tool", _ => throw new InvalidOperationException("tool must not execute after budget rejection"));
+        var handler = new StubHttpMessageHandler();
+        handler.Enqueue(HttpStatusCode.OK, StubHttpMessageHandler.ToolCallResponse(("call_1", tool.Name, JsonSerializer.Serialize(new { value = new string('x', 200) }))));
+        handler.Enqueue(HttpStatusCode.OK, StubHttpMessageHandler.FinalResponse("finished"));
+        var loop = new ToolCallLoop(CreateClient(handler), tool, 50, auditObserver: events.Add);
+
+        await loop.RunAsync("system", "user");
+
+        ModelToolCallAuditEvent auditEvent = Assert.Single(events);
+        Assert.Equal(ModelToolCallOutcome.ContextBudgetRejected, auditEvent.Outcome);
+        Assert.True(auditEvent.ArgumentsCharacters > 200);
+        Assert.True(auditEvent.ResultCharacters > 0);
+    }
+
     [Fact]
     public void DuplicateToolNamesAreRejected()
     {

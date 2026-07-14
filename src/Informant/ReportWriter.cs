@@ -17,10 +17,12 @@ public sealed class ReportWriter
     private readonly int _maxContextCharacters;
     private readonly int _maxFileLines;
     private readonly IReadOnlyList<PrimaryModelTarget> _modelTargets;
+    private readonly string? _traceFileName;
     private DateTimeOffset _startedAt;
 
     /// <summary>Creates the report writer for this run; the review model, endpoint and context settings are recorded in the header</summary>
-    public ReportWriter(string directory, string runStamp, string modelName, string modelEndpoint, int maxContextCharacters, int maxFileLines, IReadOnlyList<PrimaryModelTarget>? modelTargets = null)
+    public ReportWriter(string directory, string runStamp, string modelName, string modelEndpoint, int maxContextCharacters, int maxFileLines, IReadOnlyList<PrimaryModelTarget>? modelTargets = null,
+        string? traceFileName = null)
     {
         Directory.CreateDirectory(directory);
         _path = Path.Combine(directory, $"Informant-Report-{runStamp}.md");
@@ -29,6 +31,7 @@ public sealed class ReportWriter
         _maxContextCharacters = maxContextCharacters;
         _maxFileLines = maxFileLines;
         _modelTargets = modelTargets ?? [new PrimaryModelTarget("primary", modelEndpoint, modelName, false)];
+        _traceFileName = traceFileName;
     }
 
     /// <summary>Full path of the report file</summary>
@@ -57,6 +60,11 @@ public sealed class ReportWriter
         builder.AppendLine($"| Configured fallback models | {_modelTargets.Count - 1} |");
         builder.AppendLine($"| Context budget | {_maxContextCharacters} characters |");
         builder.AppendLine($"| Max file lines before chunking | {_maxFileLines} |");
+        if (_traceFileName is not null)
+        {
+            builder.AppendLine($"| Read and tool audit trace | {_traceFileName} |");
+        }
+
         builder.AppendLine($"| Files reviewed | {PendingReviewed} |");
         builder.AppendLine($"| Files skipped or partial | {PendingSkipped} |");
         builder.AppendLine();
@@ -159,6 +167,22 @@ public sealed class ReportWriter
         File.WriteAllText(_path, headerEnd < 0 ? header : header + report[headerEnd..]);
 
         Log.Information("Report finalized: {Path}", _path);
+    }
+
+    /// <summary>Appends aggregate metadata-only trace counts after every optional review pass finishes</summary>
+    public void AppendTraceSummary(ReviewTraceSummary summary)
+    {
+        ArgumentNullException.ThrowIfNull(summary);
+
+        var builder = new StringBuilder();
+        builder.AppendLine();
+        builder.AppendLine("## Read and tool audit trace");
+        builder.AppendLine();
+        builder.AppendLine($"Trace artifact: `{summary.FileName}`");
+        builder.AppendLine();
+        builder.Append($"Events: {summary.EventCount}; repository reads: {summary.ReadRequestCount} ");
+        builder.AppendLine($"({summary.ServedReadCount} served, {summary.PartiallyServedReadCount} partial, {summary.RejectedReadCount} rejected); tool-call events: {summary.ToolCallEventCount}");
+        File.AppendAllText(_path, builder.ToString());
     }
 
     private static string FormatRanges(IReadOnlyList<LineRange> ranges) => ranges.Count == 0 ? "(none)" : string.Join(", ", ranges.Select(range => range.ToString()));

@@ -283,7 +283,10 @@ public sealed class InformantConfig
 
         ValidateFallbackModels();
 
-        RequirePositive(MaxContextCharacters, "maxContextCharacters");
+        if (MaxContextCharacters < ReadFileLinesTool.MinimumMaxResultCharacters * 4)
+        {
+            throw new InformantFatalException($"maxContextCharacters must be at least {ReadFileLinesTool.MinimumMaxResultCharacters * 4}, got {MaxContextCharacters}");
+        }
         RequirePositive(MaxFileLines, "maxFileLines");
         RequirePositive(MaxFileBytes, "maxFileBytes");
         RequirePositive(MaxModelResponseBytes, "maxModelResponseBytes");

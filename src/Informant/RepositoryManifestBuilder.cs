@@ -40,6 +40,7 @@ public sealed class RepositoryManifestBuilder
         RepositoryManifestDisposition disposition;
         long? sizeBytes = null;
         int? lineCount = null;
+        string? contentHash = null;
 
         switch (entry.Kind)
         {
@@ -61,6 +62,7 @@ public sealed class RepositoryManifestBuilder
                     RepositoryFileInspection inspection = _fileReader.Inspect(entry.Path);
                     sizeBytes = inspection.SizeBytes;
                     lineCount = inspection.LineCount;
+                    contentHash = inspection.ContentHash;
                     disposition = RepositoryManifestDisposition.Text;
                 }
                 catch (RepositoryFileException ex)
@@ -74,7 +76,7 @@ public sealed class RepositoryManifestBuilder
                 throw new ArgumentOutOfRangeException(nameof(entry), entry.Kind, "Unknown Git tree entry kind");
         }
 
-        return new RepositoryManifestEntry(entry.Path, entry.Mode, entry.ObjectType, entry.ObjectId, sizeBytes, lineCount, Path.GetExtension(entry.Path), IsRootLevel(entry.Path), disposition);
+        return new RepositoryManifestEntry(entry.Path, entry.Mode, entry.ObjectType, entry.ObjectId, sizeBytes, lineCount, contentHash, Path.GetExtension(entry.Path), IsRootLevel(entry.Path), disposition);
     }
 
     private static RepositoryManifestDisposition Map(RepositoryFileError error) => error switch

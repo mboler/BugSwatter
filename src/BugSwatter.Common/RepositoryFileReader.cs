@@ -1,12 +1,13 @@
+using System.Security.Cryptography;
 using System.Text;
 
 namespace BugSwatter.Common;
 
 /// <summary>Metadata obtained by safely inspecting a bounded repository text file</summary>
-public sealed record RepositoryFileInspection(long SizeBytes, int LineCount);
+public sealed record RepositoryFileInspection(long SizeBytes, int LineCount, string ContentHash);
 
 /// <summary>One bounded line-range read, retaining only the requested lines while counting the whole file</summary>
-public sealed record RepositoryLineRange(IReadOnlyList<(int Number, string Text)> Lines, int TotalLines, int EffectiveEndLine, bool Capped);
+public sealed record RepositoryLineRange(IReadOnlyList<(int Number, string Text)> Lines, int TotalLines, int EffectiveEndLine, bool Capped, long SizeBytes, string ContentHash);
 
 /// <summary>Reads text files through a repository path resolver while enforcing byte and binary-data limits</summary>
 public sealed class RepositoryFileReader
@@ -43,7 +44,8 @@ public sealed class RepositoryFileReader
         using FileStream file = OpenFile(relativePath);
         long sizeBytes = file.Length;
         EnsureText(file, relativePath);
-        using var reader = CreateReader(file, relativePath);
+        using var hashingStream = CreateHashingStream(file, relativePath);
+        using var reader = CreateReader(hashingStream, leaveOpen: true);
         int lineCount = 0;
         string? line;
         while ((line = reader.ReadLine()) is not null)
@@ -52,7 +54,7 @@ public sealed class RepositoryFileReader
             lineCount++;
         }
 
-        return new RepositoryFileInspection(sizeBytes, lineCount);
+        return new RepositoryFileInspection(sizeBytes, lineCount, hashingStream.CompleteHash());
     }
 
     /// <summary>Reads every line from a bounded text file</summary>
@@ -98,8 +100,10 @@ public sealed class RepositoryFileReader
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxLines);
 
         using FileStream file = OpenFile(relativePath);
+        long sizeBytes = file.Length;
         EnsureText(file, relativePath);
-        using var reader = CreateReader(file, relativePath);
+        using var hashingStream = CreateHashingStream(file, relativePath);
+        using var reader = CreateReader(hashingStream, leaveOpen: true);
         var selected = new List<(int Number, string Text)>();
         int requestedEnd = (int)Math.Min(endLine, (long)startLine + maxLines - 1);
         int lineNumber = 0;
@@ -114,7 +118,7 @@ public sealed class RepositoryFileReader
             }
         }
 
-        return new RepositoryLineRange(selected, lineNumber, Math.Min(requestedEnd, lineNumber), endLine > requestedEnd);
+        return new RepositoryLineRange(selected, lineNumber, Math.Min(requestedEnd, lineNumber), endLine > requestedEnd, sizeBytes, hashingStream.CompleteHash());
     }
 
     private FileStream OpenFile(string relativePath)
@@ -142,7 +146,11 @@ public sealed class RepositoryFileReader
         }
     }
 
-    private StreamReader CreateReader(FileStream file, string relativePath) => new(new ReadLimitStream(file, _maxFileBytes, () => TooLarge(relativePath)), Encoding.UTF8, true, 4096);
+    private StreamReader CreateReader(FileStream file, string relativePath) => CreateReader(new ReadLimitStream(file, _maxFileBytes, () => TooLarge(relativePath)));
+
+    private HashingReadStream CreateHashingStream(FileStream file, string relativePath) => new(new ReadLimitStream(file, _maxFileBytes, () => TooLarge(relativePath)));
+
+    private static StreamReader CreateReader(Stream stream, bool leaveOpen = false) => new(stream, Encoding.UTF8, true, 4096, leaveOpen);
 
     private static void EnsureText(FileStream file, string relativePath)
     {
@@ -176,6 +184,61 @@ public sealed class RepositoryFileReader
 
     private RepositoryFileException TooLarge(string relativePath) =>
         new(RepositoryFileError.TooLarge, $"'{relativePath}' exceeds maxFileBytes limit of {_maxFileBytes} bytes");
+
+    private sealed class HashingReadStream : Stream
+    {
+        private readonly Stream _inner;
+        private readonly IncrementalHash _hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        private bool _completed;
+
+        public HashingReadStream(Stream inner)
+        {
+            _inner = inner;
+        }
+
+        public override bool CanRead => _inner.CanRead;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => _inner.Length;
+        public override long Position { get => _inner.Position; set => throw new NotSupportedException(); }
+
+        /// <summary>Completes and returns the SHA-256 hash after the stream has been fully consumed</summary>
+        public string CompleteHash()
+        {
+            if (_completed)
+            {
+                throw new InvalidOperationException("The content hash was already completed");
+            }
+
+            _completed = true;
+            return Convert.ToHexString(_hash.GetHashAndReset());
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => Read(buffer.AsSpan(offset, count));
+
+        public override int Read(Span<byte> buffer)
+        {
+            int read = _inner.Read(buffer);
+            _hash.AppendData(buffer[..read]);
+            return read;
+        }
+
+        public override void Flush() => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _hash.Dispose();
+                _inner.Dispose();
+            }
+
+            base.Dispose(disposing);
+        }
+    }
 
     private sealed class ReadLimitStream : Stream
     {

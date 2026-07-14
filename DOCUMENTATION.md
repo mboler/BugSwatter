@@ -10,6 +10,7 @@ BugSwatter consists of `Informant`, which performs one code-review run, and `Mar
 - [Safety model](#safety-model)
 - [Informant commands](#informant-commands)
 - [Informant configuration](#informant-configuration)
+- [Review pipeline and strategies](#review-pipeline-and-strategies)
 - [Environment-variable overrides](#environment-variable-overrides)
 - [Secrets](#secrets)
 - [Reports, baselines, and retention](#reports-baselines-and-retention)
@@ -67,9 +68,10 @@ Download the Windows archive and `SHA256SUMS.txt` from the same GitHub Release. 
 The Windows executables are not code-signed, so Windows may identify them as coming from an unknown publisher or display a SmartScreen warning. Download releases only from this GitHub repository, and proceed only after the archive's checksum matches `SHA256SUMS.txt`.
 
 ```powershell
-Get-FileHash .\BugSwatter-0.7.0-win-x64.zip -Algorithm SHA256
-Expand-Archive .\BugSwatter-0.7.0-win-x64.zip -DestinationPath C:\BugSwatter\releases
-Move-Item C:\BugSwatter\releases\BugSwatter-0.7.0-win-x64 C:\BugSwatter\bin
+$version = "0.8.1"
+Get-FileHash ".\BugSwatter-$version-win-x64.zip" -Algorithm SHA256
+Expand-Archive ".\BugSwatter-$version-win-x64.zip" -DestinationPath C:\BugSwatter\releases
+Move-Item "C:\BugSwatter\releases\BugSwatter-$version-win-x64" C:\BugSwatter\bin
 C:\BugSwatter\bin\Informant.exe help
 ```
 
@@ -82,8 +84,9 @@ Install Git and your distribution's .NET 10 and ASP.NET Core 10 runtime packages
 After comparing the archive's SHA-256 value with `SHA256SUMS.txt`:
 
 ```bash
+VERSION=0.8.1
 sudo mkdir -p /opt/bugswatter
-sudo tar -xzf BugSwatter-0.7.0-linux-x64.tar.gz -C /opt/bugswatter --strip-components=1
+sudo tar -xzf "BugSwatter-${VERSION}-linux-x64.tar.gz" -C /opt/bugswatter --strip-components=1
 sudo chmod 755 /opt/bugswatter/Informant /opt/bugswatter/Marshal
 /opt/bugswatter/Informant help
 ```
@@ -106,7 +109,7 @@ C:\BugSwatter\bin\Informant.exe
 
 The `workingTreePath` must be an absolute path dedicated to Informant. It is cloned when missing and destructively reset and cleaned on later runs. Never use your development checkout.
 
-`validate` checks configuration, paths, every primary and fallback endpoint, and required secret references. `verify` performs the stronger tool-calling probe against every configured primary-review model. Run both as the same operating-system account that will run Informant unattended.
+`validate` checks configuration, paths, every primary and fallback endpoint, and required secret references. For an LM Studio-style `/v1` endpoint it also queries the native model metadata route and reports loaded and maximum context. That metadata is advisory: missing metadata does not fail validation, and a warning never changes `maxContextCharacters`. `verify` performs the stronger tool-calling probe against every configured primary-review model. Run both as the same operating-system account that will run Informant unattended.
 
 ## Safety model
 
@@ -166,12 +169,14 @@ JSON comments and trailing commas are supported.
 | `fallbackModels` | Ordered already-running alternatives, each with `name`, `endpoint`, and `modelName` | empty |
 | `allowedReadRoot` | Root available to `read_file_lines` | working tree |
 | `reviewMode` | `changed` or `full` | `changed` |
+| `reviewStrategy` | `exhaustive` or `adaptive` | `exhaustive` |
 | `reportDirectory` | Report and change-list directory | `reports` |
 | `reportRetentionDays` | Days to keep managed report artifacts; `-1` keeps them forever | `31` |
 | `stateFilePath` | Completed-review baseline state | `informant.state.json` |
 | `reviewPrompt` | Inline primary review prompt | null |
 | `reviewPromptFile` | Prompt file used when inline text is absent | built-in prompt, or `review-prompt.txt` from `init` |
 | `promptIncludeFiles` | Root-level Markdown globs or absolute guidance-file paths appended to the prompt | empty; starter config uses `AGENTS.md` |
+| `seedPaths` | Repository-relative files, directories, or globs prioritized for planning context | empty |
 | `maxContextCharacters` | Character budget per primary review conversation | `24000` |
 | `maxFileLines` | File size in lines above which logical chunking begins | `800` |
 | `maxFileBytes` | Maximum source-file bytes read | `10485760` |
@@ -186,7 +191,28 @@ JSON comments and trailing commas are supported.
 
 `reviewPrompt` takes precedence over `reviewPromptFile`; the built-in prompt is used when neither supplies content. Relative `promptIncludeFiles` patterns match only at the reviewed repository root. The included Markdown is repository-supplied model guidance, so review those files as part of your prompt policy.
 
-The context budget is measured in characters, not tokens. Lower values reduce prompt size and cost but can reduce useful context. Higher values can slow local inference and increase cloud charges.
+The context budget is measured in characters, not tokens. Lower values reduce prompt size and cost but can reduce useful context. Higher values can slow local inference and increase cloud charges. Informant never increases or reduces this configured value automatically. When LM Studio native metadata is available, `validate` estimates input tokens at three characters per token, retains 20 percent headroom for output and tokenization uncertainty, and warns if the configured budget appears unsafe for the loaded context. Other OpenAI-compatible providers may not expose portable context metadata, which is normal.
+
+`seedPaths` accepts exact files, directories, `*`, `?`, and recursive `**` globs. Paths are always repository-relative. A seed only raises planning priority; it cannot grant access outside the current manifest, bypass symbolic-link rejection, or exceed a character budget. Missing seeds are retained in the briefing summary as unmatched rather than silently treated as files.
+
+## Review pipeline and strategies
+
+Every invocation refreshes the dedicated working tree and rebuilds a complete metadata manifest bound to the resulting tip SHA. The manifest records exact tracked paths, Git object metadata, size, line count, content hash, change status, and whether each entry is reviewable. It contains no source bodies or environment values. A no-change run still rebuilds the manifest in memory, then exits without creating report artifacts or calling a model.
+
+When review work exists, Informant prepares a code-agnostic briefing. It prioritizes repository guidance, root files, root build and package manifests, configured seeds, and changed source. Complete source blocks are verified against the manifest and packed whole into at most 20 percent of `maxContextCharacters`; a block that does not fit is recorded as omitted rather than silently truncated. Manifest text, directory summaries, and this source remain inside a 55 percent planning envelope. Changed or large files omitted from planning context still enter required review units according to the selected strategy.
+
+The model returns a versioned JSON plan containing related review units, exact primary and supporting paths, priorities, rationales, and optional adaptive deferrals. Informant accepts only exact reviewable manifest paths. Malformed JSON, unsupported versions, invented paths, traversal, duplicates, excessive plans, and omitted mandatory work trigger deterministic path-proximity grouping or controller coverage repair. Planning is an optimization, not a model-controlled permission decision.
+
+Each validated unit becomes one or more bounded sequential model conversations containing related numbered source. A unit can ask for additional unchanged supporting lines through `read_file_lines`. Informant checks the manifest and live filesystem before every read and explicitly reports served, partially served, or rejected requests. Completed units are appended to the Markdown report immediately, so a later process failure does not erase finished work.
+
+`reviewMode` chooses the candidate universe. `changed` selects changes since the last completed baseline, while `full` selects the complete tracked tree. A first run without a baseline also uses the complete tracked tree. `reviewStrategy` chooses the required depth:
+
+| Strategy | Guarantee and tradeoff |
+| --- | --- |
+| `exhaustive` | Every reviewable candidate must complete deep review or the baseline remains unchanged. This is the compatibility default and costs the most time and context |
+| `adaptive` | The model may defer full-file deep review. Incremental changes still receive mandatory changed-line windows with up to 20 surrounding lines. First and full runs may defer complete files, so they can miss defects outside selected units |
+
+Adaptive reports never claim that every file was reviewed. They name deferred paths and distinguish deep review from mandatory changed-content coverage. Use `adaptive` for very large first runs or repositories where bounded sampling is acceptable. Use `exhaustive` when complete required-candidate coverage matters more than time or model cost.
 
 ### Primary-model failover
 
@@ -206,7 +232,7 @@ The preferred `modelEndpoint` and `modelName` remain the first target. `fallback
 
 Every configured model must already be loaded and serving its OpenAI-compatible endpoint. Informant never starts a model server, loads or unloads a model, selects a GPU, or changes model-server settings.
 
-Informant first applies `perFileRetryCount` to the selected target. If model requests still fail, or if the target fails the mandatory tool-calling probe, that target is unavailable for the remainder of the run and Informant advances to the next target. A file that partially completed is restarted from the beginning on the fallback so one file never combines findings from two models. Files already completed are not repeated, and subsequent files stay on the fallback. A normal response with no findings and an unparseable candidate-severity block do not cause failover; unparseable severity remains `undetermined`.
+Informant first applies `perFileRetryCount` to the selected target. If model requests still fail, or if the target fails the mandatory tool-calling probe, that target is unavailable for the remainder of the run and Informant advances to the next target. A failed planning batch or clustered review unit is restarted from the beginning on the fallback so one unit never combines findings from two models. Units already completed are not repeated, and subsequent work stays on the fallback. A normal response with no findings and an unparseable candidate-severity block do not cause failover; unparseable severity remains `undetermined`.
 
 Repository and file-read failures do not cause model failover because another model cannot repair them. Cancellation also stops the run instead of starting a fallback. If every target fails, the report remains incomplete, the command exits with code `1`, and the baseline does not advance.
 
@@ -251,18 +277,25 @@ A review with work to do writes:
 
 - `Informant-Report-<timestamp>.md`
 - `Informant-Changes-<timestamp>.json`
+- `Informant-Manifest-<timestamp>.json`
+- `Informant-Coverage-<timestamp>.json`
+- `Informant-Trace-<timestamp>.jsonl`
 - `Informant-Report-<timestamp>-validated.md` when the second opinion completes
 - `Informant-Report-<timestamp>-validated.json` when the second opinion completes
 
-The primary report records repository, branch, review mode, baseline and tip SHAs, the model used for each reviewed file, primary-target failures, timing, reviewed files, changed line ranges, findings, skipped files, and completion status. Failover still produces one primary report. Sections are appended as files complete, so a process failure retains finished work and leaves an incomplete marker in the report.
+The primary report records repository, branch, review mode, review strategy, baseline and tip SHAs, the model used for each completed unit, primary-target failures, timing, clustered findings, changed line ranges, coverage totals, deferred paths, skipped files, and completion status. Failover still produces one primary report. Sections are appended as units complete, so a process failure retains finished work and leaves an incomplete marker in the report.
+
+The manifest is the deterministic path and metadata inventory used for planning and read authorization. The coverage ledger contains one final disposition per candidate path. The JSONL trace records controller-selected planning and review context, model-request lifecycle, provider-reported token counts when available, planning and unit counts, tool names, requested paths and ranges, served or rejected outcomes, character counts, and durations. It does not copy prompts, source bodies, model findings, credentials, or authorization headers.
+
+These artifacts can still disclose repository URLs, local working-tree paths, branch names, model names, file names, file sizes, hashes, and operational timing. A model can also place arbitrary text in a requested path before Informant rejects it, although that field is length-bounded. Treat the report directory as operational data and inspect artifacts before attaching them to a public issue.
 
 Deleted files are reviewed from the immutable baseline Git object. The prompt asks the model to examine surviving references and consequences of removal. Renames and filenames containing spaces or leading or trailing spaces are parsed from Git's null-delimited output rather than whitespace splitting.
 
-In `changed` mode, the first run reviews the full tracked tree. Informant advances the stored baseline only after every changed file is either fully reviewed or deliberately classified as not reviewable, such as a binary, empty, oversized, metadata-only, or symbolic-link file. A failed or partially reviewed file leaves the previous baseline unchanged so the next run retries the incomplete change set. A completed second opinion is additive and does not control primary baseline advancement.
+In `changed` mode, the first run uses the full tracked tree as its candidate universe. Under `exhaustive`, Informant advances the stored baseline only after every required candidate is deeply reviewed or deliberately classified as not reviewable, such as a binary, empty, oversized, metadata-only, or symbolic-link file. Under `adaptive`, selected units and mandatory changed content must complete, while explicitly deferred files remain recorded in the coverage ledger and do not block advancement. A failed or partially reviewed requirement leaves the previous baseline unchanged so the next run retries the incomplete change set. A completed second opinion is additive and does not control primary baseline advancement.
 
 When the tip already equals the baseline, Informant writes no report artifacts. If rewritten history makes the baseline unreachable, Informant performs a full review instead of remaining stuck.
 
-At the beginning of each run, retention deletes top-level managed artifacts whose last-write time is older than `reportRetentionDays`. The default is 31 days. Set `-1` to keep reports forever. Retention recognizes only exact Informant report and change-list filename patterns, does not recurse into subdirectories, does not delete logs or state, and refuses symbolic-link or reparse-point artifacts and directories. Cleanup failures are logged but do not prevent the review.
+At the beginning of each run, retention deletes top-level managed artifacts whose last-write time is older than `reportRetentionDays`. The default is 31 days. Set `-1` to keep reports forever. Retention recognizes only exact Informant report, change-list, manifest, coverage, and trace filename patterns, does not recurse into subdirectories, does not delete logs or state, and refuses symbolic-link or reparse-point artifacts and directories. Cleanup failures are logged but do not prevent the review.
 
 ## Second opinion
 
@@ -296,7 +329,7 @@ The optional second opinion sends the primary findings and relevant code excerpt
 | `maxFileReads` | Additional repository reads allowed per file when the validator supports tools | `5` |
 | `reviewSkippedFiles` | Ask the validator to review files the primary model could not complete | `true` |
 
-This simple form preserves the original behavior: every run uses the one configured validator.
+This simple form preserves the original behavior: every run uses the one configured validator. `reviewSkippedFiles` can include failed or deterministically excluded primary work, but it does not turn completely deferred adaptive paths into an unbounded second-model sweep. A deferred path is sent only when its mandatory changed-content review produced findings that need validation.
 
 ### Severity-routed model profiles
 
@@ -637,13 +670,15 @@ Polling every five or ten minutes is normally inexpensive because `ls-remote` re
 
 ## Cost and retention controls
 
-The first review of a repository is a full tracked-tree review. Start with a small repository or temporary branch to estimate model speed and cost.
+The first review of a repository uses the full tracked tree as its candidate universe. Start with a small repository or temporary branch to estimate model speed and cost. `exhaustive` provides the strongest candidate-coverage guarantee; `adaptive` can shorten a large first pass but may miss defects in explicitly deferred files.
 
 Useful controls include:
 
 - Keep `reviewMode` as `changed`; `full` reviews the complete tree every run
+- Use `adaptive` only when its documented deferral risk is acceptable; keep `exhaustive` for complete required-candidate coverage
+- Use narrow `seedPaths`; a broad recursive seed competes for every planning-context budget
 - Poll every five or ten minutes unless faster detection has operational value
-- Reduce `maxContextCharacters` and `maxFileLines` carefully to limit prompt size
+- Reduce `maxContextCharacters` and `maxFileLines` carefully to limit prompt size, and run `Informant validate` after changing context settings
 - Keep `maxFileBytes` and `maxModelResponseBytes` bounded
 - Reduce second-opinion `contextLines` and `maxFileReads`
 - Set `reviewSkippedFiles` to false if second-model coverage is less important than cost
@@ -651,7 +686,7 @@ Useful controls include:
 - Use `reportRetentionDays` to cap report storage, or `-1` only when indefinite retention is intentional
 - Monitor local accelerator utilization and cloud-provider usage alerts independently of BugSwatter
 
-Marshal's queue is bounded and serial, so a trigger burst does not create simultaneous model calls. A trigger arriving during a run may still schedule one rerun. Repository changes during an incomplete review remain behind the old baseline and will be reconsidered later.
+The manifest, coverage ledger, and metadata trace also consume disk space. Retention handles them with the same age setting as reports. Marshal's queue is bounded and serial, so a trigger burst does not create simultaneous model calls. A trigger arriving during a run may still schedule one rerun. Repository changes during an incomplete review remain behind the old baseline and will be reconsidered later.
 
 ## Build, test, and release
 
@@ -676,15 +711,15 @@ Build local framework-dependent release archives with:
 
 The Linux archive should be produced on Linux so executable permission bits are set correctly. The script reads the version from `Directory.Build.props`, refuses to overwrite an existing archive, and can validate an expected `v<version>` tag.
 
-GitHub Actions runs build, test, dependency policy, vulnerability reporting, and package smoke tests on Windows and Linux for pushes and pull requests. Pushing a tag such as `v0.7.0` first runs the same CI, builds both archives, writes `SHA256SUMS.txt`, and creates a GitHub Release. The tag must exactly match the version in `Directory.Build.props`. Release packages remain framework-dependent and do not bundle .NET.
+GitHub Actions runs build, test, dependency policy, vulnerability reporting, and package smoke tests on Windows and Linux for pushes and pull requests. Pushing a tag such as `v0.8.1` first runs the same CI, builds both archives, writes `SHA256SUMS.txt`, and creates a GitHub Release. The tag must exactly match the version in `Directory.Build.props`. Release packages remain framework-dependent and do not bundle .NET.
 
 Opt-in integration tests are skipped in ordinary CI. Live model tests require `INFORMANT_IT=1`, `INFORMANT_IT_ENDPOINT`, and `INFORMANT_IT_MODEL`; optional second-opinion coverage also uses `INFORMANT_IT_SO_ENDPOINT` and `INFORMANT_IT_SO_MODEL`. The ACS email test uses `BUGSWATTER_EMAIL_IT=1`, `BUGSWATTER_EMAIL_IT_ACS_CONNECTION`, `BUGSWATTER_EMAIL_IT_FROM`, and `BUGSWATTER_EMAIL_IT_TO`. Never commit those values.
 
 ## Design notes
 
-The model interaction uses native OpenAI-compatible tool calling because Informant owns both sides of a closed read-only loop. Review is one file at a time. Changed line ranges come from `git diff -U0`, while the model can request additional repository ranges through `read_file_lines`.
+The model interaction uses native OpenAI-compatible tool calling because Informant owns both sides of a closed read-only loop. Repository planning is code-agnostic: it receives bounded manifest partitions and prioritized complete source blocks, returns exact-path clusters, and falls back to deterministic directory and path proximity when its JSON is unusable. Changed line ranges come from `git diff -U0`, while the model can request additional manifest-approved repository ranges through `read_file_lines`.
 
-Files longer than `maxFileLines` are divided at logical brace-depth boundaries where possible. The reader streams bounded ranges and rejects bodies beyond configured byte limits. Per-file failures retry and then remain recorded as failed or partial without discarding completed report sections.
+Related files are packed into bounded sequential units. Files longer than `maxFileLines` are divided at logical brace-depth boundaries where possible. Adaptive mandatory-change units select changed ranges plus up to 20 surrounding lines instead of claiming a complete-file review. The reader streams bounded ranges and rejects bodies beyond configured byte limits. Unit failures retry and remain recorded as failed or partial without discarding completed report sections.
 
 Shared infrastructure lives in focused libraries: `BugSwatter.Common` for configuration, logging, safe paths, secrets, and common contracts; `BugSwatter.Git` for Git execution and working-tree ownership; `BugSwatter.AI` for model protocol and tool loops; and `BugSwatter.Email` for SMTP and ACS transports. Informant and Marshal contain application-specific orchestration.
 

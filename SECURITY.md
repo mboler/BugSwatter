@@ -6,7 +6,7 @@ BugSwatter is pre-1.0. Security fixes are made only on the latest development li
 
 | Version | Supported |
 | --- | --- |
-| Latest 0.6.x release | Yes |
+| Latest 0.x release | Yes |
 | Earlier versions | No |
 
 ## Report a vulnerability privately
@@ -32,8 +32,11 @@ BugSwatter reduces model privileges, but it is not a security boundary for an un
 
 - Informant destructively refreshes its configured working tree. Use a dedicated absolute path and never a development checkout
 - Repository reads reject symbolic links, junctions, mount points, other reparse points, absolute paths, and paths outside the allowed root
-- Models receive read-only file-range tools and cannot execute commands, write files, or run Git through Informant
+- Informant rebuilds a tip-bound repository manifest for every run and rechecks manifest size, line count, hash, and path safety before model-directed reads
+- Models receive controller-selected bounded source plus one read-only file-range tool and cannot execute commands, write files, or run Git through Informant
+- Repository planning output can group or defer only exact reviewable manifest paths. Invalid planning falls back to deterministic controller grouping
 - Repository content and prompt guidance are untrusted model input and can influence model output
+- Adaptive review can explicitly defer full-file analysis and therefore miss defects outside selected units. Its report and coverage ledger identify that limitation
 - AI findings are advisory and can contain false positives or miss real vulnerabilities
 - A cloud model receives configured code excerpts and may retain prompts or metadata under the provider's terms
 - Marshal's dashboard and API use unauthenticated HTTP. They are intended only for localhost, a trusted internal network, or a protected VPN
@@ -42,6 +45,7 @@ BugSwatter reduces model privileges, but it is not a security boundary for an un
 - Azure DevOps webhook Basic credentials are exposed to anyone who can observe an unprotected HTTP path
 - Repository polling uses outbound Git and avoids opening an inbound port, but still relies on the service account's Git credentials
 - LocalSystem on Windows and root on Linux give Marshal extensive machine privileges. A dedicated least-privilege account limits impact
+- Manifest, coverage, trace, report, and log artifacts can reveal repository URLs, local paths, file names, hashes, model names, and timing even when a particular artifact contains no source bodies
 
 The first public release intentionally does not provide dashboard authentication, authorization, TLS termination, certificate management, or internet-facing hardening. Do not expose Marshal directly to the public internet. If confidentiality is required across network segments, keep Marshal behind a trusted VPN or use a separately managed authenticated TLS reverse proxy.
 

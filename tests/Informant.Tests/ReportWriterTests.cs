@@ -202,12 +202,12 @@ public sealed class ReportWriterTests : IDisposable
         var writer = new ReportWriter(Path.Combine(_directory.Path, "reports"), "2026-07-10_14-30-00", "test-model", "http://localhost:1234/v1", 24000, 800,
             traceFileName: "Informant-Trace-2026-07-10_14-30-00.jsonl");
         writer.WriteHeader("repo", "main", ReviewMode.Changed, "base", "tip", DateTimeOffset.Now);
-        writer.AppendTraceSummary(new ReviewTraceSummary("Informant-Trace-2026-07-10_14-30-00.jsonl", 8, 3, 1, 1, 1, 3));
+        writer.AppendTraceSummary(new ReviewTraceSummary("Informant-Trace-2026-07-10_14-30-00.jsonl", 8, 3, 1, 1, 1, 3, 2));
 
         string report = File.ReadAllText(writer.ReportPath);
 
         Assert.Contains("| Read and tool audit trace | Informant-Trace-2026-07-10_14-30-00.jsonl |", report);
-        Assert.Contains("Events: 8; repository reads: 3 (1 served, 1 partial, 1 rejected); tool-call events: 3", report);
+        Assert.Contains("Events: 8; repository reads: 3 (1 served, 1 partial, 1 rejected); model requests: 2; tool-call events: 3", report);
     }
 
     private ReportWriter CreateWriter() => new(Path.Combine(_directory.Path, "reports"), "2026-07-10_14-30-00", "test-model", "http://localhost:1234/v1", 24000, 800);

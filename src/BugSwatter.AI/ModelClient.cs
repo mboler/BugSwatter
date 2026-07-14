@@ -72,28 +72,27 @@ public sealed class ModelClient
     {
         DateTimeOffset startedUtc = DateTimeOffset.UtcNow;
         var stopwatch = Stopwatch.StartNew();
-        ReportProgress(new ModelCallProgress(ModelCallState.Started, _modelName, startedUtc, TimeSpan.Zero, null));
+        // Endpoints reject empty tool arrays, so a tool-free conversation omits both fields entirely
+        var request = new ChatRequest { Model = _modelName, Messages = messages, Tools = tools.Count > 0 ? tools : null, ToolChoice = tools.Count > 0 ? "auto" : null };
+        string requestBody = JsonSerializer.Serialize(request, JsonOptions);
+        ReportProgress(new ModelCallProgress(ModelCallState.Started, _modelName, startedUtc, TimeSpan.Zero, null, requestBody.Length));
 
         try
         {
-            (ChatMessage message, ModelTokenUsage? usage) = await CompleteCoreAsync(messages, tools, cancellationToken);
-            ReportProgress(new ModelCallProgress(ModelCallState.Completed, _modelName, startedUtc, stopwatch.Elapsed, usage));
+            (ChatMessage message, ModelTokenUsage? usage) = await CompleteCoreAsync(requestBody, cancellationToken);
+            ReportProgress(new ModelCallProgress(ModelCallState.Completed, _modelName, startedUtc, stopwatch.Elapsed, usage, requestBody.Length));
             return message;
         }
         catch
         {
             // catch-all: every failed request reports a terminal telemetry event before the original exception continues unchanged
-            ReportProgress(new ModelCallProgress(ModelCallState.Failed, _modelName, startedUtc, stopwatch.Elapsed, null));
+            ReportProgress(new ModelCallProgress(ModelCallState.Failed, _modelName, startedUtc, stopwatch.Elapsed, null, requestBody.Length));
             throw;
         }
     }
 
-    private async Task<(ChatMessage Message, ModelTokenUsage? Usage)> CompleteCoreAsync(IReadOnlyList<ChatMessage> messages, IReadOnlyList<ToolDefinition> tools, CancellationToken cancellationToken)
+    private async Task<(ChatMessage Message, ModelTokenUsage? Usage)> CompleteCoreAsync(string requestBody, CancellationToken cancellationToken)
     {
-        // Endpoints reject empty tool arrays, so a tool-free conversation omits both fields entirely
-        var request = new ChatRequest { Model = _modelName, Messages = messages, Tools = tools.Count > 0 ? tools : null, ToolChoice = tools.Count > 0 ? "auto" : null };
-        string requestBody = JsonSerializer.Serialize(request, JsonOptions);
-
         using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutSource.CancelAfter(_requestTimeout);
 

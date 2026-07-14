@@ -14,7 +14,7 @@ public sealed class ReviewTraceContext
 
 /// <summary>Aggregate counts for one metadata-only review trace</summary>
 public sealed record ReviewTraceSummary(string FileName, long EventCount, int ReadRequestCount, int ServedReadCount, int PartiallyServedReadCount, int RejectedReadCount,
-    int ToolCallEventCount);
+    int ToolCallEventCount, int ModelRequestCount);
 
 /// <summary>Versioned metadata-only JSONL record describing one controller or model action</summary>
 public sealed record ReviewTraceRecord
@@ -120,6 +120,24 @@ public sealed record ReviewTraceRecord
 
     /// <summary>Number of candidate paths represented by an event</summary>
     public int? PathCount { get; init; }
+
+    /// <summary>Number of bounded initial source selections supplied across planning batches</summary>
+    public int? InitialContextSelectionCount { get; init; }
+
+    /// <summary>Total system and user input characters sent across planning calls</summary>
+    public long? InputCharacters { get; init; }
+
+    /// <summary>Serialized model request length without storing its content</summary>
+    public int? RequestCharacters { get; init; }
+
+    /// <summary>Provider-reported prompt tokens</summary>
+    public long? PromptTokens { get; init; }
+
+    /// <summary>Provider-reported completion tokens</summary>
+    public long? CompletionTokens { get; init; }
+
+    /// <summary>Provider-reported total tokens</summary>
+    public long? TotalTokens { get; init; }
 }
 
 /// <summary>Appends metadata-only review events to a retention-managed JSONL artifact</summary>
@@ -143,6 +161,7 @@ public sealed class ReviewTraceWriter : IDisposable
     private int _partiallyServedReadCount;
     private int _rejectedReadCount;
     private int _toolCallEventCount;
+    private int _modelRequestCount;
 
     /// <summary>Creates a new trace artifact for one review run</summary>
     public ReviewTraceWriter(string reportDirectory, string runStamp, TimeProvider? timeProvider = null)
@@ -170,7 +189,7 @@ public sealed class ReviewTraceWriter : IDisposable
         {
             lock (_sync)
             {
-                return new ReviewTraceSummary(TraceFileName, _sequence, _readRequestCount, _servedReadCount, _partiallyServedReadCount, _rejectedReadCount, _toolCallEventCount);
+                return new ReviewTraceSummary(TraceFileName, _sequence, _readRequestCount, _servedReadCount, _partiallyServedReadCount, _rejectedReadCount, _toolCallEventCount, _modelRequestCount);
             }
         }
     }
@@ -204,7 +223,29 @@ public sealed class ReviewTraceWriter : IDisposable
             ModelPlanningBatchCount = planning.ModelBatchCount,
             ReviewUnitCount = finalPlan.Units.Count,
             PathCount = finalPlan.Units.SelectMany(unit => unit.Paths).Distinct(StringComparer.Ordinal).Count(),
+            InitialContextSelectionCount = planning.InitialContextSelectionCount,
+            InputCharacters = planning.ModelInputCharacters,
             Outcome = finalPlan.UsedFallback ? "Fallback" : finalPlan.CoverageRepaired ? "CoverageRepaired" : "Planned"
+        });
+    }
+
+    /// <summary>Records one bounded source block supplied to a planning batch without storing its source text</summary>
+    public void WritePlanningContextSelected(int batchNumber, RepositoryContextItem item, PrimaryModelTarget target)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(batchNumber);
+        ArgumentNullException.ThrowIfNull(item);
+        ArgumentNullException.ThrowIfNull(target);
+        Write(new ReviewTraceRecord
+        {
+            EventType = "planning_context_selected",
+            ModelName = target.ModelName,
+            ProfileName = target.Name,
+            UnitId = $"planning-batch-{batchNumber:D3}",
+            NormalizedPath = item.Id,
+            ReturnedStartLine = item.LineCount > 0 ? 1 : null,
+            ReturnedEndLine = item.LineCount > 0 ? item.LineCount : null,
+            ReturnedLineCount = item.LineCount,
+            ReturnedContentCharacters = item.ContentCharacters
         });
     }
 
@@ -362,6 +403,44 @@ public sealed class ReviewTraceWriter : IDisposable
                 ArgumentsCharacters = auditEvent.ArgumentsCharacters,
                 ResponseCharacters = auditEvent.ResultCharacters,
                 DurationMilliseconds = auditEvent.DurationMilliseconds
+            });
+        };
+    }
+
+    /// <summary>Creates an observer that records model request lifecycle metadata without storing request or response bodies</summary>
+    public Action<ModelCallProgress> CreateModelCallObserver(string profileName, ReviewTraceContext context)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(profileName);
+        ArgumentNullException.ThrowIfNull(context);
+
+        return progress =>
+        {
+            if (progress.State == ModelCallState.Started)
+            {
+                lock (_sync)
+                {
+                    _modelRequestCount++;
+                }
+            }
+
+            Write(new ReviewTraceRecord
+            {
+                EventType = progress.State switch
+                {
+                    ModelCallState.Started => "model_request_started",
+                    ModelCallState.Completed => "model_request_completed",
+                    ModelCallState.Failed => "model_request_failed",
+                    _ => throw new ArgumentOutOfRangeException(nameof(progress), progress.State, "Unknown model call state")
+                },
+                ModelName = progress.ModelName,
+                ProfileName = profileName,
+                UnitId = context.UnitId,
+                RequestCharacters = progress.RequestCharacters,
+                PromptTokens = progress.Usage?.PromptTokens,
+                CompletionTokens = progress.Usage?.CompletionTokens,
+                TotalTokens = progress.Usage?.TotalTokens,
+                DurationMilliseconds = progress.State == ModelCallState.Started ? null : (long)progress.Duration.TotalMilliseconds,
+                Outcome = progress.State.ToString()
             });
         };
     }

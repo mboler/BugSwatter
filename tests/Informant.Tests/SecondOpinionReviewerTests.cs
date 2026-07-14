@@ -73,6 +73,8 @@ public sealed class SecondOpinionReviewerTests : IDisposable
         string userPrompt = request.RootElement.GetProperty("messages")[1].GetProperty("content").GetString()!;
         Assert.Contains("The local model thinks x is unused.", userPrompt);
         Assert.Contains("     3 |     int x;", userPrompt);
+        Assert.DoesNotContain("Repository manifest", userPrompt, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("planning batch", userPrompt, StringComparison.OrdinalIgnoreCase);
         Assert.False(request.RootElement.TryGetProperty("tools", out _));
     }
 

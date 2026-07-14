@@ -157,11 +157,15 @@ internal static class Program
         progress.ReportPhase("Planning repository review", reviewer.ActiveTarget!.ModelName, reviewer.ActiveTarget.Name);
         int manifestPartitionCharacters = Math.Max(256, config.MaxContextCharacters / 4);
         RepositoryBriefing briefing = new RepositoryBriefingBuilder().Build(manifest, config.SeedPaths, manifestPartitionCharacters);
+        RepositoryInitialContext initialContext = new RepositoryInitialContextBuilder(config.MaxFileBytes).Build(manifest, briefing, config.MaxContextCharacters);
+        Log.Information("Prepared {Selected} initial planning source blocks using {Characters}/{Budget} characters; {Omitted} prioritized paths were omitted",
+            initialContext.Items.Count, initialContext.UsedCharacters, initialContext.CharacterBudget, initialContext.Omissions.Count);
         string[] candidatePaths = [.. manifest.Entries.Where(entry => entry.ChangeKind is not null && entry.Reviewable).Select(entry => entry.Path)];
         bool allowDeferrals = config.ReviewStrategy == ReviewStrategy.Adaptive;
         IReadOnlyCollection<string> mandatoryPlanningPaths = allowDeferrals ? [] : candidatePaths;
         var planner = new RepositoryReviewPlanner(config.MaxContextCharacters);
-        RepositoryPlanningResult planning = await planner.PlanAsync(manifest, briefing, candidatePaths, mandatoryPlanningPaths, allowDeferrals, reviewer.PlanAsync);
+        RepositoryPlanningResult planning = await planner.PlanAsync(manifest, briefing, candidatePaths, mandatoryPlanningPaths, allowDeferrals, reviewer.PlanAsync, initialContext,
+            (batchNumber, item) => trace.WritePlanningContextSelected(batchNumber, item, reviewer.ActiveTarget!));
         RepositoryReviewPlan reviewPlan = RepositoryAdaptivePlan.AddMandatoryChangedContent(planning.Plan, files, config.ReviewStrategy);
         trace.WritePlanningCompleted(planning, reviewPlan, reviewer.ActiveTarget!);
         Log.Information("Repository planning produced {Units} units across {Batches} batches, with {ModelBatches} model calls, fallback {Fallback}, coverage repair {CoverageRepair}",
@@ -272,8 +276,9 @@ internal static class Program
     private static IPrimaryModelSession CreatePrimaryModelSession(PrimaryModelTarget target, InformantConfig config, string reviewPrompt, GitRunner git, ReviewProgressReporter progress,
         RepositoryManifest manifest, ReviewTraceWriter trace, ReviewTraceContext traceContext)
     {
+        Action<ModelCallProgress> modelProgressObserver = CreateModelProgressObserver(progress, trace, target.Name, traceContext);
         var client = new ModelClient(SharedHttpClient, target.Endpoint, target.ModelName, TimeSpan.FromSeconds(config.RequestTimeoutSeconds), maxResponseBytes: config.MaxModelResponseBytes,
-            progressObserver: progress.ObserveModelCall);
+            progressObserver: modelProgressObserver);
         int maxResultCharacters = ReadFileLinesTool.ResultCharactersForContext(config.MaxContextCharacters);
         var readTool = new ReadFileLinesTool(config.ResolvedAllowedReadRoot, config.MaxFileBytes, manifest, maxResultCharacters, trace.CreateReadObserver(target.ModelName, target.Name, traceContext));
         var loop = new ToolCallLoop(client, readTool, config.MaxContextCharacters, auditObserver: trace.CreateToolObserver(target.ModelName, target.Name, traceContext));
@@ -281,6 +286,16 @@ internal static class Program
             trace.CreateContextSelectionObserver(target.ModelName, target.Name, traceContext));
         var clusteredReviewer = new ClusteredReviewReviewer(loop, reviewPrompt, config.PerFileRetryCount, trace.CreateContextSelectionObserver(target.ModelName, target.Name, traceContext));
         return new PrimaryModelSession(target, client, reviewer, clusteredReviewer, config.MaxContextCharacters);
+    }
+
+    private static Action<ModelCallProgress> CreateModelProgressObserver(ReviewProgressReporter progress, ReviewTraceWriter trace, string profileName, ReviewTraceContext traceContext)
+    {
+        Action<ModelCallProgress> traceObserver = trace.CreateModelCallObserver(profileName, traceContext);
+        return modelProgress =>
+        {
+            progress.ObserveModelCall(modelProgress);
+            traceObserver(modelProgress);
+        };
     }
 
     private static void ApplyReportRetention(InformantConfig config)
@@ -427,8 +442,9 @@ internal static class Program
                 return null;
             }
 
+            Action<ModelCallProgress> modelProgressObserver = CreateModelProgressObserver(progress, trace, selection.ProfileName, traceContext);
             var client = new ModelClient(SharedHttpClient, selectedModel.Endpoint, selectedModel.ModelName, TimeSpan.FromSeconds(secondOpinion.RequestTimeoutSeconds), apiKey, config.MaxModelResponseBytes,
-                selectedModel.Authentication, progress.ObserveModelCall);
+                selectedModel.Authentication, modelProgressObserver);
 
             // Gate: prove endpoint, model and key with a minimal round trip before any code leaves the machine
             await client.CompleteAsync([new ChatMessage { Role = "user", Content = "Reply with the single word READY." }], []);

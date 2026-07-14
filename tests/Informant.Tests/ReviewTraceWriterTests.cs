@@ -45,7 +45,7 @@ public sealed class ReviewTraceWriterTests : IDisposable
         Assert.Equal("repository_read", readEvent.RootElement.GetProperty("eventType").GetString());
         Assert.Equal("unit-1", readEvent.RootElement.GetProperty("unitId").GetString());
         Assert.Equal(4, toolEvent.RootElement.GetProperty("sequence").GetInt64());
-        Assert.Equal(new ReviewTraceSummary("Informant-Trace-2026-07-14_12-00-00.jsonl", 4, 1, 0, 1, 0, 1), summary);
+        Assert.Equal(new ReviewTraceSummary("Informant-Trace-2026-07-14_12-00-00.jsonl", 4, 1, 0, 1, 0, 1, 0), summary);
         string jsonl = string.Join('\n', lines);
         Assert.DoesNotContain("sourceBody", jsonl, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("prompt", jsonl, StringComparison.OrdinalIgnoreCase);
@@ -67,21 +67,35 @@ public sealed class ReviewTraceWriterTests : IDisposable
         var coverage = new ReviewCoverageLedger(ReviewStrategy.Exhaustive,
             [new ReviewCoverageEntry(file.Path, file.Kind, true, false, false, ReviewCoverageOutcome.DeepReviewed, "SECRET REASON")]);
         string path;
+        ReviewTraceSummary summary;
 
         using (var writer = new ReviewTraceWriter(_reports.Path, "2026-07-14_13-00-00"))
         {
             writer.WritePlanningCompleted(planning, plan, target);
+            writer.WritePlanningContextSelected(2, new RepositoryContextItem("README.md", 10, "SECRET INITIAL SOURCE", LineCount: 4, ContentCharacters: 100), target);
+            Action<ModelCallProgress> modelObserver = writer.CreateModelCallObserver("primary", new ReviewTraceContext { UnitId = "unit-1" });
+            DateTimeOffset startedUtc = DateTimeOffset.UtcNow;
+            modelObserver(new ModelCallProgress(ModelCallState.Started, "model", startedUtc, TimeSpan.Zero, null, 500));
+            modelObserver(new ModelCallProgress(ModelCallState.Completed, "model", startedUtc, TimeSpan.FromSeconds(1), new ModelTokenUsage(20, 5, 25), 500));
             writer.WriteReviewUnitStarted(unit, target);
             writer.WriteReviewUnitCompleted(unitResult, TimeSpan.FromSeconds(2));
             writer.WriteCoverageCreated(coverage);
             path = writer.TracePath;
+            summary = writer.Summary;
         }
 
         string jsonl = File.ReadAllText(path);
         Assert.Contains("planning_completed", jsonl);
+        Assert.Contains("planning_context_selected", jsonl);
+        Assert.Contains("model_request_completed", jsonl);
+        Assert.Contains("\"requestCharacters\":500", jsonl);
+        Assert.Contains("\"totalTokens\":25", jsonl);
+        Assert.Contains("README.md", jsonl);
+        Assert.Contains("\"returnedContentCharacters\":100", jsonl);
         Assert.Contains("review_unit_started", jsonl);
         Assert.Contains("review_unit_completed", jsonl);
         Assert.Contains("coverage_created", jsonl);
         Assert.DoesNotContain("SECRET", jsonl);
+        Assert.Equal(1, summary.ModelRequestCount);
     }
 }

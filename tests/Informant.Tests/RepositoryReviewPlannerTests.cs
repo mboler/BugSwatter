@@ -80,6 +80,47 @@ public sealed class RepositoryReviewPlannerTests
         Assert.Equal(path, Assert.Single(result.Plan.Units).Paths[0]);
     }
 
+    /// <summary>Verifies bounded source selected by the controller reaches planning and produces metadata-only selection callbacks</summary>
+    [Fact]
+    public async Task IncludesBoundedInitialSourceInPlanningPrompt()
+    {
+        RepositoryManifest manifest = Manifest(Text("src/One.cs"));
+        RepositoryBriefing briefing = new RepositoryBriefingBuilder().Build(manifest, [], 2000);
+        var initialContext = new RepositoryInitialContext(
+            [new RepositoryContextItem("README.md", 10, "=== INITIAL REPOSITORY CONTEXT README.md ===\nplanning-context-token", LineCount: 1, ContentCharacters: 22)], [], 1000, 75);
+        var selected = new List<string>();
+        string? capturedPrompt = null;
+        var planner = new RepositoryReviewPlanner(16000);
+
+        RepositoryPlanningResult result = await planner.PlanAsync(manifest, briefing, ["src/One.cs"], ["src/One.cs"], false,
+            (_, userPrompt, _) =>
+            {
+                capturedPrompt = userPrompt;
+                return Task.FromResult("""
+                    {
+                      "version": 1,
+                      "repositorySummary": "source-aware plan",
+                      "units": [
+                        {
+                          "id": "source",
+                          "priority": 1,
+                          "rationale": "single source file",
+                          "paths": ["src/One.cs"],
+                          "supportingPaths": []
+                        }
+                      ],
+                      "deferred": [],
+                      "uncertainties": []
+                    }
+                    """);
+            }, initialContext, (_, item) => selected.Add(item.Id));
+
+        Assert.Contains("planning-context-token", capturedPrompt);
+        Assert.Equal(["README.md"], selected);
+        Assert.Equal(1, result.InitialContextSelectionCount);
+        Assert.True(result.ModelInputCharacters <= 16000 * 55 / 100);
+    }
+
     private static RepositoryManifest Manifest(params RepositoryManifestEntry[] entries) =>
         new("repository", "main", "tree", "baseline", "tip", ReviewMode.Changed, "run", DateTimeOffset.UnixEpoch, entries);
 

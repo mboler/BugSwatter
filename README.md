@@ -14,10 +14,10 @@ Contributions are welcome. Found a bug, smoothed a rough edge, or added somethin
 
 BugSwatter is self-hosted and ships as two applications:
 
-- **Informant** refreshes a dedicated clone, finds files changed since the last completed review, sends them to an OpenAI-compatible model, and writes timestamped reports
+- **Informant** refreshes a dedicated clone, rebuilds a safe repository manifest, plans related review clusters, sends bounded source to an OpenAI-compatible model, and writes timestamped reports with explicit coverage
 - **Marshal** is an optional long-running dispatcher that starts Informant from schedules, repository polling, filesystem changes, webhooks, or the built-in dashboard
 
-The primary review can stay on your network through LM Studio, llama.cpp, Ollama, or another OpenAI-compatible endpoint. Informant can fail over to ordered, already-running models on other endpoints without loading or unloading models and still produces one primary report. A second opinion can use one other local or cloud model to validate findings and assign severity. Advanced configuration can select that one validator from as many as three profiles according to the highest candidate severity in the primary run.
+The primary review can stay on your network through LM Studio, llama.cpp, Ollama, or another OpenAI-compatible endpoint. Informant first supplies a bounded mix of root guidance, root files, configured seeds, changed source, and repository structure, then asks the model to group related files. Invalid planning falls back to deterministic path-based clusters instead of losing required coverage. Informant can also fail over to ordered, already-running models on other endpoints without loading or unloading models and still produces one primary report. A second opinion can use one other local or cloud model to validate findings and assign severity. Advanced configuration can select that one validator from as many as three profiles according to the highest candidate severity in the primary run.
 
 BugSwatter is deliberately not a general-purpose agentic coding harness. The models do not get a shell, MCP servers or adapters, Git access, general filesystem access, or tools that can edit code. Their only model-directed action is asking Informant for a bounded range of numbered lines through its application-owned `read_file_lines` tool. Informant validates every request and either performs the read itself or refuses it. The model can ask for context and return review text; it cannot execute actions on your machine.
 
@@ -38,12 +38,14 @@ C:\BugSwatter\bin\Informant.exe
 
 On Linux, use `/opt/bugswatter/Informant` and Linux paths instead. `Informant init` creates a commented starter configuration and the default review prompt. Set the repository URL, branch, a dedicated absolute working-tree path, Git executable path, model endpoint, and model name before running `verify`. Optional fallbacks must already be loaded and answering at their configured endpoints; BugSwatter does not manage model processes or GPU placement.
 
-The first successful run reviews all tracked files. Later `changed` runs compare the current tip with the last completed-review baseline. Reports are retained for 31 days by default; set `reportRetentionDays` to `-1` to keep them indefinitely.
+The first run uses the full tracked tree as its candidate universe. The default `exhaustive` strategy deeply reviews every reviewable candidate; `adaptive` may defer full-file review and records that limitation explicitly. Later `changed` runs compare the current tip with the last completed-review baseline. Reports are retained for 31 days by default; set `reportRetentionDays` to `-1` to keep them indefinitely.
 
 ## Why use it
 
 - **Local-first:** keep primary review code on your network
 - **Changed-file reviews:** after the first run, review only changes since the last successfully completed primary review
+- **Repository-aware clusters:** group related files and unchanged supporting context without assuming a language or framework
+- **Honest coverage:** choose exhaustive review or adaptive review with explicit deep-reviewed, changed-content, deferred, excluded, failed, and partial outcomes
 - **Second opinion:** use one validator for every run, or route each complete run to one of as many as three local or cloud model profiles according to its highest primary candidate severity
 - **No agentic harness:** models can request bounded, read-only line ranges through Informant's single application-owned tool, but cannot write files, execute commands, or invoke Git; no MCP server or adapter is involved
 - **Multiple triggers:** use daily schedules, outbound repository polling, filesystem watching, GitHub webhooks, or Azure DevOps service hooks
@@ -57,7 +59,7 @@ The model does not control Git. Informant itself uses application-controlled Git
 
 Working-tree refresh is intentionally destructive: Informant uses `fetch`, `reset --hard`, and `clean -fdx` to make its dedicated clone match the configured branch. Before doing that, it validates matching ownership records inside and outside the working tree, the canonical path, repository URL, branch, origin remote, `.git` directory, and reparse-point boundaries. Never point `workingTreePath` at a checkout where you work.
 
-The `read_file_lines` tool can return at most 400 numbered lines per call from a bounded text file inside the repository root. It rejects absolute paths, paths outside the root, symbolic links, junctions, mount points, other reparse points, binary files, and oversized files. This uses ordinary OpenAI-compatible model tool calling through Informant, not MCP, and gives the model no direct filesystem access.
+Informant supplies controller-selected source from the current manifest and exposes one model-directed tool, `read_file_lines`. The tool can return at most 400 numbered lines per call from a bounded text file inside the repository root. It rejects paths absent from the current manifest, absolute paths, paths outside the root, symbolic links, junctions, mount points, other reparse points, binary files, oversized files, and content that changed after manifest creation. This uses ordinary OpenAI-compatible model tool calling through Informant, not MCP, and gives the model no direct filesystem access.
 
 Marshal's optional dashboard is HTTP-only and has no authentication or authorization. Anyone who can reach it can see operational details, including current file and model names, enqueue reviews, and remove waiting jobs. Bind it to `localhost` unless you deliberately place it on a trusted internal or VPN network. Never expose it directly to the public internet.
 

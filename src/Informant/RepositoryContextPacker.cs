@@ -1,7 +1,7 @@
 namespace Informant;
 
 /// <summary>One independently selectable repository context block</summary>
-public sealed record RepositoryContextItem(string Id, int Priority, string Content, bool Required = false);
+public sealed record RepositoryContextItem(string Id, int Priority, string Content, bool Required = false, int LineCount = 0, int ContentCharacters = 0);
 
 /// <summary>Deterministic bounded context selection with explicit omissions</summary>
 public sealed record RepositoryContextPack(string Text, IReadOnlyList<RepositoryContextItem> Selected, IReadOnlyList<RepositoryContextItem> Omitted, int UsedCharacters, int CharacterBudget)

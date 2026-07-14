@@ -376,16 +376,16 @@ Planned commit: `Validate model context capacity when available`
 
 ### Phase 7: Documentation, performance evaluation, and release preparation
 
-- [ ] Update README, DOCUMENTATION, SECURITY, sample configuration, and operating walkthroughs
-- [ ] Document exhaustive versus adaptive guarantees and costs
-- [ ] Document manifest, trace, seed paths, context budgets, symlink rejection, retention, and privacy considerations
-- [ ] Measure requests, input characters, tool calls, duration, completion, and report quality on representative repositories
-- [ ] Exercise at least one smaller local model and Ornith without requiring either model in normal CI
-- [ ] Confirm the second opinion receives findings and bounded excerpts rather than planning noise or complete manifests
-- [ ] Run formatting checks, dependency policy, build, and the complete test suite
-- [ ] Scan tracked files and test artifacts for local addresses, secrets, and personal environment details
-- [ ] Review the complete branch diff against this plan
-- [ ] Update this document so every completed item contains actual verification evidence
+- [x] Update README, DOCUMENTATION, SECURITY, sample configuration, and operating walkthroughs
+- [x] Document exhaustive versus adaptive guarantees and costs
+- [x] Document manifest, trace, seed paths, context budgets, symlink rejection, retention, and privacy considerations
+- [x] Measure requests, input characters, tool calls, duration, completion, and report quality on representative repositories
+- [x] Exercise at least one smaller local model and Ornith without requiring either model in normal CI
+- [x] Confirm the second opinion receives findings and bounded excerpts rather than planning noise or complete manifests
+- [x] Run formatting checks, dependency policy, build, and the complete test suite
+- [x] Scan tracked files and test artifacts for local addresses, secrets, and personal environment details
+- [x] Review the complete branch diff against this plan
+- [x] Update this document so every completed item contains actual verification evidence
 
 Planned commit: `Document and validate adaptive repository review`
 
@@ -464,3 +464,4 @@ At minimum, automated coverage must include:
 | 2026-07-14 | 4 | Complete | Replaced isolated production file calls with bounded manifest planning and sequential clustered units; invalid planning falls back without reducing exhaustive coverage; whole units restart on primary-model failover; completed units persist immediately and aggregate back to the existing per-file baseline and second-opinion contract; scripted tool-call, response attribution, malformed-severity, coverage, and failover tests were added; solution build has zero warnings; 618 tests ran, 612 passed, and 6 opt-in live tests skipped | `Review related files in bounded clusters` |
 | 2026-07-14 | 5 | Complete | Added exhaustive and adaptive strategy selection with exhaustive as the default; adaptive deferrals receive mandatory changed-line windows with surrounding context; metadata-only coverage artifacts distinguish deep, mandatory-change, deferred, excluded, failed, and partial outcomes; reports state adaptive limitations and baseline advancement now follows the approved coverage rule; solution build has zero warnings; 632 tests ran, 626 passed, and 6 opt-in live tests skipped | `Add adaptive review strategy and coverage ledger` |
 | 2026-07-14 | 6 | Complete | Added bounded LM Studio v1 metadata discovery in BugSwatter.AI and character-budget advisory policy in Informant; validation reports loaded and maximum context, warns without overriding explicit configuration, and treats missing generic-provider metadata as normal; malformed and contradictory metadata are non-blocking warnings; solution build has zero warnings; 392 affected tests ran, 387 passed, and 5 opt-in live tests skipped | `Validate model context capacity when available` |
+| 2026-07-14 | 7 | Complete | Connected manifest-verified root, seed, and changed source to bounded production planning; added metadata-only model request size, lifecycle, duration, and provider token telemetry; README, operating documentation, and security guidance now cover strategies, artifacts, costs, retention, and privacy. Scripted fixtures verify clustered planning, tool counts, redaction, bounded second-opinion inputs, and report completion. Opt-in live checks passed completion, native tool use, and defect detection on both a 12B local model in 39.3 seconds and a 35B local model in 3 minutes 40 seconds. The solution build has zero warnings; 646 tests ran, 640 passed, and 6 opt-in tests skipped; branch-added C# passed `dotnet format`; dependency policy found no Newtonsoft.Json; the NuGet vulnerability check found no known vulnerable packages; and the 207-file disclosure scan found no local addresses, local paths, legacy name, private keys, or high-signal secrets | `Document and validate adaptive repository review` |

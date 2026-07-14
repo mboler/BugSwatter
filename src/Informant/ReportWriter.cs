@@ -187,7 +187,8 @@ public sealed class ReportWriter
         builder.AppendLine($"Trace artifact: `{summary.FileName}`");
         builder.AppendLine();
         builder.Append($"Events: {summary.EventCount}; repository reads: {summary.ReadRequestCount} ");
-        builder.AppendLine($"({summary.ServedReadCount} served, {summary.PartiallyServedReadCount} partial, {summary.RejectedReadCount} rejected); tool-call events: {summary.ToolCallEventCount}");
+        builder.Append($"({summary.ServedReadCount} served, {summary.PartiallyServedReadCount} partial, {summary.RejectedReadCount} rejected); ");
+        builder.AppendLine($"model requests: {summary.ModelRequestCount}; tool-call events: {summary.ToolCallEventCount}");
         File.AppendAllText(_path, builder.ToString());
     }
 

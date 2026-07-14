@@ -47,7 +47,7 @@ public sealed record ProposedRepositoryReviewPlan(int Version, string Repository
     IReadOnlyList<string>? Uncertainties = null);
 
 /// <summary>One validated review unit using canonical manifest paths</summary>
-public sealed record RepositoryReviewUnit(string Id, int Priority, string Rationale, IReadOnlyList<string> Paths, IReadOnlyList<string> SupportingPaths);
+public sealed record RepositoryReviewUnit(string Id, int Priority, string Rationale, IReadOnlyList<string> Paths, IReadOnlyList<string> SupportingPaths, bool ChangedLinesOnly = false);
 
 /// <summary>One validated adaptive deferral using a canonical manifest path</summary>
 public sealed record RepositoryReviewDeferral(string Path, string Reason);
@@ -55,6 +55,61 @@ public sealed record RepositoryReviewDeferral(string Path, string Reason);
 /// <summary>Validated controller plan with explicit fallback and coverage-repair state</summary>
 public sealed record RepositoryReviewPlan(string RepositorySummary, IReadOnlyList<RepositoryReviewUnit> Units, IReadOnlyList<RepositoryReviewDeferral> Deferred, IReadOnlyList<string> Uncertainties,
     bool UsedFallback, bool CoverageRepaired, IReadOnlyList<string> Diagnostics);
+
+/// <summary>Adds mandatory changed-content units for adaptive paths whose full-file deep review was deferred</summary>
+public static class RepositoryAdaptivePlan
+{
+    private const int MaxPathsPerMandatoryUnit = 50;
+
+    /// <summary>Returns the original exhaustive plan or an adaptive plan augmented with bounded mandatory changed-content units</summary>
+    public static RepositoryReviewPlan AddMandatoryChangedContent(RepositoryReviewPlan plan, IReadOnlyList<ChangedFile> files, ReviewStrategy strategy)
+    {
+        ArgumentNullException.ThrowIfNull(plan);
+        ArgumentNullException.ThrowIfNull(files);
+        if (strategy == ReviewStrategy.Exhaustive || plan.Deferred.Count == 0)
+        {
+            return plan;
+        }
+
+        StringComparer comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        Dictionary<string, ChangedFile> filesByPath = files.ToDictionary(file => file.Path, comparer);
+        string[] mandatoryPaths =
+        [
+            .. plan.Deferred
+                .Select(item => item.Path)
+                .Where(path => filesByPath.TryGetValue(path, out ChangedFile? file) && file.Kind != ChangeKind.FullReview)
+                .OrderBy(path => path, StringComparer.Ordinal)
+        ];
+        if (mandatoryPaths.Length == 0)
+        {
+            return plan;
+        }
+
+        var mandatoryUnits = new List<RepositoryReviewUnit>();
+        foreach (IGrouping<string, string> group in mandatoryPaths.GroupBy(TopLevelDirectory, StringComparer.Ordinal))
+        {
+            string[] paths = [.. group];
+            for (int index = 0; index < paths.Length; index += MaxPathsPerMandatoryUnit)
+            {
+                string[] unitPaths = paths[index..Math.Min(index + MaxPathsPerMandatoryUnit, paths.Length)];
+                mandatoryUnits.Add(new RepositoryReviewUnit($"mandatory-changes-{mandatoryUnits.Count + 1:D3}", 95,
+                    "Mandatory changed-line coverage for paths deferred from adaptive deep review", unitPaths, [], ChangedLinesOnly: true));
+            }
+        }
+
+        return plan with
+        {
+            Units = [.. plan.Units, .. mandatoryUnits],
+            Diagnostics = [.. plan.Diagnostics, $"controller added {mandatoryUnits.Count} units covering changed content in {mandatoryPaths.Length} adaptively deferred paths"]
+        };
+    }
+
+    private static string TopLevelDirectory(string path)
+    {
+        int separator = path.IndexOf('/');
+        return separator < 0 ? "" : path[..separator];
+    }
+}
 
 /// <summary>Parses untrusted model plans, validates all paths and bounds, and repairs coverage deterministically</summary>
 public static class RepositoryReviewPlanValidator
@@ -116,9 +171,14 @@ public static class RepositoryReviewPlanValidator
         }
 
         ValidateText(proposed.RepositorySummary, nameof(proposed.RepositorySummary), limits.MaxTextCharacters);
-        if (proposed.Units is null || proposed.Units.Count == 0)
+        if (proposed.Units is null)
         {
-            throw new PlanValidationException("planning response did not contain any review units");
+            throw new PlanValidationException("planning response did not contain a review-units array");
+        }
+
+        if (proposed.Units.Count == 0 && (!allowDeferrals || proposed.Deferred is not { Count: > 0 }))
+        {
+            throw new PlanValidationException("planning response contained neither review units nor adaptive deferrals");
         }
 
         if (proposed.Units.Count > limits.MaxUnits)

@@ -57,6 +57,10 @@ public sealed class InformantConfig
     [JsonConverter(typeof(JsonStringEnumConverter<ReviewMode>))]
     public ReviewMode ReviewMode { get; init; } = ReviewMode.Changed;
 
+    /// <summary>Whether every candidate receives deep review or full-file review may be adaptively deferred</summary>
+    [JsonConverter(typeof(JsonStringEnumConverter<ReviewStrategy>))]
+    public ReviewStrategy ReviewStrategy { get; init; } = ReviewStrategy.Exhaustive;
+
     /// <summary>Directory the run reports and changed-file lists are written to, resolved from the configuration directory when relative</summary>
     public string ReportDirectory
     {
@@ -84,7 +88,9 @@ public sealed class InformantConfig
         init => _reviewPromptFile = value;
     }
 
-    /// <summary>Glob patterns for Markdown guidance files appended to the review prompt. Relative patterns match at the working-tree root, so a repository's own AGENTS.md informs its review; absolute paths name exact files. Defaults to none; the starter config opts in with AGENTS.md</summary>
+    /// <summary>
+    /// Glob patterns for Markdown guidance appended to the review prompt, with relative patterns rooted in the working tree and absolute patterns naming exact files.
+    /// </summary>
     public IReadOnlyList<string> PromptIncludeFiles { get; init; } = [];
 
     /// <summary>Repository-relative files, directories, or glob patterns prioritized as initial planning context without expanding the read boundary or context budget</summary>
@@ -165,7 +171,7 @@ public sealed class InformantConfig
         return config;
     }
 
-    /// <summary>Assembles the review prompt: the base (inline text, else prompt file, else the built-in default) plus every Markdown guidance file matched by <see cref="PromptIncludeFiles"/> in the working tree</summary>
+    /// <summary>Assembles the selected base prompt plus every Markdown guidance file matched by <see cref="PromptIncludeFiles"/> in the working tree</summary>
     public string ResolveReviewPrompt(string workingTreePath)
     {
         var builder = new StringBuilder(ResolveBasePrompt().TrimEnd());
@@ -271,7 +277,8 @@ public sealed class InformantConfig
 
         if (!Path.IsPathFullyQualified(WorkingTreePath))
         {
-            throw new InformantFatalException($"workingTreePath must be an absolute path, got '{WorkingTreePath}'. Informant only operates destructively on an explicitly configured absolute tree, never on the current directory");
+            throw new InformantFatalException($"workingTreePath must be an absolute path, got '{WorkingTreePath}'. "
+                + "Informant only operates destructively on an explicitly configured absolute tree, never on the current directory");
         }
 
         if (!File.Exists(GitExecutablePath))

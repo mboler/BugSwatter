@@ -127,6 +127,26 @@ public sealed class RepositoryReviewPlanValidatorTests
         Assert.Equal(Candidates.Count, plan.Units.Sum(unit => unit.Paths.Count));
     }
 
+    /// <summary>Verifies adaptive planning may explicitly defer every non-mandatory candidate without forcing exhaustive fallback</summary>
+    [Fact]
+    public void AdaptivePlanMayExplicitlyDeferEveryCandidate()
+    {
+        string json = JsonSerializer.Serialize(new
+        {
+            version = 1,
+            repositorySummary = "deferred pass",
+            units = Array.Empty<object>(),
+            deferred = Candidates.Select(path => new { path, reason = "not selected for this adaptive pass" }).ToArray(),
+            uncertainties = Array.Empty<string>()
+        });
+
+        RepositoryReviewPlan plan = RepositoryReviewPlanValidator.ValidateOrFallback(json, CreateManifest(), Candidates, [], allowDeferrals: true);
+
+        Assert.False(plan.UsedFallback);
+        Assert.Empty(plan.Units);
+        Assert.Equal(Candidates, plan.Deferred.Select(item => item.Path));
+    }
+
     /// <summary>Verifies an oversized model response is rejected before JSON parsing and receives deterministic fallback</summary>
     [Fact]
     public void PlanCharacterLimitForcesFallback()

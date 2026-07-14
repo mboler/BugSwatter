@@ -349,16 +349,16 @@ Planned commit: `Review related files in bounded clusters`
 
 ### Phase 5: Adaptive strategy and coverage ledger
 
-- [ ] Add the `exhaustive` and `adaptive` strategy configuration
-- [ ] Keep exhaustive as the compatibility default
-- [ ] Enforce mandatory changed-content coverage in adaptive incremental runs
-- [ ] Record selected, deep-reviewed, deferred, excluded, failed, and partial paths
-- [ ] Implement the approved adaptive baseline rule
-- [ ] Update Markdown and JSON reports without embedding the detailed trace
-- [ ] Add tests proving reports never overstate adaptive coverage
-- [ ] Add tests for first run, large incremental run, full sweep, no-change run, failure, retry, and baseline advancement
-- [ ] Build the solution and run the complete test suite
-- [ ] Update this document with results
+- [x] Add the `exhaustive` and `adaptive` strategy configuration
+- [x] Keep exhaustive as the compatibility default
+- [x] Enforce mandatory changed-content coverage in adaptive incremental runs
+- [x] Record selected, deep-reviewed, deferred, excluded, failed, and partial paths
+- [x] Implement the approved adaptive baseline rule
+- [x] Update Markdown and JSON reports without embedding the detailed trace
+- [x] Add tests proving reports never overstate adaptive coverage
+- [x] Add tests for first run, large incremental run, full sweep, no-change run, failure, retry, and baseline advancement
+- [x] Build the solution and run the complete test suite
+- [x] Update this document with results
 
 Planned commit: `Add adaptive review strategy and coverage ledger`
 
@@ -462,3 +462,4 @@ At minimum, automated coverage must include:
 | 2026-07-14 | 2 | Complete | Manifest-gated live reads now verify path, type, size, line count, and SHA-256 content; tool results have explicit line and character bounds; controller selections and model tool activity are written to a metadata-only retained JSONL trace; 571 tests ran, 565 passed, and 6 opt-in live tests skipped | `Audit and bound model file requests` |
 | 2026-07-14 | 3 | Complete | Added safe repository-relative path syntax in Common, validated seed paths, code-agnostic role-ranked briefings, bounded exact-path manifest partitions, deterministic whole-block context packing, and a versioned plan validator with fallback and coverage repair; production orchestration remains unchanged until Phase 4; solution build has zero warnings; 603 tests ran, 597 passed, and 6 opt-in live tests skipped | `Add code-agnostic repository planning` |
 | 2026-07-14 | 4 | Complete | Replaced isolated production file calls with bounded manifest planning and sequential clustered units; invalid planning falls back without reducing exhaustive coverage; whole units restart on primary-model failover; completed units persist immediately and aggregate back to the existing per-file baseline and second-opinion contract; scripted tool-call, response attribution, malformed-severity, coverage, and failover tests were added; solution build has zero warnings; 618 tests ran, 612 passed, and 6 opt-in live tests skipped | `Review related files in bounded clusters` |
+| 2026-07-14 | 5 | Complete | Added exhaustive and adaptive strategy selection with exhaustive as the default; adaptive deferrals receive mandatory changed-line windows with surrounding context; metadata-only coverage artifacts distinguish deep, mandatory-change, deferred, excluded, failed, and partial outcomes; reports state adaptive limitations and baseline advancement now follows the approved coverage rule; solution build has zero warnings; 632 tests ran, 626 passed, and 6 opt-in live tests skipped | `Add adaptive review strategy and coverage ledger` |

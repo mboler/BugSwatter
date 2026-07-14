@@ -40,7 +40,8 @@ public sealed class ReportWriter
     public string ReportPath => _path;
 
     /// <summary>Writes the deterministic metadata header; counts, duration and completion time carry pending markers until <see cref="Finalize"/></summary>
-    public void WriteHeader(string repositoryUrl, string branch, ReviewMode mode, string? baselineSha, string tipSha, DateTimeOffset startedAt)
+    public void WriteHeader(string repositoryUrl, string branch, ReviewMode mode, string? baselineSha, string tipSha, DateTimeOffset startedAt,
+        ReviewStrategy strategy = ReviewStrategy.Exhaustive)
     {
         _startedAt = startedAt;
 
@@ -55,7 +56,8 @@ public sealed class ReportWriter
         builder.AppendLine($"| Repository | {repositoryUrl} |");
         builder.AppendLine($"| Branch | {branch} |");
         builder.AppendLine($"| Mode | {mode} |");
-        builder.AppendLine($"| Baseline SHA | {baselineSha ?? "(none; first run reviews everything)"} |");
+        builder.AppendLine($"| Strategy | {strategy} |");
+        builder.AppendLine($"| Baseline SHA | {baselineSha ?? "(none; first-run candidate universe is the full tree)"} |");
         builder.AppendLine($"| Reviewed tip SHA | {tipSha} |");
         builder.AppendLine($"| Review model | {_modelName} |");
         builder.AppendLine($"| Model endpoint | {_modelEndpoint} |");
@@ -114,6 +116,7 @@ public sealed class ReportWriter
                 FileReviewStatus.NotReviewable => $"NOT REVIEWABLE: {result.SkipReason}",
                 FileReviewStatus.Failed => $"FAILED: {result.SkipReason}",
                 FileReviewStatus.Partial => $"PARTIAL: remainder not reviewed, {result.SkipReason}",
+                FileReviewStatus.Deferred => $"DEFERRED: {result.SkipReason}",
                 _ => result.SkipReason
             });
             builder.AppendLine();
@@ -223,6 +226,52 @@ public sealed class ReportWriter
             foreach (ReviewUnitPart part in result.Unit.Parts)
             {
                 builder.AppendLine($"- {part.File.Path}, part {part.PartNumber} of {part.TotalParts}, lines {part.StartLine}-{part.EndLine}");
+            }
+
+            builder.AppendLine();
+        }
+
+        builder.AppendLine("---");
+        builder.AppendLine();
+        File.AppendAllText(_path, builder.ToString());
+    }
+
+    /// <summary>Appends the metadata-only coverage ledger summary and names every adaptively deferred path</summary>
+    public void AppendCoverageSummary(ReviewCoverageLedger coverage, string coverageFileName)
+    {
+        ArgumentNullException.ThrowIfNull(coverage);
+        ArgumentException.ThrowIfNullOrWhiteSpace(coverageFileName);
+
+        var builder = new StringBuilder();
+        builder.AppendLine("## Review coverage");
+        builder.AppendLine();
+        builder.AppendLine($"Coverage artifact: `{coverageFileName}`");
+        builder.AppendLine();
+        builder.AppendLine($"Strategy: {coverage.Strategy}");
+        builder.AppendLine();
+        builder.AppendLine($"Selected for deep review: {coverage.SelectedCount}");
+        builder.AppendLine();
+        builder.AppendLine($"Deep reviewed: {coverage.DeepReviewedCount}");
+        builder.AppendLine();
+        builder.AppendLine($"Mandatory changed content reviewed after deep-review deferral: {coverage.MandatoryChangesReviewedCount}");
+        builder.AppendLine();
+        builder.AppendLine($"Deferred without mandatory changed content: {coverage.DeferredCount}");
+        builder.AppendLine();
+        builder.AppendLine($"Excluded: {coverage.ExcludedCount}; partial: {coverage.PartialCount}; failed: {coverage.FailedCount}");
+        builder.AppendLine();
+        if (coverage.Strategy == ReviewStrategy.Adaptive)
+        {
+            builder.AppendLine("Adaptive coverage does not claim every file was deeply reviewed. Deferred files may contain issues the selected review units did not expose.");
+            builder.AppendLine();
+        }
+
+        ReviewCoverageEntry[] deferred = [.. coverage.Entries.Where(entry => entry.DeepReviewDeferred)];
+        if (deferred.Length > 0)
+        {
+            builder.AppendLine("Deep-review deferrals:");
+            foreach (ReviewCoverageEntry entry in deferred)
+            {
+                builder.AppendLine($"- {entry.Path}: {entry.Outcome}{(string.IsNullOrWhiteSpace(entry.Reason) ? "" : $"; {entry.Reason}")}");
             }
 
             builder.AppendLine();

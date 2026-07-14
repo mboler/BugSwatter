@@ -212,13 +212,15 @@ public static class ClusteredReviewResponseParser
 public static class ClusteredReviewResultAggregator
 {
     /// <summary>Builds one final file result in original detection order for reporting, second opinion, and baseline decisions</summary>
-    public static IReadOnlyList<FileReviewResult> Build(IReadOnlyList<ChangedFile> files, ClusteredReviewBuild build, IReadOnlyList<ReviewUnitResult> unitResults)
+    public static IReadOnlyList<FileReviewResult> Build(IReadOnlyList<ChangedFile> files, ClusteredReviewBuild build, IReadOnlyList<ReviewUnitResult> unitResults,
+        IReadOnlyList<RepositoryReviewDeferral>? deferrals = null)
     {
         ArgumentNullException.ThrowIfNull(files);
         ArgumentNullException.ThrowIfNull(build);
         ArgumentNullException.ThrowIfNull(unitResults);
 
         StringComparer comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        Dictionary<string, string> deferred = (deferrals ?? []).ToDictionary(item => item.Path, item => item.Reason, comparer);
         Dictionary<string, FileReviewResult> immediate = build.ImmediateResults.ToDictionary(result => result.File.Path, comparer);
         var successes = new Dictionary<string, (ReviewUnitPartResult Part, ReviewUnitResult Unit)>(StringComparer.Ordinal);
         var failures = build.PartFailures.ToDictionary(failure => failure.Part.Id, failure => failure.Reason, StringComparer.Ordinal);
@@ -252,20 +254,32 @@ public static class ClusteredReviewResultAggregator
             ReviewUnitPart[] parts = [.. build.Parts.Where(part => comparer.Equals(part.File.Path, file.Path)).OrderBy(part => part.PartNumber)];
             if (parts.Length == 0)
             {
-                results.Add(new FileReviewResult(file, FileReviewStatus.Failed, null, 0, 0, "validated review plan produced no source part", FailureKind: FileReviewFailureKind.Repository));
+                if (deferred.TryGetValue(file.Path, out string? deferralReason))
+                {
+                    results.Add(new FileReviewResult(file, FileReviewStatus.Deferred, null, 0, 0, $"deep review deferred: {deferralReason}"));
+                }
+                else
+                {
+                    results.Add(new FileReviewResult(file, FileReviewStatus.Failed, null, 0, 0, "validated review plan produced no source part", FailureKind: FileReviewFailureKind.Repository));
+                }
+
                 continue;
             }
 
             List<(ReviewUnitPartResult Part, ReviewUnitResult Unit)> completed = [.. parts.Where(part => successes.ContainsKey(part.Id)).Select(part => successes[part.Id])];
-            FileReviewStatus status = completed.Count == parts.Length ? FileReviewStatus.Reviewed : completed.Count == 0 ? FileReviewStatus.Failed : FileReviewStatus.Partial;
+            bool complete = completed.Count == parts.Length;
+            bool deepReviewDeferred = deferred.TryGetValue(file.Path, out string? deepReviewReason);
+            FileReviewStatus status = complete ? deepReviewDeferred ? FileReviewStatus.Deferred : FileReviewStatus.Reviewed : completed.Count == 0 ? FileReviewStatus.Failed : FileReviewStatus.Partial;
             string? findings = BuildFindings(parts, completed);
             Severity severity = completed.Select(result => result.Part.CandidateSeverity).DefaultIfEmpty(Severity.None).Max();
-            bool severityDetermined = status == FileReviewStatus.Reviewed && completed.All(result => result.Part.CandidateSeverityDetermined);
-            string? reason = status == FileReviewStatus.Reviewed ? null : BuildFailureReason(parts, failures, completed.Count);
+            bool severityDetermined = complete && completed.All(result => result.Part.CandidateSeverityDetermined);
+            string? reason = complete
+                ? deepReviewDeferred ? $"deep review deferred: {deepReviewReason}; mandatory changed content reviewed" : null
+                : BuildFailureReason(parts, failures, completed.Count);
             string? modelNames = JoinModels(completed.Select(result => result.Unit.ReviewModelName));
             string? modelProfiles = JoinModels(completed.Select(result => result.Unit.ReviewModelProfile));
             results.Add(new FileReviewResult(file, status, findings, completed.Count, parts.Length, reason, severity, severityDetermined,
-                status == FileReviewStatus.Reviewed ? FileReviewFailureKind.None : FileReviewFailureKind.Model, modelNames, modelProfiles));
+                complete ? FileReviewFailureKind.None : FileReviewFailureKind.Model, modelNames, modelProfiles));
         }
 
         return results;

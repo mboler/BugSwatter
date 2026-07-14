@@ -52,4 +52,36 @@ public sealed class ReviewTraceWriterTests : IDisposable
         Assert.DoesNotContain("authorization", jsonl, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("apiKey", jsonl, StringComparison.OrdinalIgnoreCase);
     }
+
+    /// <summary>Verifies planning, unit, and coverage events contain counts and outcomes without prompts, source, findings, or deferral reasons</summary>
+    [Fact]
+    public void WritesMetadataOnlyPlanningUnitAndCoverageEvents()
+    {
+        var target = new PrimaryModelTarget("primary", "http://model.test/v1", "model", false);
+        var file = new ChangedFile("src/One.cs", ChangeKind.Modified, [new LineRange(1, 1)]);
+        var part = new ReviewUnitPart("part-000001", file, 1, 1, 1, 1, "SECRET SOURCE", 13);
+        var unit = new ReviewExecutionUnit("unit-1", "SECRET RATIONALE", [], [part], "SECRET PROMPT");
+        var plan = new RepositoryReviewPlan("summary", [new RepositoryReviewUnit("unit-1", 1, "rationale", [file.Path], [])], [], [], false, false, []);
+        var planning = new RepositoryPlanningResult(plan, 1, 1);
+        var unitResult = new ReviewUnitResult(unit, [new ReviewUnitPartResult(part, "SECRET FINDING", Severity.None, true)], FileReviewFailureKind.None, null, "model", "primary");
+        var coverage = new ReviewCoverageLedger(ReviewStrategy.Exhaustive,
+            [new ReviewCoverageEntry(file.Path, file.Kind, true, false, false, ReviewCoverageOutcome.DeepReviewed, "SECRET REASON")]);
+        string path;
+
+        using (var writer = new ReviewTraceWriter(_reports.Path, "2026-07-14_13-00-00"))
+        {
+            writer.WritePlanningCompleted(planning, plan, target);
+            writer.WriteReviewUnitStarted(unit, target);
+            writer.WriteReviewUnitCompleted(unitResult, TimeSpan.FromSeconds(2));
+            writer.WriteCoverageCreated(coverage);
+            path = writer.TracePath;
+        }
+
+        string jsonl = File.ReadAllText(path);
+        Assert.Contains("planning_completed", jsonl);
+        Assert.Contains("review_unit_started", jsonl);
+        Assert.Contains("review_unit_completed", jsonl);
+        Assert.Contains("coverage_created", jsonl);
+        Assert.DoesNotContain("SECRET", jsonl);
+    }
 }

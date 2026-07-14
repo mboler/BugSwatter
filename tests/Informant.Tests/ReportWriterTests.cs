@@ -15,6 +15,7 @@ public sealed class ReportWriterTests : IDisposable
         Assert.Contains("# Informant Review Report", report);
         Assert.Contains("| Repository | https://example.test/repo.git |", report);
         Assert.Contains("| Branch | develop |", report);
+        Assert.Contains("| Strategy | Exhaustive |", report);
         Assert.Contains("| Baseline SHA | baseSha |", report);
         Assert.Contains("| Reviewed tip SHA | tipSha |", report);
         Assert.Contains("| Review model | test-model |", report);
@@ -32,7 +33,7 @@ public sealed class ReportWriterTests : IDisposable
     {
         ReportWriter writer = CreateWriter();
         writer.WriteHeader("repo", "main", ReviewMode.Changed, null, "tip", DateTimeOffset.Now);
-        Assert.Contains("(none; first run reviews everything)", File.ReadAllText(writer.ReportPath));
+        Assert.Contains("(none; first-run candidate universe is the full tree)", File.ReadAllText(writer.ReportPath));
     }
 
     [Fact]
@@ -82,6 +83,27 @@ public sealed class ReportWriterTests : IDisposable
         Assert.Contains("### src/Foo.cs, part 1 of 1, lines 1-2", report);
         Assert.Contains("cluster finding", report);
         Assert.Contains("Review model: primary (`model`)", report);
+    }
+
+    /// <summary>Verifies adaptive reports name deferrals and never claim complete-file coverage</summary>
+    [Fact]
+    public void AdaptiveCoverageSummaryNamesLimitationsAndDeferredPaths()
+    {
+        ReportWriter writer = CreateWriter();
+        writer.WriteHeader("repo", "main", ReviewMode.Full, "base", "tip", DateTimeOffset.Now, ReviewStrategy.Adaptive);
+        ReviewCoverageEntry[] entries =
+        [
+            new("src/Deep.cs", ChangeKind.FullReview, true, false, false, ReviewCoverageOutcome.DeepReviewed, null),
+            new("src/Deferred.cs", ChangeKind.FullReview, false, true, false, ReviewCoverageOutcome.Deferred, "not selected")
+        ];
+
+        writer.AppendCoverageSummary(new ReviewCoverageLedger(ReviewStrategy.Adaptive, entries), "Informant-Coverage-run.json");
+
+        string report = File.ReadAllText(writer.ReportPath);
+        Assert.Contains("| Strategy | Adaptive |", report);
+        Assert.Contains("does not claim every file was deeply reviewed", report);
+        Assert.Contains("src/Deferred.cs: Deferred; not selected", report);
+        Assert.Contains("Informant-Coverage-run.json", report);
     }
 
     [Fact]

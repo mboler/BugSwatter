@@ -17,7 +17,10 @@ public enum FileReviewStatus
     Failed,
 
     /// <summary>Some, but not all, reviewable parts completed</summary>
-    Partial
+    Partial,
+
+    /// <summary>Adaptive strategy completed mandatory changed-content work but deliberately omitted a full-file deep review</summary>
+    Deferred
 }
 
 /// <summary>Layer responsible for an unsuccessful file review, used to decide whether another model can recover it</summary>
@@ -52,6 +55,13 @@ public static class ReviewCompletion
     {
         ArgumentNullException.ThrowIfNull(results);
         return results.All(result => result.Status is FileReviewStatus.Reviewed or FileReviewStatus.NotReviewable);
+    }
+
+    /// <summary>Returns the strategy-aware baseline decision recorded by the final coverage ledger</summary>
+    public static bool CanAdvanceBaseline(ReviewCoverageLedger coverage)
+    {
+        ArgumentNullException.ThrowIfNull(coverage);
+        return coverage.CanAdvanceBaseline;
     }
 }
 

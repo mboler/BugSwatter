@@ -102,7 +102,8 @@ internal static class Program
         ApplyReportRetention(config);
 
         PrintDestructiveTreeWarning(config);
-        Log.Information("Informant run starting: repository {Repository}, branch {Branch}, mode {Mode}", config.RepositoryUrl, config.Branch, config.ReviewMode);
+        Log.Information("Informant run starting: repository {Repository}, branch {Branch}, mode {Mode}, strategy {Strategy}", config.RepositoryUrl, config.Branch, config.ReviewMode,
+            config.ReviewStrategy);
 
         var git = new GitRunner(config.GitExecutablePath);
         var tree = new WorkingTreeManager(git, config.RepositoryUrl, config.Branch, config.WorkingTreePath);
@@ -145,7 +146,7 @@ internal static class Program
 
         IReadOnlyList<PrimaryModelTarget> modelTargets = config.GetPrimaryModelTargets();
         var report = new ReportWriter(config.ReportDirectory, runStamp, config.ModelName, config.ModelEndpoint, config.MaxContextCharacters, config.MaxFileLines, modelTargets, trace.TraceFileName);
-        report.WriteHeader(config.RepositoryUrl, config.Branch, config.ReviewMode, baselineSha, tipSha, startedAt);
+        report.WriteHeader(config.RepositoryUrl, config.Branch, config.ReviewMode, baselineSha, tipSha, startedAt, config.ReviewStrategy);
 
         progress.ReportPhase("Verifying primary model", config.ModelName, "primary");
         string reviewPrompt = config.ResolveReviewPrompt(config.WorkingTreePath);
@@ -157,14 +158,18 @@ internal static class Program
         int manifestPartitionCharacters = Math.Max(256, config.MaxContextCharacters / 4);
         RepositoryBriefing briefing = new RepositoryBriefingBuilder().Build(manifest, config.SeedPaths, manifestPartitionCharacters);
         string[] candidatePaths = [.. manifest.Entries.Where(entry => entry.ChangeKind is not null && entry.Reviewable).Select(entry => entry.Path)];
+        bool allowDeferrals = config.ReviewStrategy == ReviewStrategy.Adaptive;
+        IReadOnlyCollection<string> mandatoryPlanningPaths = allowDeferrals ? [] : candidatePaths;
         var planner = new RepositoryReviewPlanner(config.MaxContextCharacters);
-        RepositoryPlanningResult planning = await planner.PlanAsync(manifest, briefing, candidatePaths, candidatePaths, allowDeferrals: false, reviewer.PlanAsync);
+        RepositoryPlanningResult planning = await planner.PlanAsync(manifest, briefing, candidatePaths, mandatoryPlanningPaths, allowDeferrals, reviewer.PlanAsync);
+        RepositoryReviewPlan reviewPlan = RepositoryAdaptivePlan.AddMandatoryChangedContent(planning.Plan, files, config.ReviewStrategy);
+        trace.WritePlanningCompleted(planning, reviewPlan, reviewer.ActiveTarget!);
         Log.Information("Repository planning produced {Units} units across {Batches} batches, with {ModelBatches} model calls, fallback {Fallback}, coverage repair {CoverageRepair}",
-            planning.Plan.Units.Count, planning.BatchCount, planning.ModelBatchCount, planning.Plan.UsedFallback, planning.Plan.CoverageRepaired);
+            reviewPlan.Units.Count, planning.BatchCount, planning.ModelBatchCount, reviewPlan.UsedFallback, reviewPlan.CoverageRepaired);
 
         var sourceLoader = new RepositoryReviewSourceLoader(config.WorkingTreePath, config.MaxFileBytes, git);
-        var unitBuilder = new ClusteredReviewUnitBuilder(sourceLoader, config.MaxFileLines, config.MaxContextCharacters, reviewPrompt, planning.Plan.RepositorySummary);
-        ClusteredReviewBuild reviewBuild = await unitBuilder.BuildAsync(planning.Plan, files);
+        var unitBuilder = new ClusteredReviewUnitBuilder(sourceLoader, config.MaxFileLines, config.MaxContextCharacters, reviewPrompt, reviewPlan.RepositorySummary);
+        ClusteredReviewBuild reviewBuild = await unitBuilder.BuildAsync(reviewPlan, files);
         foreach (FileReviewResult immediateResult in reviewBuild.ImmediateResults)
         {
             report.AppendFileSection(immediateResult);
@@ -178,20 +183,27 @@ internal static class Program
             Log.Information("Reviewing clustered unit {Unit} ({Position}/{Count}) with {Parts} source parts", unit.Id, index + 1, reviewBuild.Units.Count, unit.Parts.Count);
             PrimaryModelTarget activeTarget = reviewer.ActiveTarget ?? modelTargets[^1];
             progress.ReportFile("Primary clustered review", activeTarget.ModelName, activeTarget.Name, unit.Id, index + 1, reviewBuild.Units.Count);
+            trace.WriteReviewUnitStarted(unit, activeTarget);
 
+            var unitStopwatch = Stopwatch.StartNew();
             ReviewUnitResult unitResult = await reviewer.ReviewUnitAsync(unit);
+            trace.WriteReviewUnitCompleted(unitResult, unitStopwatch.Elapsed);
             report.AppendReviewUnitSection(unitResult);
             unitResults.Add(unitResult);
         }
 
-        IReadOnlyList<FileReviewResult> results = ClusteredReviewResultAggregator.Build(files, reviewBuild, unitResults);
+        IReadOnlyList<FileReviewResult> results = ClusteredReviewResultAggregator.Build(files, reviewBuild, unitResults, reviewPlan.Deferred);
         HashSet<string> buildFailurePaths = reviewBuild.PartFailures.Select(failure => failure.Part.File.Path)
             .ToHashSet(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
-        foreach (FileReviewResult result in results.Where(result => buildFailurePaths.Contains(result.File.Path)))
+        foreach (FileReviewResult result in results.Where(result => buildFailurePaths.Contains(result.File.Path) || result.Status == FileReviewStatus.Deferred))
         {
             report.AppendFileSection(result with { Findings = null });
         }
 
+        ReviewCoverageLedger coverage = ReviewCoverageLedger.Create(config.ReviewStrategy, files, reviewPlan, results);
+        string coveragePath = ReviewCoverageLedgerFile.Write(config.ReportDirectory, runStamp, coverage);
+        trace.WriteCoverageCreated(coverage);
+        report.AppendCoverageSummary(coverage, Path.GetFileName(coveragePath));
         int reviewedCount = results.Count(result => result.FullyReviewed);
         IReadOnlyList<(string Path, string Reason)> skipped =
         [
@@ -202,7 +214,7 @@ internal static class Program
 
         progress.ReportPhase("Writing primary report");
         report.Finalize(reviewedCount, skipped, stopwatch.Elapsed, reviewer.Failures);
-        bool baselineAdvanced = ReviewCompletion.CanAdvanceBaseline(results);
+        bool baselineAdvanced = ReviewCompletion.CanAdvanceBaseline(coverage);
         if (baselineAdvanced)
         {
             state.SetBaseline(config.RepositoryUrl, config.Branch, tipSha);
@@ -392,7 +404,7 @@ internal static class Program
             // Optionally also look at files the local reviewer could not review, so a changed file the first model skipped is not left silently unreviewed
             if (secondOpinion.ReviewSkippedFiles)
             {
-                toValidate.AddRange(results.Where(result => result.Findings is null && result.SkipReason is not null));
+                toValidate.AddRange(results.Where(result => result.Status != FileReviewStatus.Deferred && result.Findings is null && result.SkipReason is not null));
             }
 
             if (toValidate.Count == 0)

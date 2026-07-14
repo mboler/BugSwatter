@@ -105,6 +105,21 @@ public sealed record ReviewTraceRecord
 
     /// <summary>Selected manifest entry count for a manifest event</summary>
     public int? ManifestSelectedCount { get; init; }
+
+    /// <summary>Number of planning batches represented by an event</summary>
+    public int? PlanningBatchCount { get; init; }
+
+    /// <summary>Number of planning batches sent to a model</summary>
+    public int? ModelPlanningBatchCount { get; init; }
+
+    /// <summary>Number of review units represented by an event</summary>
+    public int? ReviewUnitCount { get; init; }
+
+    /// <summary>Number of source parts represented by an event</summary>
+    public int? ReviewUnitPartCount { get; init; }
+
+    /// <summary>Number of candidate paths represented by an event</summary>
+    public int? PathCount { get; init; }
 }
 
 /// <summary>Appends metadata-only review events to a retention-managed JSONL artifact</summary>
@@ -171,6 +186,75 @@ public sealed class ReviewTraceWriter : IDisposable
             ManifestReviewableCount = manifest.ReviewableCount,
             ManifestExcludedCount = manifest.ExcludedCount,
             ManifestSelectedCount = manifest.SelectedCount
+        });
+    }
+
+    /// <summary>Records bounded planning counts and controller fallback state without storing prompts or model output</summary>
+    public void WritePlanningCompleted(RepositoryPlanningResult planning, RepositoryReviewPlan finalPlan, PrimaryModelTarget target)
+    {
+        ArgumentNullException.ThrowIfNull(planning);
+        ArgumentNullException.ThrowIfNull(finalPlan);
+        ArgumentNullException.ThrowIfNull(target);
+        Write(new ReviewTraceRecord
+        {
+            EventType = "planning_completed",
+            ModelName = target.ModelName,
+            ProfileName = target.Name,
+            PlanningBatchCount = planning.BatchCount,
+            ModelPlanningBatchCount = planning.ModelBatchCount,
+            ReviewUnitCount = finalPlan.Units.Count,
+            PathCount = finalPlan.Units.SelectMany(unit => unit.Paths).Distinct(StringComparer.Ordinal).Count(),
+            Outcome = finalPlan.UsedFallback ? "Fallback" : finalPlan.CoverageRepaired ? "CoverageRepaired" : "Planned"
+        });
+    }
+
+    /// <summary>Records the start of one clustered review unit without storing source or prompt text</summary>
+    public void WriteReviewUnitStarted(ReviewExecutionUnit unit, PrimaryModelTarget target)
+    {
+        ArgumentNullException.ThrowIfNull(unit);
+        ArgumentNullException.ThrowIfNull(target);
+        Write(new ReviewTraceRecord
+        {
+            EventType = "review_unit_started",
+            ModelName = target.ModelName,
+            ProfileName = target.Name,
+            UnitId = unit.Id,
+            ReviewUnitPartCount = unit.Parts.Count,
+            PathCount = unit.Parts.Select(part => part.File.Path).Distinct(StringComparer.Ordinal).Count()
+        });
+    }
+
+    /// <summary>Records one clustered review-unit outcome without storing model findings</summary>
+    public void WriteReviewUnitCompleted(ReviewUnitResult result, TimeSpan duration)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        Write(new ReviewTraceRecord
+        {
+            EventType = "review_unit_completed",
+            ModelName = result.ReviewModelName,
+            ProfileName = result.ReviewModelProfile,
+            UnitId = result.Unit.Id,
+            ReviewUnitPartCount = result.Unit.Parts.Count,
+            PathCount = result.Unit.Parts.Select(part => part.File.Path).Distinct(StringComparer.Ordinal).Count(),
+            Outcome = result.Succeeded ? "Reviewed" : "Failed",
+            ReasonCode = result.Succeeded ? null : result.FailureKind.ToString(),
+            DurationMilliseconds = (long)duration.TotalMilliseconds
+        });
+    }
+
+    /// <summary>Records aggregate coverage counts without storing source, findings, or path-specific reasons</summary>
+    public void WriteCoverageCreated(ReviewCoverageLedger coverage)
+    {
+        ArgumentNullException.ThrowIfNull(coverage);
+        Write(new ReviewTraceRecord
+        {
+            EventType = "coverage_created",
+            PathCount = coverage.Entries.Count,
+            ManifestSelectedCount = coverage.SelectedCount,
+            ManifestReviewableCount = coverage.DeepReviewedCount + coverage.MandatoryChangesReviewedCount,
+            ManifestExcludedCount = coverage.ExcludedCount,
+            Outcome = coverage.CanAdvanceBaseline ? "Complete" : "Incomplete",
+            ReasonCode = coverage.Strategy.ToString()
         });
     }
 

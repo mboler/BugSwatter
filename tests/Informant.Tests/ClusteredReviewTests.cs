@@ -206,6 +206,45 @@ public sealed class ClusteredReviewTests : IDisposable
         Assert.True(ReviewCompletion.CanAdvanceBaseline(results));
     }
 
+    /// <summary>Verifies mandatory adaptive coverage includes changed lines with bounded surrounding context instead of the entire deferred file</summary>
+    [Fact]
+    public async Task MandatoryChangedCoverageUsesFocusedLineWindows()
+    {
+        string[] lines = [.. Enumerable.Range(1, 100).Select(number => $"line {number}")];
+        Write("src/Focused.cs", string.Join('\n', lines));
+        var file = new ChangedFile("src/Focused.cs", ChangeKind.Modified, [new LineRange(50, 50)]);
+        var unit = new RepositoryReviewUnit("mandatory", 1, "changed content", [file.Path], [], ChangedLinesOnly: true);
+        var builder = new ClusteredReviewUnitBuilder(new RepositoryReviewSourceLoader(_directory.Path), 200, 12000, "system prompt", "repository summary");
+
+        ClusteredReviewBuild build = await builder.BuildAsync(Plan(unit), [file]);
+
+        ReviewUnitPart part = Assert.Single(build.Parts);
+        Assert.True(part.MandatoryChangedContent);
+        Assert.Equal(30, part.StartLine);
+        Assert.Equal(70, part.EndLine);
+        Assert.DoesNotContain("     1 | line 1", part.SourceBlock);
+        Assert.Contains("    50 | line 50", part.SourceBlock);
+    }
+
+    /// <summary>Verifies completed mandatory changed-content review remains labeled deferred rather than overstating full-file review</summary>
+    [Fact]
+    public void AggregatorLabelsMandatoryChangedCoverageAsDeferred()
+    {
+        var file = new ChangedFile("src/Focused.cs", ChangeKind.Modified, [new LineRange(50, 50)]);
+        ReviewUnitPart part = new("part-000001", file, 1, 1, 30, 70, "source", 100, MandatoryChangedContent: true);
+        ReviewExecutionUnit unit = Unit(part);
+        var build = new ClusteredReviewBuild([unit], [part], [], []);
+        var unitResult = new ReviewUnitResult(unit, [new ReviewUnitPartResult(part, "changed lines look safe", Severity.None, true)], FileReviewFailureKind.None, null);
+        RepositoryReviewDeferral[] deferrals = [new(file.Path, "lower priority")];
+
+        FileReviewResult result = Assert.Single(ClusteredReviewResultAggregator.Build([file], build, [unitResult], deferrals));
+
+        Assert.Equal(FileReviewStatus.Deferred, result.Status);
+        Assert.True(result.CandidateSeverityDetermined);
+        Assert.Contains("mandatory changed content reviewed", result.SkipReason);
+        Assert.False(result.FullyReviewed);
+    }
+
     private static RepositoryReviewPlan Plan(params RepositoryReviewUnit[] units) => new("repository", units, [], [], false, false, []);
 
     private static ChangedFile File(string path) => new(path, ChangeKind.FullReview, []);

@@ -3,7 +3,8 @@ using System.Text;
 namespace Informant;
 
 /// <summary>One contiguous source part supplied to a clustered model conversation</summary>
-public sealed record ReviewUnitPart(string Id, ChangedFile File, int PartNumber, int TotalParts, int StartLine, int EndLine, string SourceBlock, int ContentCharacters);
+public sealed record ReviewUnitPart(string Id, ChangedFile File, int PartNumber, int TotalParts, int StartLine, int EndLine, string SourceBlock, int ContentCharacters,
+    bool MandatoryChangedContent = false);
 
 /// <summary>One bounded sequential model conversation containing one or more related source parts</summary>
 public sealed record ReviewExecutionUnit(string Id, string Rationale, IReadOnlyList<string> SupportingPaths, IReadOnlyList<ReviewUnitPart> Parts, string UserPrompt);
@@ -20,6 +21,7 @@ public sealed class ClusteredReviewUnitBuilder
 {
     private const int InitialContextPercent = 55;
     private const int MinimumSourceBudget = 256;
+    private const int ChangedLineContext = 20;
 
     private readonly RepositoryReviewSourceLoader _sourceLoader;
     private readonly int _maxFileLines;
@@ -92,14 +94,14 @@ public sealed class ClusteredReviewUnitBuilder
                 }
 
                 string[] lines = prepared.Lines!;
-                IReadOnlyList<SourceChunk> chunks = SourceChunker.Split(lines, _maxFileLines, sourceBudget);
+                IReadOnlyList<SourceChunk> chunks = SelectChunks(file, lines, sourceBudget, plannedUnit.ChangedLinesOnly);
                 for (int index = 0; index < chunks.Count; index++)
                 {
                     SourceChunk chunk = chunks[index];
                     string partId = $"part-{++partSequence:D6}";
-                    string sourceBlock = BuildSourceBlock(partId, file, lines, chunk, index + 1, chunks.Count);
+                    string sourceBlock = BuildSourceBlock(partId, file, lines, chunk, index + 1, chunks.Count, plannedUnit.ChangedLinesOnly);
                     int contentCharacters = CountCharacters(lines, chunk);
-                    var part = new ReviewUnitPart(partId, file, index + 1, chunks.Count, chunk.StartLine, chunk.EndLine, sourceBlock, contentCharacters);
+                    var part = new ReviewUnitPart(partId, file, index + 1, chunks.Count, chunk.StartLine, chunk.EndLine, sourceBlock, contentCharacters, plannedUnit.ChangedLinesOnly);
                     plannedParts.Add(part);
                     allParts.Add(part);
                 }
@@ -206,7 +208,52 @@ public sealed class ClusteredReviewUnitBuilder
         return builder.ToString();
     }
 
-    private static string BuildSourceBlock(string partId, ChangedFile file, string[] lines, SourceChunk chunk, int partNumber, int totalParts)
+    private IReadOnlyList<SourceChunk> SelectChunks(ChangedFile file, string[] lines, int sourceBudget, bool changedLinesOnly)
+    {
+        if (!changedLinesOnly || file.ChangedRanges.Count == 0)
+        {
+            return SourceChunker.Split(lines, _maxFileLines, sourceBudget);
+        }
+
+        var windows = new List<LineRange>();
+        foreach (LineRange range in file.ChangedRanges.OrderBy(range => range.Start))
+        {
+            int start = Math.Max(1, range.Start - ChangedLineContext);
+            int end = Math.Min(lines.Length, range.End + ChangedLineContext);
+            if (start > end)
+            {
+                continue;
+            }
+
+            if (windows.Count > 0 && start <= windows[^1].End + 1)
+            {
+                windows[^1] = windows[^1] with { End = Math.Max(windows[^1].End, end) };
+            }
+            else
+            {
+                windows.Add(new LineRange(start, end));
+            }
+        }
+
+        if (windows.Count == 0)
+        {
+            return SourceChunker.Split(lines, _maxFileLines, sourceBudget);
+        }
+
+        var chunks = new List<SourceChunk>();
+        foreach (LineRange window in windows)
+        {
+            string[] windowLines = lines[(window.Start - 1)..window.End];
+            foreach (SourceChunk localChunk in SourceChunker.Split(windowLines, _maxFileLines, sourceBudget))
+            {
+                chunks.Add(new SourceChunk(window.Start + localChunk.StartLine - 1, window.Start + localChunk.EndLine - 1, localChunk.HardCut));
+            }
+        }
+
+        return chunks;
+    }
+
+    private static string BuildSourceBlock(string partId, ChangedFile file, string[] lines, SourceChunk chunk, int partNumber, int totalParts, bool changedLinesOnly)
     {
         var builder = new StringBuilder();
         builder.AppendLine($"=== BUGSWATTER SOURCE {partId} ===");
@@ -214,6 +261,11 @@ public sealed class ClusteredReviewUnitBuilder
         builder.AppendLine($"Change status: {file.Kind}");
         builder.AppendLine($"File part: {partNumber} of {totalParts}; lines {chunk.StartLine}-{chunk.EndLine}");
         builder.AppendLine($"Changed line ranges: {(file.ChangedRanges.Count == 0 ? "(entire file or deletion)" : string.Join(", ", file.ChangedRanges))}");
+        if (changedLinesOnly)
+        {
+            builder.AppendLine($"Coverage: mandatory changed lines with up to {ChangedLineContext} surrounding context lines; the full-file deep review was adaptively deferred.");
+        }
+
         if (file.Kind == ChangeKind.Deleted)
         {
             builder.AppendLine("This is immutable baseline content removed by the change. Review the effects of its deletion on surviving repository content.");

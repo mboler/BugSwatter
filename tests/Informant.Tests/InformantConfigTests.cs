@@ -17,6 +17,7 @@ public sealed class InformantConfigTests : IDisposable
         Assert.Equal("https://example.test/repo.git", config.RepositoryUrl);
         Assert.Equal("main", config.Branch);
         Assert.Equal(ReviewMode.Changed, config.ReviewMode);
+        Assert.Equal(ReviewStrategy.Exhaustive, config.ReviewStrategy);
         Assert.Equal(Path.Combine(_directory.Path, "reports"), config.ReportDirectory);
         Assert.Equal(31, config.ReportRetentionDays);
         Assert.Equal(Path.Combine(_directory.Path, "informant.state.json"), config.StateFilePath);
@@ -49,6 +50,15 @@ public sealed class InformantConfigTests : IDisposable
     {
         WriteConfig(values => values["reviewMode"] = "Full");
         Assert.Equal(ReviewMode.Full, InformantConfig.Load(_directory.Path).ReviewMode);
+    }
+
+    /// <summary>Verifies adaptive review strategy is explicitly configurable and case-insensitive</summary>
+    [Fact]
+    public void ParsesAdaptiveStrategyCaseInsensitively()
+    {
+        WriteConfig(values => values["reviewStrategy"] = "Adaptive");
+
+        Assert.Equal(ReviewStrategy.Adaptive, InformantConfig.Load(_directory.Path).ReviewStrategy);
     }
 
     [Fact]

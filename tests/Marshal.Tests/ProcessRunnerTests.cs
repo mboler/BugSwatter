@@ -42,4 +42,18 @@ public sealed class ProcessRunnerTests
         stopwatch.Stop();
         Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(30), $"shutdown took {stopwatch.Elapsed}, the child process tree was not stopped promptly");
     }
+
+    [Fact]
+    public async Task StandardOutputLinesAreReportedWhileOutputIsStillCaptured()
+    {
+        var lines = new List<string>();
+        ProcessRunResult result = OperatingSystem.IsWindows()
+            ? await InformantProcessRunner.RunProcessAsync("cmd.exe", ["/c", "echo first&echo second"], TimeSpan.FromSeconds(30), CancellationToken.None, lines.Add)
+            : await InformantProcessRunner.RunProcessAsync("/bin/sh", ["-c", "printf 'first\\nsecond\\n'"], TimeSpan.FromSeconds(30), CancellationToken.None, lines.Add);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(["first", "second"], lines);
+        Assert.Contains("first", result.StandardOutput);
+        Assert.Contains("second", result.StandardOutput);
+    }
 }

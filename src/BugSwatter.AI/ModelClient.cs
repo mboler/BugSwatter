@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -22,11 +23,12 @@ public sealed class ModelClient
     private readonly string? _apiKey;
     private readonly int _maxResponseBytes;
     private readonly ModelAuthentication _authentication;
+    private readonly Action<ModelCallProgress>? _progressObserver;
 
     /// <summary>Creates a client over an injected HttpClient; an optional API key is sent per request as a bearer token
     /// or api-key header so authenticated cloud endpoints work through the same client as local endpoints</summary>
     public ModelClient(HttpClient httpClient, string endpoint, string modelName, TimeSpan requestTimeout, string? apiKey = null,
-        int maxResponseBytes = DefaultMaxResponseBytes, ModelAuthentication authentication = ModelAuthentication.Bearer)
+        int maxResponseBytes = DefaultMaxResponseBytes, ModelAuthentication authentication = ModelAuthentication.Bearer, Action<ModelCallProgress>? progressObserver = null)
     {
         ArgumentNullException.ThrowIfNull(httpClient);
         ArgumentNullException.ThrowIfNull(endpoint);
@@ -59,10 +61,31 @@ public sealed class ModelClient
         _apiKey = apiKey;
         _maxResponseBytes = maxResponseBytes;
         _authentication = authentication;
+        _progressObserver = progressObserver;
     }
 
     /// <summary>Sends the conversation with the offered tools and returns the assistant message of the first choice</summary>
     public async Task<ChatMessage> CompleteAsync(IReadOnlyList<ChatMessage> messages, IReadOnlyList<ToolDefinition> tools, CancellationToken cancellationToken = default)
+    {
+        DateTimeOffset startedUtc = DateTimeOffset.UtcNow;
+        var stopwatch = Stopwatch.StartNew();
+        ReportProgress(new ModelCallProgress(ModelCallState.Started, _modelName, startedUtc, TimeSpan.Zero, null));
+
+        try
+        {
+            (ChatMessage message, ModelTokenUsage? usage) = await CompleteCoreAsync(messages, tools, cancellationToken);
+            ReportProgress(new ModelCallProgress(ModelCallState.Completed, _modelName, startedUtc, stopwatch.Elapsed, usage));
+            return message;
+        }
+        catch
+        {
+            // catch-all: every failed request reports a terminal telemetry event before the original exception continues unchanged
+            ReportProgress(new ModelCallProgress(ModelCallState.Failed, _modelName, startedUtc, stopwatch.Elapsed, null));
+            throw;
+        }
+    }
+
+    private async Task<(ChatMessage Message, ModelTokenUsage? Usage)> CompleteCoreAsync(IReadOnlyList<ChatMessage> messages, IReadOnlyList<ToolDefinition> tools, CancellationToken cancellationToken)
     {
         // Endpoints reject empty tool arrays, so a tool-free conversation omits both fields entirely
         var request = new ChatRequest { Model = _modelName, Messages = messages, Tools = tools.Count > 0 ? tools : null, ToolChoice = tools.Count > 0 ? "auto" : null };
@@ -122,7 +145,21 @@ public sealed class ModelClient
         }
 
         Log.Debug("Model reply: {ToolCallCount} tool calls, {ContentLength} content characters", message.ToolCalls?.Count ?? 0, message.Content?.Length ?? 0);
-        return message;
+        ModelTokenUsage? usage = parsed?.Usage is null ? null : new ModelTokenUsage(parsed.Usage.PromptTokens, parsed.Usage.CompletionTokens, parsed.Usage.TotalTokens);
+        return (message, usage);
+    }
+
+    private void ReportProgress(ModelCallProgress progress)
+    {
+        try
+        {
+            _progressObserver?.Invoke(progress);
+        }
+        catch (Exception ex)
+        {
+            // catch-all: optional telemetry must never change whether a model request succeeds or fails
+            Log.Warning("Model progress observer failed: {Reason}", ex.Message);
+        }
     }
 
     private async Task<string> ReadResponseBodyAsync(HttpContent content, CancellationToken cancellationToken)

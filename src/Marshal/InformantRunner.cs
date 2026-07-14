@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Text;
 using BugSwatter.Common;
 using Serilog;
 
@@ -26,12 +27,15 @@ public interface IInformantRunner
 public sealed class InformantProcessRunner : IInformantRunner
 {
     private readonly MarshalConfig _config;
+    private readonly CurrentReviewStatusStore _current;
 
     /// <summary>Creates a runner bound to the Marshal config</summary>
-    public InformantProcessRunner(MarshalConfig config)
+    public InformantProcessRunner(MarshalConfig config, CurrentReviewStatusStore current)
     {
         ArgumentNullException.ThrowIfNull(config);
+        ArgumentNullException.ThrowIfNull(current);
         _config = config;
+        _current = current;
     }
 
     /// <inheritdoc />
@@ -43,7 +47,8 @@ public sealed class InformantProcessRunner : IInformantRunner
 
         try
         {
-            ProcessRunResult result = await RunProcessAsync(_config.InformantExecutable, ["--config", job.InformantConfigPath], TimeSpan.FromMinutes(_config.PerRunTimeoutMinutes), cancellationToken);
+            ProcessRunResult result = await RunProcessAsync(_config.InformantExecutable, ["--config", job.InformantConfigPath, "--progress", "json"],
+                TimeSpan.FromMinutes(_config.PerRunTimeoutMinutes), cancellationToken, line => ApplyProgressLine(job.Name, line));
             string? reportPath = result.TimedOut ? null : ResolveReportPath(result.StandardOutput, job.InformantConfigPath, startedUtc);
             
             return new ReviewRunOutcome(result.ExitCode, stopwatch.Elapsed, result.TimedOut, reportPath, null);
@@ -62,7 +67,8 @@ public sealed class InformantProcessRunner : IInformantRunner
 
     /// <summary>Starts a process and waits for exit; when <paramref name="timeout"/> elapses first, the entire process tree is killed and the result is marked timed out</summary>
     /// <returns>The exit code on completion, or a null exit code with TimedOut set when the tree was killed</returns>
-    public static async Task<ProcessRunResult> RunProcessAsync(string fileName, IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken cancellationToken)
+    public static async Task<ProcessRunResult> RunProcessAsync(string fileName, IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken cancellationToken,
+        Action<string>? standardOutputLine = null)
     {
         var startInfo = new ProcessStartInfo { FileName = fileName, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         foreach (string argument in arguments)
@@ -71,7 +77,7 @@ public sealed class InformantProcessRunner : IInformantRunner
         }
 
         using var process = Process.Start(startInfo) ?? throw new MarshalFatalException($"Failed to start process {fileName}");
-        Task<string> stdoutTask = process.StandardOutput.ReadToEndAsync(CancellationToken.None);
+        Task<string> stdoutTask = ReadStandardOutputAsync(process.StandardOutput, standardOutputLine);
         Task<string> stderrTask = process.StandardError.ReadToEndAsync(CancellationToken.None);
 
         using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -104,6 +110,39 @@ public sealed class InformantProcessRunner : IInformantRunner
         }
 
         return new ProcessRunResult(process.ExitCode, false, standardOutput);
+    }
+
+    private void ApplyProgressLine(string jobName, string line)
+    {
+        if (ReviewProgressMarker.TryParse(line, out ReviewProgressSnapshot? progress))
+        {
+            _current.Apply(jobName, progress!);
+        }
+        else if (line.TrimStart().StartsWith(ReviewProgressMarker.Prefix, StringComparison.Ordinal))
+        {
+            Log.Debug("Ignored malformed or unsupported Informant progress for {Job}", jobName);
+        }
+    }
+
+    private static async Task<string> ReadStandardOutputAsync(StreamReader reader, Action<string>? lineObserver)
+    {
+        var output = new StringBuilder();
+        string? line;
+        while ((line = await reader.ReadLineAsync(CancellationToken.None)) is not null)
+        {
+            output.AppendLine(line);
+            try
+            {
+                lineObserver?.Invoke(line);
+            }
+            catch (Exception ex)
+            {
+                // catch-all: optional progress observation must never interrupt child supervision or report discovery
+                Log.Warning("Informant stdout observer failed: {Reason}", ex.Message);
+            }
+        }
+
+        return output.ToString();
     }
 
     private static void KillProcessTree(Process process)

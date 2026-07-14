@@ -57,6 +57,22 @@ internal sealed class StubHealthChecker : IEndpointHealthChecker
     }
 }
 
+/// <summary>Runner that exposes the dispatcher's unexpected-exception cleanup path</summary>
+internal sealed class ThrowingRunner : IInformantRunner
+{
+    private int _calls;
+
+    /// <summary>Number of attempted runs</summary>
+    public int Calls => Volatile.Read(ref _calls);
+
+    /// <inheritdoc />
+    public Task<ReviewRunOutcome> RunAsync(ReviewJobConfig job, CancellationToken cancellationToken)
+    {
+        Interlocked.Increment(ref _calls);
+        throw new InvalidOperationException("simulated runner failure");
+    }
+}
+
 public sealed class ReviewDispatcherTests
 {
     [Fact]
@@ -115,7 +131,7 @@ public sealed class ReviewDispatcherTests
 
         var queue = new ReviewQueue();
         var runner = new StubRunner();
-        var dispatcher = new ReviewDispatcher(queue, runner, new StubHealthChecker(), new BackoffTracker(TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(15)), history);
+        var dispatcher = new ReviewDispatcher(queue, runner, new StubHealthChecker(), new BackoffTracker(TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(15)), history, new CurrentReviewStatusStore());
 
         queue.Enqueue(new ReviewJobConfig { Name = "recorded", InformantConfigPath = @"C:\jobs\recorded\informant.json" }, "test-trigger");
         await dispatcher.StartAsync(CancellationToken.None);
@@ -128,6 +144,38 @@ public sealed class ReviewDispatcherTests
         Assert.Equal("test-trigger", entry.Trigger);
         Assert.Equal("completed", entry.Outcome);
         Assert.Equal(0, entry.ExitCode);
+    }
+
+    [Fact]
+    public async Task CurrentActivityExistsOnlyWhileTheRunnerIsActive()
+    {
+        var queue = new ReviewQueue();
+        var runner = new StubRunner { RunDuration = TimeSpan.FromMilliseconds(250) };
+        var current = new CurrentReviewStatusStore();
+        ReviewDispatcher dispatcher = CreateDispatcher(queue, runner, new StubHealthChecker(), current: current);
+
+        queue.Enqueue(new ReviewJobConfig { Name = "visible", InformantConfigPath = @"C:\jobs\visible\informant.json" }, "manual");
+        await dispatcher.StartAsync(CancellationToken.None);
+
+        await WaitUntilAsync(() => current.Snapshot() is not null, TimeSpan.FromSeconds(5));
+        Assert.Equal("Starting Informant", current.Snapshot()!.Phase);
+        await WaitUntilAsync(() => runner.TotalRuns == 1 && current.Snapshot() is null, TimeSpan.FromSeconds(10));
+        await dispatcher.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task UnexpectedRunnerFailureAlsoClearsCurrentActivity()
+    {
+        var queue = new ReviewQueue();
+        var runner = new ThrowingRunner();
+        var current = new CurrentReviewStatusStore();
+        ReviewDispatcher dispatcher = CreateDispatcher(queue, runner, new StubHealthChecker(), current: current);
+
+        queue.Enqueue(new ReviewJobConfig { Name = "broken", InformantConfigPath = @"C:\jobs\broken\informant.json" }, "manual");
+        await dispatcher.StartAsync(CancellationToken.None);
+
+        await WaitUntilAsync(() => runner.Calls == 1 && current.Snapshot() is null && queue.RunningJobName is null, TimeSpan.FromSeconds(5));
+        await dispatcher.StopAsync(CancellationToken.None);
     }
 
     [Fact]
@@ -153,8 +201,9 @@ public sealed class ReviewDispatcherTests
         Assert.True(checker.Calls >= 2, $"expected at least two health checks, saw {checker.Calls}");
     }
 
-    private static ReviewDispatcher CreateDispatcher(ReviewQueue queue, IInformantRunner runner, IEndpointHealthChecker checker, BackoffTracker? backoff = null) =>
-        new(queue, runner, checker, backoff ?? new BackoffTracker(TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(15)), new RunHistoryStore(Path.Combine(Path.GetTempPath(), "marshal-history-" + Guid.NewGuid().ToString("N") + ".jsonl")));
+    private static ReviewDispatcher CreateDispatcher(ReviewQueue queue, IInformantRunner runner, IEndpointHealthChecker checker, BackoffTracker? backoff = null, CurrentReviewStatusStore? current = null) =>
+        new(queue, runner, checker, backoff ?? new BackoffTracker(TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(15)),
+            new RunHistoryStore(Path.Combine(Path.GetTempPath(), "marshal-history-" + Guid.NewGuid().ToString("N") + ".jsonl")), current ?? new CurrentReviewStatusStore());
 
     private static async Task WaitUntilAsync(Func<bool> condition, TimeSpan timeout)
     {

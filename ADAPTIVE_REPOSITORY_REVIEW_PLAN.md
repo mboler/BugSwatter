@@ -292,14 +292,14 @@ Planned commit: `Document adaptive repository review overhaul`
 
 ### Phase 1: Per-run manifest and snapshot safety
 
-- [ ] Add manifest records and deterministic manifest builder in Informant
-- [ ] Recalculate after every managed-tree refresh
-- [ ] Detect text metadata without reading unsafe or unbounded bodies
-- [ ] Reject symbolic links and reparse points during discovery
-- [ ] Persist review-run manifests and integrate retention
-- [ ] Add tests for mutation between runs, path normalization, binary files, oversized files, and cross-platform symbolic links
-- [ ] Build the solution and run the affected tests
-- [ ] Update this document with results
+- [x] Add manifest records and deterministic manifest builder in Informant
+- [x] Recalculate after every managed-tree refresh
+- [x] Detect text metadata without reading unsafe or unbounded bodies
+- [x] Reject symbolic links and reparse points during discovery
+- [x] Persist review-run manifests and integrate retention
+- [x] Add tests for mutation between runs, path normalization, binary files, oversized files, and cross-platform symbolic links
+- [x] Build the solution and run the affected tests
+- [x] Update this document with results
 
 Planned commit: `Add per-run repository manifest`
 
@@ -458,3 +458,4 @@ At minimum, automated coverage must include:
 | Date | Phase | Status | Verification and notes | Commit |
 | --- | --- | --- | --- | --- |
 | 2026-07-14 | Plan | Approved | Decisions approved, feature branch created, and no production code changed | `Document adaptive repository review overhaul` |
+| 2026-07-14 | 1 | Complete | Immutable Git-tree catalog and bounded common file inspection added; no-change integration proves in-memory recalculation without artifacts or a model call; solution build has zero warnings; 556 tests ran, 550 passed, and 6 opt-in live tests skipped | `Add per-run repository manifest` |

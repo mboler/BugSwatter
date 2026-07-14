@@ -1,6 +1,6 @@
 using System.Diagnostics;
 
-namespace Informant.Tests;
+namespace BugSwatter.Common.Tests;
 
 public sealed class RepositoryFileReaderTests : IDisposable
 {
@@ -114,6 +114,30 @@ public sealed class RepositoryFileReaderTests : IDisposable
         Assert.Equal(1000, result.TotalLines);
         Assert.Equal([501, 502, 503], result.Lines.Select(line => line.Number));
         Assert.Equal(["line 501", "line 502", "line 503"], result.Lines.Select(line => line.Text));
+    }
+
+    /// <summary>Verifies metadata inspection counts bytes and lines without returning content</summary>
+    [Fact]
+    public void InspectReturnsSizeAndLineCountWithoutRetainingContent()
+    {
+        string path = Path.Combine(_root.Path, "inspect.txt");
+        File.WriteAllText(path, "first\nsecond\nthird");
+
+        RepositoryFileInspection inspection = new RepositoryFileReader(_root.Path).Inspect("inspect.txt");
+
+        Assert.Equal(new FileInfo(path).Length, inspection.SizeBytes);
+        Assert.Equal(3, inspection.LineCount);
+    }
+
+    /// <summary>Verifies metadata inspection rejects binary files</summary>
+    [Fact]
+    public void InspectRejectsBinaryData()
+    {
+        File.WriteAllBytes(Path.Combine(_root.Path, "binary.dat"), [1, 0, 2]);
+
+        RepositoryFileException exception = Assert.Throws<RepositoryFileException>(() => new RepositoryFileReader(_root.Path).Inspect("binary.dat"));
+
+        Assert.Equal(RepositoryFileError.Binary, exception.Error);
     }
 
     private static bool TryCreateFileSymbolicLink(string link, string target)

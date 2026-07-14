@@ -116,12 +116,18 @@ internal static class Program
 
         // One clock read for both the metadata timestamp and the artifact-name stamp keeps them consistent
         string runStamp = startedAt.ToString("yyyy-MM-dd_HH-mm-ss");
+        progress.ReportPhase("Building repository manifest");
+        var manifestBuilder = new RepositoryManifestBuilder(new GitTreeCatalog(git, config.WorkingTreePath), config.WorkingTreePath, config.MaxFileBytes);
+        RepositoryManifest manifest = await manifestBuilder.BuildAsync(config.RepositoryUrl, config.Branch, baselineSha, tipSha, config.ReviewMode, runStamp, startedAt);
         progress.ReportPhase("Detecting changes");
         IReadOnlyList<ChangedFile> files = await DetectReviewSetAsync(config, git, baselineSha, tipSha);
+        manifest = manifest.WithChanges(files);
+        Log.Information("Repository manifest rebuilt at {Tip}: {Entries} entries, {Reviewable} reviewable, {Excluded} excluded, {Selected} selected", tipSha, manifest.EntryCount,
+            manifest.ReviewableCount, manifest.ExcludedCount, manifest.SelectedCount);
 
         if (files.Count == 0)
         {
-            // An empty report is noise: a run with nothing to review leaves no artifacts, only this log record
+            // An empty report is noise: the manifest was rebuilt in memory, but a run with nothing to review leaves no artifacts.
             state.SetBaseline(config.RepositoryUrl, config.Branch, tipSha);
             Log.Information("Run complete: no changes to review since the baseline; no report written");
             progress.ReportCompleted();
@@ -129,6 +135,8 @@ internal static class Program
             return 0;
         }
 
+        string manifestPath = RepositoryManifestFile.Write(config.ReportDirectory, runStamp, manifest);
+        Log.Information("Repository manifest persisted to {Path}", manifestPath);
         string changesPath = ChangeSetFile.Write(config.ReportDirectory, runStamp, baselineSha, tipSha, config.ReviewMode, files);
         Log.Information("Change set with {Count} files persisted to {Path}", files.Count, changesPath);
 

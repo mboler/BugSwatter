@@ -13,6 +13,7 @@ public sealed class ReportRetentionService
     private const int TimestampLength = 19;
     private const string ReportPrefix = "Informant-Report-";
     private const string ChangesPrefix = "Informant-Changes-";
+    private const string ManifestPrefix = "Informant-Manifest-";
 
     private readonly string _reportDirectory;
     private readonly int _retentionDays;
@@ -119,8 +120,13 @@ public sealed class ReportRetentionService
             return HasValidTimestampAndSuffix(fileName, ReportPrefix, [".md", "-validated.md", "-validated.json"]);
         }
 
-        return fileName.StartsWith(ChangesPrefix, StringComparison.Ordinal)
-            && HasValidTimestampAndSuffix(fileName, ChangesPrefix, [".json"]);
+        if (fileName.StartsWith(ChangesPrefix, StringComparison.Ordinal))
+        {
+            return HasValidTimestampAndSuffix(fileName, ChangesPrefix, [".json"]);
+        }
+
+        return fileName.StartsWith(ManifestPrefix, StringComparison.Ordinal)
+            && HasValidTimestampAndSuffix(fileName, ManifestPrefix, [".json"]);
     }
 
     private static bool HasValidTimestampAndSuffix(string fileName, string prefix, IReadOnlyList<string> allowedSuffixes)

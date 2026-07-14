@@ -211,6 +211,6 @@ public sealed class SecondOpinionReviewer
             throw new RepositoryFileException(RepositoryFileError.ReadFailed, $"deleted file '{file.Path}' has no baseline Git revision available");
         }
 
-        return await RepositoryFileReader.ReadGitBlobLinesAsync(_git, _treeRoot, file.ContentRevision, file.Path, _maxFileBytes);
+        return await GitBlobReader.ReadLinesAsync(_git, _treeRoot, file.ContentRevision, file.Path, _maxFileBytes);
     }
 }

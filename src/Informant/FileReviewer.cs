@@ -20,9 +20,22 @@ public enum FileReviewStatus
     Partial
 }
 
+/// <summary>Layer responsible for an unsuccessful file review, used to decide whether another model can recover it</summary>
+public enum FileReviewFailureKind
+{
+    /// <summary>The review completed or the file was deliberately excluded</summary>
+    None,
+
+    /// <summary>The repository file or baseline content could not be read</summary>
+    Repository,
+
+    /// <summary>The model failed after its configured retries</summary>
+    Model
+}
+
 /// <summary>Outcome of reviewing one file, with an explicit status separating expected exclusions from failures that must preserve the previous baseline</summary>
 public sealed record FileReviewResult(ChangedFile File, FileReviewStatus Status, string? Findings, int CompletedChunks, int TotalChunks, string? SkipReason, Severity CandidateSeverity = Severity.None,
-    bool CandidateSeverityDetermined = false)
+    bool CandidateSeverityDetermined = false, FileReviewFailureKind FailureKind = FileReviewFailureKind.None, string? ReviewModelName = null, string? ReviewModelProfile = null)
 {
     /// <summary>True when every part of the file was reviewed</summary>
     public bool FullyReviewed => Status == FileReviewStatus.Reviewed;
@@ -116,7 +129,7 @@ public sealed class FileReviewer
             {
                 string reason = $"part {index + 1} of {chunks.Count} failed after {_retryCount} retries";
                 FileReviewStatus status = index == 0 ? FileReviewStatus.Failed : FileReviewStatus.Partial;
-                return new FileReviewResult(file, status, findings.Length > 0 ? findings.ToString() : null, index, chunks.Count, reason, candidateSeverity, false);
+                return new FileReviewResult(file, status, findings.Length > 0 ? findings.ToString() : null, index, chunks.Count, reason, candidateSeverity, false, FileReviewFailureKind.Model);
             }
 
             candidateSeverityDetermined &= partReview.CandidateSeverityDetermined;
@@ -175,7 +188,7 @@ public sealed class FileReviewer
     private static FileReviewResult Failed(ChangedFile file, string reason)
     {
         Log.Warning("Review failed for {Path}: {Reason}", file.Path, reason);
-        return new FileReviewResult(file, FileReviewStatus.Failed, null, 0, 0, reason);
+        return new FileReviewResult(file, FileReviewStatus.Failed, null, 0, 0, reason, FailureKind: FileReviewFailureKind.Repository);
     }
 
     private static bool IsExpectedExclusion(RepositoryFileError error) => error is RepositoryFileError.ReparsePoint or RepositoryFileError.TooLarge or RepositoryFileError.Binary;

@@ -13,5 +13,7 @@ public sealed class InitCommandTests : IDisposable
 
         string config = File.ReadAllText(Path.Combine(_directory.Path, InformantConfig.FileName));
         Assert.Contains("\"reportRetentionDays\": 31", config);
+        Assert.Contains("\"fallbackModels\": []", config);
+        Assert.Contains("Informant never loads models", config);
     }
 }

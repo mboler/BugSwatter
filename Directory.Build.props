@@ -1,8 +1,8 @@
 <Project>
 
-  <!-- Shared metadata for every project. Pre-1.0: this is the sixth feature wave patch release, so 0.6.1 -->
+  <!-- Shared metadata for every project. Pre-1.0: primary-model failover is the 0.7 feature wave -->
   <PropertyGroup>
-    <Version>0.6.1</Version>
+    <Version>0.7.0</Version>
     <Product>BugSwatter</Product>
     <Authors>Mark Boler</Authors>
     <Company>Mark Boler</Company>

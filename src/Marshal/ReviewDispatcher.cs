@@ -94,27 +94,31 @@ public sealed class ReviewDispatcher : BackgroundService
         Log.Information("Dispatcher stopped");
     }
 
-    /// <summary>Health-checks the job's model endpoint; on a miss it schedules a backoff retry and returns false so the run is skipped, and on a hit or an unreadable endpoint it resets the backoff and returns true</summary>
+    /// <summary>Health-checks the job's preferred and fallback model endpoints; when none answer it schedules a backoff retry, while any reachable endpoint lets Informant perform the final model selection</summary>
     private async Task<bool> IsEndpointHealthyAsync(ReviewRequest request, CancellationToken stoppingToken)
     {
         string key = ReviewQueue.RepositoryKey(request.Job);
-        string? endpoint = JobConfigReader.TryReadModelEndpoint(request.Job.InformantConfigPath);
+        IReadOnlyList<string> endpoints = JobConfigReader.TryReadModelEndpoints(request.Job.InformantConfigPath);
 
         // No readable endpoint means no check; let Informant run and report the problem itself
-        if (endpoint is null)
+        if (endpoints.Count == 0)
         {
             _backoff.Reset(key);
             return true;
         }
 
-        if (await _healthChecker.IsReachableAsync(endpoint, stoppingToken))
+        foreach (string endpoint in endpoints)
         {
-            _backoff.Reset(key);
-            return true;
+            if (await _healthChecker.IsReachableAsync(endpoint, stoppingToken))
+            {
+                _backoff.Reset(key);
+                return true;
+            }
         }
 
         TimeSpan delay = _backoff.NextDelay(key);
-        Log.Warning("Model endpoint {Endpoint} for {Job} is unreachable; re-queueing in {Delay} (attempt {Attempt})", endpoint, request.Job.Name, delay, _backoff.AttemptCount(key));
+        Log.Warning("All model endpoints for {Job} are unreachable ({Endpoints}); re-queueing in {Delay} (attempt {Attempt})", request.Job.Name, string.Join(", ", endpoints), delay,
+            _backoff.AttemptCount(key));
         ScheduleRetry(request.Job, delay, stoppingToken);
 
         return false;

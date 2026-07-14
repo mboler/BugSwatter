@@ -41,6 +41,8 @@ public static class JobConfigReader
     {
         public string? ModelEndpoint { get; init; }
 
+        public IReadOnlyList<FallbackRuntimeModel> FallbackModels { get; init; } = [];
+
         public string ReportDirectory { get; init; } = "reports";
 
         public string RepositoryUrl { get; init; } = "";
@@ -52,10 +54,41 @@ public static class JobConfigReader
         public string StateFilePath { get; init; } = "informant.state.json";
     }
 
+    private sealed class FallbackRuntimeModel
+    {
+        public string? Endpoint { get; init; }
+    }
+
     private sealed record BaselineEntry(string Sha, DateTimeOffset UpdatedUtc);
 
     /// <summary>Returns the modelEndpoint value from the config, or null when it cannot be read</summary>
     public static string? TryReadModelEndpoint(string informantConfigPath) => TryLoad(informantConfigPath)?.ModelEndpoint;
+
+    /// <summary>Returns the preferred endpoint followed by distinct configured fallback endpoints, or an empty list when the config cannot be read</summary>
+    public static IReadOnlyList<string> TryReadModelEndpoints(string informantConfigPath)
+    {
+        InformantRuntimeConfig? config = TryLoad(informantConfigPath);
+        if (config is null)
+        {
+            return [];
+        }
+
+        var endpoints = new List<string>();
+        if (!string.IsNullOrWhiteSpace(config.ModelEndpoint))
+        {
+            endpoints.Add(config.ModelEndpoint);
+        }
+
+        foreach (FallbackRuntimeModel fallback in config.FallbackModels ?? [])
+        {
+            if (!string.IsNullOrWhiteSpace(fallback.Endpoint) && !endpoints.Contains(fallback.Endpoint, StringComparer.OrdinalIgnoreCase))
+            {
+                endpoints.Add(fallback.Endpoint);
+            }
+        }
+
+        return endpoints;
+    }
 
     /// <summary>Returns the absolute report directory from the config, including environment overrides, or null when it cannot be read</summary>
     public static string? TryReadReportDirectory(string informantConfigPath)

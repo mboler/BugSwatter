@@ -37,9 +37,14 @@ public static class ValidateCommand
         var checks = new List<ValidationCheck>
         {
             new("config", true, "loaded and structurally valid"),
-            new("git executable", File.Exists(config.GitExecutablePath), config.GitExecutablePath),
-            await ProbeHttpAsync(http, config.ModelEndpoint, "model endpoint")
+            new("git executable", File.Exists(config.GitExecutablePath), config.GitExecutablePath)
         };
+
+        foreach (PrimaryModelTarget target in config.GetPrimaryModelTargets())
+        {
+            string label = target.IsFallback ? $"fallback '{target.Name}' model endpoint" : "model endpoint";
+            checks.Add(await ProbeHttpAsync(http, target.Endpoint, label));
+        }
 
         if (config.SecondOpinion is { } secondOpinion)
         {

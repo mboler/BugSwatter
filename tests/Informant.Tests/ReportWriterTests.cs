@@ -19,6 +19,7 @@ public sealed class ReportWriterTests : IDisposable
         Assert.Contains("| Reviewed tip SHA | tipSha |", report);
         Assert.Contains("| Review model | test-model |", report);
         Assert.Contains("| Model endpoint | http://localhost:1234/v1 |", report);
+        Assert.Contains("| Configured fallback models | 0 |", report);
         Assert.Contains("| Context budget | 24000 characters |", report);
         Assert.Contains("| Max file lines before chunking | 800 |", report);
         Assert.Contains("(pending: files reviewed)", report);
@@ -48,6 +49,19 @@ public sealed class ReportWriterTests : IDisposable
         Assert.Contains("Status: Modified | Changed line ranges: 3-5, 9", report);
         Assert.Contains("The findings text from the model.", report);
         Assert.DoesNotContain("SKIPPED", report);
+    }
+
+    [Fact]
+    public void ReviewedSectionRecordsTheModelThatProducedIt()
+    {
+        ReportWriter writer = CreateWriter();
+        writer.WriteHeader("repo", "main", ReviewMode.Changed, "base", "tip", DateTimeOffset.Now);
+        var file = new ChangedFile("src/Foo.cs", ChangeKind.Modified, [new LineRange(1, 1)]);
+        writer.AppendFileSection(new FileReviewResult(file, FileReviewStatus.Reviewed, "findings", 1, 1, null, ReviewModelName: "backup-model", ReviewModelProfile: "backup-server"));
+
+        string report = File.ReadAllText(writer.ReportPath);
+
+        Assert.Contains("Review model: backup-server (`backup-model`)", report);
     }
 
     [Fact]
@@ -93,6 +107,27 @@ public sealed class ReportWriterTests : IDisposable
         Assert.Contains("## Run summary", report);
         Assert.Contains("- blob.bin: binary file", report);
         Assert.Contains("- big.cs: part 2 of 3 failed", report);
+        Assert.Contains("Primary model target failures: 0", report);
+    }
+
+    [Fact]
+    public void FinalizeRecordsFailoverReasonInTheSingleReport()
+    {
+        var targets = new[]
+        {
+            new PrimaryModelTarget("primary", "http://primary.example/v1", "primary-model", false),
+            new PrimaryModelTarget("backup", "http://backup.example/v1", "backup-model", true)
+        };
+        var writer = new ReportWriter(Path.Combine(_directory.Path, "reports"), "2026-07-10_14-30-00", "primary-model", "http://primary.example/v1", 24000, 800, targets);
+        writer.WriteHeader("repo", "main", ReviewMode.Changed, "base", "tip", DateTimeOffset.Now);
+        writer.Finalize(1, [], TimeSpan.FromMinutes(2), [new PrimaryModelFailure(targets[0], "requests timed out")]);
+
+        string report = File.ReadAllText(writer.ReportPath);
+
+        Assert.Contains("| Configured fallback models | 1 |", report);
+        Assert.Contains("Primary model target failures: 1", report);
+        Assert.Contains("- primary (`primary-model`): requests timed out", report);
+        Assert.Equal(1, CountOccurrences(report, "# Informant Review Report"));
     }
 
     [Fact]
@@ -119,4 +154,17 @@ public sealed class ReportWriterTests : IDisposable
     }
 
     private ReportWriter CreateWriter() => new(Path.Combine(_directory.Path, "reports"), "2026-07-10_14-30-00", "test-model", "http://localhost:1234/v1", 24000, 800);
+
+    private static int CountOccurrences(string text, string value)
+    {
+        int count = 0;
+        int index = 0;
+        while ((index = text.IndexOf(value, index, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            index += value.Length;
+        }
+
+        return count;
+    }
 }

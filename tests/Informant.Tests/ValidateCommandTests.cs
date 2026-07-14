@@ -42,6 +42,34 @@ public sealed class ValidateCommandTests
     }
 
     [Fact]
+    public async Task ChecksEveryFallbackEndpoint()
+    {
+        var handler = new StubHttpMessageHandler();
+        handler.Enqueue(HttpStatusCode.OK, "{}");
+        handler.Enqueue(HttpStatusCode.OK, "{}");
+        handler.EnqueueException(new HttpRequestException("backup unavailable"));
+        var config = new InformantConfig
+        {
+            RepositoryUrl = "https://example.test/repo.git",
+            Branch = "main",
+            WorkingTreePath = @"C:\informant\tree",
+            GitExecutablePath = TestGit.ExecutablePath,
+            ModelEndpoint = "http://localhost:1234/v1",
+            ModelName = "test-model",
+            FallbackModels =
+            [
+                new FallbackModelConfig { Name = "backup-one", Endpoint = "http://backup-one.example/v1", ModelName = "one" },
+                new FallbackModelConfig { Name = "backup-two", Endpoint = "http://backup-two.example/v1", ModelName = "two" }
+            ]
+        };
+
+        IReadOnlyList<ValidationCheck> checks = await ValidateCommand.GatherChecksAsync(config, new HttpClient(handler));
+
+        Assert.True(Assert.Single(checks, check => check.Label == "fallback 'backup-one' model endpoint reachable").Passed);
+        Assert.False(Assert.Single(checks, check => check.Label == "fallback 'backup-two' model endpoint reachable").Passed);
+    }
+
+    [Fact]
     public async Task MissingSecondOpinionKeyFailsItsCheck()
     {
         var handler = new StubHttpMessageHandler();

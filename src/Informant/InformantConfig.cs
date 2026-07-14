@@ -50,6 +50,9 @@ public sealed class InformantConfig
     /// <summary>Model name passed to the endpoint</summary>
     public string ModelName { get; init; } = "";
 
+    /// <summary>Ordered already-running models tried after the preferred primary model suffers an unrecoverable model-layer failure</summary>
+    public IReadOnlyList<FallbackModelConfig> FallbackModels { get; init; } = [];
+
     /// <summary>Which file set to review</summary>
     [JsonConverter(typeof(JsonStringEnumConverter<ReviewMode>))]
     public ReviewMode ReviewMode { get; init; } = ReviewMode.Changed;
@@ -123,6 +126,13 @@ public sealed class InformantConfig
 
     /// <summary>Absolute directory the read_file_lines tool is confined to</summary>
     public string ResolvedAllowedReadRoot => string.IsNullOrWhiteSpace(AllowedReadRoot) ? WorkingTreePath : ConfigLoader.ResolvePath(_configDirectory, AllowedReadRoot);
+
+    /// <summary>Returns the preferred model followed by the configured fallbacks in attempt order</summary>
+    public IReadOnlyList<PrimaryModelTarget> GetPrimaryModelTargets() =>
+    [
+        new PrimaryModelTarget("primary", ModelEndpoint, ModelName, false),
+        .. FallbackModels.Select(model => new PrimaryModelTarget(model.Name, model.Endpoint, model.ModelName, true))
+    ];
 
     /// <summary>Loads and validates the configuration from the default file name inside <paramref name="directory"/></summary>
     public static InformantConfig Load(string directory) => LoadFile(Path.Combine(directory, FileName));
@@ -271,6 +281,8 @@ public sealed class InformantConfig
             throw new InformantFatalException($"modelEndpoint must be an absolute http or https URL, got '{ModelEndpoint}'");
         }
 
+        ValidateFallbackModels();
+
         RequirePositive(MaxContextCharacters, "maxContextCharacters");
         RequirePositive(MaxFileLines, "maxFileLines");
         RequirePositive(MaxFileBytes, "maxFileBytes");
@@ -305,6 +317,34 @@ public sealed class InformantConfig
     }
 
     private string ResolvePath(string configuredPath) => _pathsResolved ? ConfigLoader.ResolvePath(_configDirectory, configuredPath) : configuredPath;
+
+    private void ValidateFallbackModels()
+    {
+        if (FallbackModels is null)
+        {
+            throw new InformantFatalException("fallbackModels must be an array; use an empty array or omit it to disable failover");
+        }
+
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var targets = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { $"{ModelEndpoint.TrimEnd('/')}|{ModelName}" };
+
+        for (int index = 0; index < FallbackModels.Count; index++)
+        {
+            FallbackModelConfig fallback = FallbackModels[index];
+            string fieldName = $"fallbackModels[{index}]";
+            fallback.Validate(fieldName);
+
+            if (!names.Add(fallback.Name))
+            {
+                throw new InformantFatalException($"{fieldName}.name duplicates another fallback name: '{fallback.Name}'");
+            }
+
+            if (!targets.Add($"{fallback.Endpoint.TrimEnd('/')}|{fallback.ModelName}"))
+            {
+                throw new InformantFatalException($"{fieldName} duplicates an earlier endpoint and model combination");
+            }
+        }
+    }
 
     private static void RequireValue(string value, string fieldName)
     {

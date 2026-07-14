@@ -17,4 +17,4 @@ public enum ModelCallState
 public sealed record ModelTokenUsage(long? PromptTokens, long? CompletionTokens, long? TotalTokens);
 
 /// <summary>Best-effort telemetry for one model request; it never changes request behavior and completed usage is provider-reported rather than estimated</summary>
-public sealed record ModelCallProgress(ModelCallState State, string ModelName, DateTimeOffset StartedUtc, TimeSpan Duration, ModelTokenUsage? Usage);
+public sealed record ModelCallProgress(ModelCallState State, string ModelName, DateTimeOffset StartedUtc, TimeSpan Duration, ModelTokenUsage? Usage, int RequestCharacters = 0);

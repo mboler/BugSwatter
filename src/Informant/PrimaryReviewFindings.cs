@@ -35,7 +35,7 @@ public sealed record PrimaryReviewClassification(Severity MaxSeverity, bool Seve
             }
 
             if (result.Status is FileReviewStatus.Failed or FileReviewStatus.Partial
-                || result.Status == FileReviewStatus.Reviewed && !result.CandidateSeverityDetermined)
+                || result.Status is (FileReviewStatus.Reviewed or FileReviewStatus.Deferred) && !result.CandidateSeverityDetermined)
             {
                 severityDetermined = false;
             }

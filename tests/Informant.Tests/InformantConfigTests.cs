@@ -17,6 +17,7 @@ public sealed class InformantConfigTests : IDisposable
         Assert.Equal("https://example.test/repo.git", config.RepositoryUrl);
         Assert.Equal("main", config.Branch);
         Assert.Equal(ReviewMode.Changed, config.ReviewMode);
+        Assert.Equal(ReviewStrategy.Exhaustive, config.ReviewStrategy);
         Assert.Equal(Path.Combine(_directory.Path, "reports"), config.ReportDirectory);
         Assert.Equal(31, config.ReportRetentionDays);
         Assert.Equal(Path.Combine(_directory.Path, "informant.state.json"), config.StateFilePath);
@@ -27,6 +28,7 @@ public sealed class InformantConfigTests : IDisposable
         Assert.Equal(2, config.PerFileRetryCount);
         Assert.Equal(1800, config.RequestTimeoutSeconds);
         Assert.Empty(config.FallbackModels);
+        Assert.Empty(config.SeedPaths);
         Assert.Single(config.GetPrimaryModelTargets());
         Assert.Null(config.ConsoleLogging);
         Assert.Equal(config.WorkingTreePath, config.ResolvedAllowedReadRoot);
@@ -48,6 +50,15 @@ public sealed class InformantConfigTests : IDisposable
     {
         WriteConfig(values => values["reviewMode"] = "Full");
         Assert.Equal(ReviewMode.Full, InformantConfig.Load(_directory.Path).ReviewMode);
+    }
+
+    /// <summary>Verifies adaptive review strategy is explicitly configurable and case-insensitive</summary>
+    [Fact]
+    public void ParsesAdaptiveStrategyCaseInsensitively()
+    {
+        WriteConfig(values => values["reviewStrategy"] = "Adaptive");
+
+        Assert.Equal(ReviewStrategy.Adaptive, InformantConfig.Load(_directory.Path).ReviewStrategy);
     }
 
     [Fact]
@@ -154,6 +165,40 @@ public sealed class InformantConfigTests : IDisposable
         WriteConfig(values => values[field] = 0);
         InformantFatalException ex = Assert.Throws<InformantFatalException>(() => InformantConfig.Load(_directory.Path));
         Assert.Contains(field, ex.Message);
+    }
+
+    /// <summary>Verifies a context budget too small for one useful bounded tool response is rejected</summary>
+    [Fact]
+    public void ContextBudgetTooSmallForBoundedToolResultsThrowsFatal()
+    {
+        WriteConfig(values => values["maxContextCharacters"] = ReadFileLinesTool.MinimumMaxResultCharacters * 4 - 1);
+
+        InformantFatalException exception = Assert.Throws<InformantFatalException>(() => InformantConfig.Load(_directory.Path));
+
+        Assert.Contains("maxContextCharacters", exception.Message);
+    }
+
+    /// <summary>Verifies repository-relative files, directories, and glob patterns load in configured order</summary>
+    [Fact]
+    public void LoadsSeedPaths()
+    {
+        WriteConfig(values => values["seedPaths"] = new[] { "src", "tools/*.ps1", "docs/**/*.md" });
+
+        Assert.Equal(["src", "tools/*.ps1", "docs/**/*.md"], InformantConfig.Load(_directory.Path).SeedPaths);
+    }
+
+    /// <summary>Verifies seeds cannot escape or replace the repository-root planning boundary</summary>
+    [Theory]
+    [InlineData("../outside")]
+    [InlineData("C:\\outside")]
+    [InlineData("/outside")]
+    public void RejectsUnsafeSeedPath(string seedPath)
+    {
+        WriteConfig(values => values["seedPaths"] = new[] { seedPath });
+
+        InformantFatalException exception = Assert.Throws<InformantFatalException>(() => InformantConfig.Load(_directory.Path));
+
+        Assert.Contains("seedPaths[0]", exception.Message);
     }
 
     [Theory]

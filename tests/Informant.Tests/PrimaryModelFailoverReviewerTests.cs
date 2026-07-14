@@ -3,6 +3,8 @@ namespace Informant.Tests;
 internal sealed class StubPrimaryModelSession : IPrimaryModelSession
 {
     private readonly Queue<FileReviewResult> _results;
+    private readonly Queue<string> _planningResults = [];
+    private readonly Queue<ReviewUnitResult> _unitResults = [];
 
     public StubPrimaryModelSession(PrimaryModelTarget target, VerificationResult verification, params FileReviewResult[] results)
     {
@@ -19,7 +21,17 @@ internal sealed class StubPrimaryModelSession : IPrimaryModelSession
 
     public int ReviewCount { get; private set; }
 
+    public int PlanningCount { get; private set; }
+
+    public int UnitReviewCount { get; private set; }
+
     public bool CancelReview { get; set; }
+
+    public bool FailPlanning { get; set; }
+
+    public void EnqueuePlanningResult(string result) => _planningResults.Enqueue(result);
+
+    public void EnqueueUnitResult(ReviewUnitResult result) => _unitResults.Enqueue(result);
 
     public Task<VerificationResult> VerifyAsync(CancellationToken cancellationToken = default)
     {
@@ -36,6 +48,20 @@ internal sealed class StubPrimaryModelSession : IPrimaryModelSession
         }
 
         return Task.FromResult(_results.Dequeue());
+    }
+
+    public Task<string> PlanAsync(string systemPrompt, string userPrompt, CancellationToken cancellationToken = default)
+    {
+        PlanningCount++;
+        return FailPlanning
+            ? Task.FromException<string>(new ModelCallException("planning endpoint failed"))
+            : Task.FromResult(_planningResults.Dequeue());
+    }
+
+    public Task<ReviewUnitResult> ReviewUnitAsync(ReviewExecutionUnit unit, CancellationToken cancellationToken = default)
+    {
+        UnitReviewCount++;
+        return Task.FromResult(_unitResults.Dequeue());
     }
 }
 
@@ -148,8 +174,54 @@ public sealed class PrimaryModelFailoverReviewerTests
         Assert.Equal(2, reviewer.Failures.Count);
     }
 
+    /// <summary>Verifies a planning transport failure retries the complete batch on the next verified model</summary>
+    [Fact]
+    public async Task PlanningFailureRestartsBatchOnFallback()
+    {
+        var primary = Session("primary", false, Success("unused"));
+        primary.FailPlanning = true;
+        var fallback = Session("backup", true, Success("unused"));
+        fallback.EnqueuePlanningResult("fallback plan");
+        var reviewer = new PrimaryModelFailoverReviewer([primary, fallback]);
+        await reviewer.InitializeAsync();
+
+        string response = await reviewer.PlanAsync("system", "user");
+
+        Assert.Equal("fallback plan", response);
+        Assert.Equal(1, primary.PlanningCount);
+        Assert.Equal(1, fallback.PlanningCount);
+        Assert.Equal("backup", reviewer.ActiveTarget!.Name);
+    }
+
+    /// <summary>Verifies a clustered model failure discards the failed attempt and restarts the complete unit on the fallback</summary>
+    [Fact]
+    public async Task ClusteredFailureRestartsWholeUnitOnFallback()
+    {
+        ReviewExecutionUnit unit = Unit();
+        var primary = Session("primary", false, Success("unused"));
+        primary.EnqueueUnitResult(new ReviewUnitResult(unit, [], FileReviewFailureKind.Model, "primary failed"));
+        var fallback = Session("backup", true, Success("unused"));
+        fallback.EnqueueUnitResult(new ReviewUnitResult(unit, [new ReviewUnitPartResult(unit.Parts[0], "backup findings", Severity.Low, true)], FileReviewFailureKind.None, null));
+        var reviewer = new PrimaryModelFailoverReviewer([primary, fallback]);
+        await reviewer.InitializeAsync();
+
+        ReviewUnitResult result = await reviewer.ReviewUnitAsync(unit);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("backup findings", Assert.Single(result.PartResults).Findings);
+        Assert.Equal("backup-model", result.ReviewModelName);
+        Assert.Equal(1, primary.UnitReviewCount);
+        Assert.Equal(1, fallback.UnitReviewCount);
+    }
+
     private static StubPrimaryModelSession Session(string name, bool fallback, FileReviewResult result, VerificationResult? verification = null) =>
         new(new PrimaryModelTarget(name, $"http://{name}.example/v1", $"{name}-model", fallback), verification ?? new VerificationResult(true, "verified"), result);
 
     private static FileReviewResult Success(string findings) => new(File, FileReviewStatus.Reviewed, findings, 1, 1, null, CandidateSeverityDetermined: true);
+
+    private static ReviewExecutionUnit Unit()
+    {
+        var part = new ReviewUnitPart("part-000001", File, 1, 1, 1, 2, "source", 6);
+        return new ReviewExecutionUnit("unit", "rationale", [], [part], "prompt");
+    }
 }

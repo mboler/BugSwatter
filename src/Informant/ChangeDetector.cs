@@ -62,9 +62,8 @@ public sealed partial class ChangeDetector
     /// <summary>Lists every tracked file in the tree for a full review</summary>
     public async Task<IReadOnlyList<ChangedFile>> GetAllFilesAsync()
     {
-        string output = await _git.RunCheckedAsync("-C", _treePath, "ls-files", "-z");
-        
-        return [.. output.Split('\0', StringSplitOptions.RemoveEmptyEntries).Select(path => new ChangedFile(path, ChangeKind.FullReview, []))];
+        IReadOnlyList<GitTreeEntry> entries = await new GitTreeCatalog(_git, _treePath).ListAsync("HEAD");
+        return [.. entries.Select(entry => new ChangedFile(entry.Path, ChangeKind.FullReview, []))];
     }
 
     /// <summary>Parses null-delimited git diff --name-status output without trimming any legal filename character</summary>

@@ -102,7 +102,8 @@ internal static class Program
         ApplyReportRetention(config);
 
         PrintDestructiveTreeWarning(config);
-        Log.Information("Informant run starting: repository {Repository}, branch {Branch}, mode {Mode}", config.RepositoryUrl, config.Branch, config.ReviewMode);
+        Log.Information("Informant run starting: repository {Repository}, branch {Branch}, mode {Mode}, strategy {Strategy}", config.RepositoryUrl, config.Branch, config.ReviewMode,
+            config.ReviewStrategy);
 
         var git = new GitRunner(config.GitExecutablePath);
         var tree = new WorkingTreeManager(git, config.RepositoryUrl, config.Branch, config.WorkingTreePath);
@@ -116,12 +117,18 @@ internal static class Program
 
         // One clock read for both the metadata timestamp and the artifact-name stamp keeps them consistent
         string runStamp = startedAt.ToString("yyyy-MM-dd_HH-mm-ss");
+        progress.ReportPhase("Building repository manifest");
+        var manifestBuilder = new RepositoryManifestBuilder(new GitTreeCatalog(git, config.WorkingTreePath), config.WorkingTreePath, config.MaxFileBytes);
+        RepositoryManifest manifest = await manifestBuilder.BuildAsync(config.RepositoryUrl, config.Branch, baselineSha, tipSha, config.ReviewMode, runStamp, startedAt);
         progress.ReportPhase("Detecting changes");
         IReadOnlyList<ChangedFile> files = await DetectReviewSetAsync(config, git, baselineSha, tipSha);
+        manifest = manifest.WithChanges(files);
+        Log.Information("Repository manifest rebuilt at {Tip}: {Entries} entries, {Reviewable} reviewable, {Excluded} excluded, {Selected} selected", tipSha, manifest.EntryCount,
+            manifest.ReviewableCount, manifest.ExcludedCount, manifest.SelectedCount);
 
         if (files.Count == 0)
         {
-            // An empty report is noise: a run with nothing to review leaves no artifacts, only this log record
+            // An empty report is noise: the manifest was rebuilt in memory, but a run with nothing to review leaves no artifacts.
             state.SetBaseline(config.RepositoryUrl, config.Branch, tipSha);
             Log.Information("Run complete: no changes to review since the baseline; no report written");
             progress.ReportCompleted();
@@ -129,46 +136,89 @@ internal static class Program
             return 0;
         }
 
+        string manifestPath = RepositoryManifestFile.Write(config.ReportDirectory, runStamp, manifest);
+        Log.Information("Repository manifest persisted to {Path}", manifestPath);
         string changesPath = ChangeSetFile.Write(config.ReportDirectory, runStamp, baselineSha, tipSha, config.ReviewMode, files);
         Log.Information("Change set with {Count} files persisted to {Path}", files.Count, changesPath);
+        using var trace = new ReviewTraceWriter(config.ReportDirectory, runStamp);
+        trace.WriteManifestCreated(manifest);
+        var traceContext = new ReviewTraceContext();
 
         IReadOnlyList<PrimaryModelTarget> modelTargets = config.GetPrimaryModelTargets();
-        var report = new ReportWriter(config.ReportDirectory, runStamp, config.ModelName, config.ModelEndpoint, config.MaxContextCharacters, config.MaxFileLines, modelTargets);
-        report.WriteHeader(config.RepositoryUrl, config.Branch, config.ReviewMode, baselineSha, tipSha, startedAt);
+        var report = new ReportWriter(config.ReportDirectory, runStamp, config.ModelName, config.ModelEndpoint, config.MaxContextCharacters, config.MaxFileLines, modelTargets, trace.TraceFileName);
+        report.WriteHeader(config.RepositoryUrl, config.Branch, config.ReviewMode, baselineSha, tipSha, startedAt, config.ReviewStrategy);
 
         progress.ReportPhase("Verifying primary model", config.ModelName, "primary");
         string reviewPrompt = config.ResolveReviewPrompt(config.WorkingTreePath);
-        IPrimaryModelSession[] sessions = [.. modelTargets.Select(target => CreatePrimaryModelSession(target, config, reviewPrompt, git, progress))];
+        IPrimaryModelSession[] sessions = [.. modelTargets.Select(target => CreatePrimaryModelSession(target, config, reviewPrompt, git, progress, manifest, trace, traceContext))];
         var reviewer = new PrimaryModelFailoverReviewer(sessions, target => progress.ReportModelTarget(target.ModelName, target.Name));
         await reviewer.InitializeAsync();
 
-        int reviewedCount = 0;
-        var skipped = new List<(string Path, string Reason)>();
-        var results = new List<FileReviewResult>();
-        for (int index = 0; index < files.Count; index++)
+        progress.ReportPhase("Planning repository review", reviewer.ActiveTarget!.ModelName, reviewer.ActiveTarget.Name);
+        int manifestPartitionCharacters = Math.Max(256, config.MaxContextCharacters / 4);
+        RepositoryBriefing briefing = new RepositoryBriefingBuilder().Build(manifest, config.SeedPaths, manifestPartitionCharacters);
+        RepositoryInitialContext initialContext = new RepositoryInitialContextBuilder(config.MaxFileBytes).Build(manifest, briefing, config.MaxContextCharacters);
+        Log.Information("Prepared {Selected} initial planning source blocks using {Characters}/{Budget} characters; {Omitted} prioritized paths were omitted",
+            initialContext.Items.Count, initialContext.UsedCharacters, initialContext.CharacterBudget, initialContext.Omissions.Count);
+        string[] candidatePaths = [.. manifest.Entries.Where(entry => entry.ChangeKind is not null && entry.Reviewable).Select(entry => entry.Path)];
+        bool allowDeferrals = config.ReviewStrategy == ReviewStrategy.Adaptive;
+        IReadOnlyCollection<string> mandatoryPlanningPaths = allowDeferrals ? [] : candidatePaths;
+        var planner = new RepositoryReviewPlanner(config.MaxContextCharacters);
+        RepositoryPlanningResult planning = await planner.PlanAsync(manifest, briefing, candidatePaths, mandatoryPlanningPaths, allowDeferrals, reviewer.PlanAsync, initialContext,
+            (batchNumber, item) => trace.WritePlanningContextSelected(batchNumber, item, reviewer.ActiveTarget!));
+        RepositoryReviewPlan reviewPlan = RepositoryAdaptivePlan.AddMandatoryChangedContent(planning.Plan, files, config.ReviewStrategy);
+        trace.WritePlanningCompleted(planning, reviewPlan, reviewer.ActiveTarget!);
+        Log.Information("Repository planning produced {Units} units across {Batches} batches, with {ModelBatches} model calls, fallback {Fallback}, coverage repair {CoverageRepair}",
+            reviewPlan.Units.Count, planning.BatchCount, planning.ModelBatchCount, reviewPlan.UsedFallback, reviewPlan.CoverageRepaired);
+
+        var sourceLoader = new RepositoryReviewSourceLoader(config.WorkingTreePath, config.MaxFileBytes, git);
+        var unitBuilder = new ClusteredReviewUnitBuilder(sourceLoader, config.MaxFileLines, config.MaxContextCharacters, reviewPrompt, reviewPlan.RepositorySummary);
+        ClusteredReviewBuild reviewBuild = await unitBuilder.BuildAsync(reviewPlan, files);
+        foreach (FileReviewResult immediateResult in reviewBuild.ImmediateResults)
         {
-            var file = files[index];
-            Log.Information("Reviewing {Path} ({Position}/{Count})", file.Path, index + 1, files.Count);
-            PrimaryModelTarget activeTarget = reviewer.ActiveTarget ?? modelTargets[^1];
-            progress.ReportFile("Primary review", activeTarget.ModelName, activeTarget.Name, file.Path, index + 1, files.Count);
-
-            var result = await reviewer.ReviewAsync(file);
-            report.AppendFileSection(result);
-            results.Add(result);
-
-            if (result.FullyReviewed)
-            {
-                reviewedCount++;
-            }
-            else
-            {
-                skipped.Add((file.Path, result.SkipReason ?? "unknown"));
-            }
+            report.AppendFileSection(immediateResult);
         }
+
+        var unitResults = new List<ReviewUnitResult>(reviewBuild.Units.Count);
+        for (int index = 0; index < reviewBuild.Units.Count; index++)
+        {
+            ReviewExecutionUnit unit = reviewBuild.Units[index];
+            traceContext.UnitId = unit.Id;
+            Log.Information("Reviewing clustered unit {Unit} ({Position}/{Count}) with {Parts} source parts", unit.Id, index + 1, reviewBuild.Units.Count, unit.Parts.Count);
+            PrimaryModelTarget activeTarget = reviewer.ActiveTarget ?? modelTargets[^1];
+            progress.ReportFile("Primary clustered review", activeTarget.ModelName, activeTarget.Name, unit.Id, index + 1, reviewBuild.Units.Count);
+            trace.WriteReviewUnitStarted(unit, activeTarget);
+
+            var unitStopwatch = Stopwatch.StartNew();
+            ReviewUnitResult unitResult = await reviewer.ReviewUnitAsync(unit);
+            trace.WriteReviewUnitCompleted(unitResult, unitStopwatch.Elapsed);
+            report.AppendReviewUnitSection(unitResult);
+            unitResults.Add(unitResult);
+        }
+
+        IReadOnlyList<FileReviewResult> results = ClusteredReviewResultAggregator.Build(files, reviewBuild, unitResults, reviewPlan.Deferred);
+        HashSet<string> buildFailurePaths = reviewBuild.PartFailures.Select(failure => failure.Part.File.Path)
+            .ToHashSet(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+        foreach (FileReviewResult result in results.Where(result => buildFailurePaths.Contains(result.File.Path) || result.Status == FileReviewStatus.Deferred))
+        {
+            report.AppendFileSection(result with { Findings = null });
+        }
+
+        ReviewCoverageLedger coverage = ReviewCoverageLedger.Create(config.ReviewStrategy, files, reviewPlan, results);
+        string coveragePath = ReviewCoverageLedgerFile.Write(config.ReportDirectory, runStamp, coverage);
+        trace.WriteCoverageCreated(coverage);
+        report.AppendCoverageSummary(coverage, Path.GetFileName(coveragePath));
+        int reviewedCount = results.Count(result => result.FullyReviewed);
+        IReadOnlyList<(string Path, string Reason)> skipped =
+        [
+            .. results
+                .Where(result => !result.FullyReviewed)
+                .Select(result => (result.File.Path, result.SkipReason ?? "unknown"))
+        ];
 
         progress.ReportPhase("Writing primary report");
         report.Finalize(reviewedCount, skipped, stopwatch.Elapsed, reviewer.Failures);
-        bool baselineAdvanced = ReviewCompletion.CanAdvanceBaseline(results);
+        bool baselineAdvanced = ReviewCompletion.CanAdvanceBaseline(coverage);
         if (baselineAdvanced)
         {
             state.SetBaseline(config.RepositoryUrl, config.Branch, tipSha);
@@ -183,10 +233,11 @@ internal static class Program
 
         // The second pass is strictly additive: the local review, its report and the baseline are already settled above
         string primaryReportPath = report.ReportPath;
+        bool traceSummaryWritten = false;
         if (config.SecondOpinion is { } secondOpinion)
         {
             progress.ReportPhase("Selecting second opinion");
-            SecondOpinionOutcome? outcome = await RunSecondOpinionAsync(secondOpinion, config, git, results, runStamp, report.ReportPath, progress);
+            SecondOpinionOutcome? outcome = await RunSecondOpinionAsync(secondOpinion, config, git, results, runStamp, report.ReportPath, progress, manifest, trace, traceContext);
 
             if (outcome is not null)
             {
@@ -196,10 +247,18 @@ internal static class Program
                 // Email is gated on a completed second opinion, so it only fires when there is a validated report to send
                 if (config.Email is { } email)
                 {
+                    report.AppendTraceSummary(trace.Summary);
+                    traceSummaryWritten = true;
                     progress.ReportPhase("Sending email");
                     await SendReportEmailAsync(email, config, outcome, report.ReportPath);
                 }
             }
+        }
+
+        traceContext.UnitId = null;
+        if (!traceSummaryWritten)
+        {
+            report.AppendTraceSummary(trace.Summary);
         }
 
         if (baselineAdvanced)
@@ -214,13 +273,29 @@ internal static class Program
         return baselineAdvanced ? 0 : 1;
     }
 
-    private static IPrimaryModelSession CreatePrimaryModelSession(PrimaryModelTarget target, InformantConfig config, string reviewPrompt, GitRunner git, ReviewProgressReporter progress)
+    private static IPrimaryModelSession CreatePrimaryModelSession(PrimaryModelTarget target, InformantConfig config, string reviewPrompt, GitRunner git, ReviewProgressReporter progress,
+        RepositoryManifest manifest, ReviewTraceWriter trace, ReviewTraceContext traceContext)
     {
+        Action<ModelCallProgress> modelProgressObserver = CreateModelProgressObserver(progress, trace, target.Name, traceContext);
         var client = new ModelClient(SharedHttpClient, target.Endpoint, target.ModelName, TimeSpan.FromSeconds(config.RequestTimeoutSeconds), maxResponseBytes: config.MaxModelResponseBytes,
-            progressObserver: progress.ObserveModelCall);
-        var loop = new ToolCallLoop(client, new ReadFileLinesTool(config.ResolvedAllowedReadRoot, config.MaxFileBytes), config.MaxContextCharacters);
-        var reviewer = new FileReviewer(loop, config.WorkingTreePath, reviewPrompt, config.MaxFileLines, config.MaxContextCharacters, config.PerFileRetryCount, config.MaxFileBytes, git);
-        return new PrimaryModelSession(target, client, reviewer, config.MaxContextCharacters);
+            progressObserver: modelProgressObserver);
+        int maxResultCharacters = ReadFileLinesTool.ResultCharactersForContext(config.MaxContextCharacters);
+        var readTool = new ReadFileLinesTool(config.ResolvedAllowedReadRoot, config.MaxFileBytes, manifest, maxResultCharacters, trace.CreateReadObserver(target.ModelName, target.Name, traceContext));
+        var loop = new ToolCallLoop(client, readTool, config.MaxContextCharacters, auditObserver: trace.CreateToolObserver(target.ModelName, target.Name, traceContext));
+        var reviewer = new FileReviewer(loop, config.WorkingTreePath, reviewPrompt, config.MaxFileLines, config.MaxContextCharacters, config.PerFileRetryCount, config.MaxFileBytes, git,
+            trace.CreateContextSelectionObserver(target.ModelName, target.Name, traceContext));
+        var clusteredReviewer = new ClusteredReviewReviewer(loop, reviewPrompt, config.PerFileRetryCount, trace.CreateContextSelectionObserver(target.ModelName, target.Name, traceContext));
+        return new PrimaryModelSession(target, client, reviewer, clusteredReviewer, config.MaxContextCharacters);
+    }
+
+    private static Action<ModelCallProgress> CreateModelProgressObserver(ReviewProgressReporter progress, ReviewTraceWriter trace, string profileName, ReviewTraceContext traceContext)
+    {
+        Action<ModelCallProgress> traceObserver = trace.CreateModelCallObserver(profileName, traceContext);
+        return modelProgress =>
+        {
+            progress.ObserveModelCall(modelProgress);
+            traceObserver(modelProgress);
+        };
     }
 
     private static void ApplyReportRetention(InformantConfig config)
@@ -241,7 +316,9 @@ internal static class Program
         }
     }
 
-    /// <summary>Prints the run's primary report path, or "none" when no report was produced, on its own stdout line so a parent supervisor such as Marshal records the exact artifact instead of guessing the newest file by timestamp. Emitted only when output is redirected, so an interactive run's console stays clean and relies on the logged path instead</summary>
+    /// <summary>
+    /// Prints the run's primary report path, or "none", on redirected stdout so a supervisor records the exact artifact without changing normal interactive output.
+    /// </summary>
     private static void EmitReportPath(string? reportPath)
     {
         if (Console.IsOutputRedirected)
@@ -260,7 +337,8 @@ internal static class Program
             if (!email.ShouldSend(outcome.MaxSeverity, outcome.SeverityDetermined))
             {
                 Log.Information("Email skipped: max confirmed severity {Severity} is below the '{Threshold}' send threshold", outcome.MaxSeverity, email.SendOn);
-                RecordEmailDelivery(outcome.ValidatedReportPath, new EmailDeliveryRecord("Skipped", DateTimeOffset.Now, provider, email.To, $"max confirmed severity {outcome.MaxSeverity} is below the '{email.SendOn}' send threshold"));
+                RecordEmailDelivery(outcome.ValidatedReportPath,
+                    new EmailDeliveryRecord("Skipped", DateTimeOffset.Now, provider, email.To, $"max confirmed severity {outcome.MaxSeverity} is below the '{email.SendOn}' send threshold"));
                 return;
             }
 
@@ -331,7 +409,7 @@ internal static class Program
     }
 
     private static async Task<SecondOpinionOutcome?> RunSecondOpinionAsync(SecondOpinionConfig secondOpinion, InformantConfig config, GitRunner git, IReadOnlyList<FileReviewResult> results, string runStamp,
-        string sourceReportPath, ReviewProgressReporter progress)
+        string sourceReportPath, ReviewProgressReporter progress, RepositoryManifest manifest, ReviewTraceWriter trace, ReviewTraceContext traceContext)
     {
         var stopwatch = Stopwatch.StartNew();
         try
@@ -341,7 +419,7 @@ internal static class Program
             // Optionally also look at files the local reviewer could not review, so a changed file the first model skipped is not left silently unreviewed
             if (secondOpinion.ReviewSkippedFiles)
             {
-                toValidate.AddRange(results.Where(result => result.Findings is null && result.SkipReason is not null));
+                toValidate.AddRange(results.Where(result => result.Status != FileReviewStatus.Deferred && result.Findings is null && result.SkipReason is not null));
             }
 
             if (toValidate.Count == 0)
@@ -364,8 +442,9 @@ internal static class Program
                 return null;
             }
 
+            Action<ModelCallProgress> modelProgressObserver = CreateModelProgressObserver(progress, trace, selection.ProfileName, traceContext);
             var client = new ModelClient(SharedHttpClient, selectedModel.Endpoint, selectedModel.ModelName, TimeSpan.FromSeconds(secondOpinion.RequestTimeoutSeconds), apiKey, config.MaxModelResponseBytes,
-                selectedModel.Authentication, progress.ObserveModelCall);
+                selectedModel.Authentication, modelProgressObserver);
 
             // Gate: prove endpoint, model and key with a minimal round trip before any code leaves the machine
             await client.CompleteAsync([new ChatMessage { Role = "user", Content = "Reply with the single word READY." }], []);
@@ -379,7 +458,8 @@ internal static class Program
             Log.Information("Second-opinion tool-calling: {Status} ({Detail})", toolStatus, toolProbe.Detail);
 
             var validator = new SecondOpinionReviewer(client, config.WorkingTreePath, secondOpinion.ResolvePrompt(), config.MaxContextCharacters, secondOpinion.ContextLines, enableToolCalls, secondOpinion.MaxFileReads,
-                config.MaxFileBytes, git);
+                config.MaxFileBytes, git, manifest, ReadFileLinesTool.ResultCharactersForContext(config.MaxContextCharacters), trace.CreateReadObserver(selectedModel.ModelName, selection.ProfileName, traceContext),
+                trace.CreateToolObserver(selectedModel.ModelName, selection.ProfileName, traceContext));
             var writer = new SecondOpinionReportWriter(config.ReportDirectory, runStamp);
             writer.WriteHeader(selection, sourceReportPath, DateTimeOffset.Now, secondOpinion.ContextLines);
             var jsonReport = new SecondOpinionJsonReport();
@@ -389,6 +469,7 @@ internal static class Program
             for (int index = 0; index < toValidate.Count; index++)
             {
                 var result = toValidate[index];
+                traceContext.UnitId = $"second-opinion:{result.File.Path}";
                 Log.Information("Second opinion for {Path} ({Position}/{Count})", result.File.Path, index + 1, toValidate.Count);
                 progress.ReportFile("Second-opinion review", selectedModel.ModelName, selection.ProfileName, result.File.Path, index + 1, toValidate.Count);
 
@@ -411,7 +492,8 @@ internal static class Program
 
             writer.Finalize(validated, failed, stopwatch.Elapsed);
             string jsonPath = jsonReport.Write(config.ReportDirectory, runStamp, selection, sourceReportPath);
-            Log.Information("Second opinion complete: {Validated} validated, {Failed} failed, max confirmed severity {Severity}, reports at {Report} and {Json}", validated, failed, jsonReport.MaxSeverity, writer.ReportPath, jsonPath);
+            Log.Information("Second opinion complete: {Validated} validated, {Failed} failed, max confirmed severity {Severity}, reports at {Report} and {Json}", validated, failed,
+                jsonReport.MaxSeverity, writer.ReportPath, jsonPath);
 
             return new SecondOpinionOutcome(writer.ReportPath, jsonPath, jsonReport.MaxSeverity, jsonReport.SeverityDetermined, validated, failed);
         }

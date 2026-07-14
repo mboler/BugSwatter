@@ -229,12 +229,14 @@ public sealed class ModelClientTests
                 Assert.Equal(ModelCallState.Started, started.State);
                 Assert.Equal("test-model", started.ModelName);
                 Assert.Null(started.Usage);
+                Assert.Equal(handler.RequestBodies[0].Length, started.RequestCharacters);
             },
             completed =>
             {
                 Assert.Equal(ModelCallState.Completed, completed.State);
                 Assert.Equal(new ModelTokenUsage(120, 30, 150), completed.Usage);
                 Assert.True(completed.Duration >= TimeSpan.Zero);
+                Assert.Equal(handler.RequestBodies[0].Length, completed.RequestCharacters);
             });
     }
 
@@ -250,6 +252,7 @@ public sealed class ModelClientTests
 
         Assert.Contains("502", exception.Message);
         Assert.Equal([ModelCallState.Started, ModelCallState.Failed], progress.Select(item => item.State));
+        Assert.All(progress, item => Assert.True(item.RequestCharacters > 0));
     }
 
     [Fact]

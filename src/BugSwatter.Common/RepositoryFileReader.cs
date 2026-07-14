@@ -1,11 +1,13 @@
-using System.Globalization;
+using System.Security.Cryptography;
 using System.Text;
-using BugSwatter.Common;
 
-namespace Informant;
+namespace BugSwatter.Common;
+
+/// <summary>Metadata obtained by safely inspecting a bounded repository text file</summary>
+public sealed record RepositoryFileInspection(long SizeBytes, int LineCount, string ContentHash);
 
 /// <summary>One bounded line-range read, retaining only the requested lines while counting the whole file</summary>
-public sealed record RepositoryLineRange(IReadOnlyList<(int Number, string Text)> Lines, int TotalLines, int EffectiveEndLine, bool Capped);
+public sealed record RepositoryLineRange(IReadOnlyList<(int Number, string Text)> Lines, int TotalLines, int EffectiveEndLine, bool Capped, long SizeBytes, string ContentHash);
 
 /// <summary>Reads text files through a repository path resolver while enforcing byte and binary-data limits</summary>
 public sealed class RepositoryFileReader
@@ -35,6 +37,25 @@ public sealed class RepositoryFileReader
 
     /// <summary>Absolute repository root</summary>
     public string Root => _resolver.Root;
+
+    /// <summary>Returns the byte size and line count of a bounded text file without retaining its content</summary>
+    public RepositoryFileInspection Inspect(string relativePath)
+    {
+        using FileStream file = OpenFile(relativePath);
+        long sizeBytes = file.Length;
+        EnsureText(file, relativePath);
+        using var hashingStream = CreateHashingStream(file, relativePath);
+        using var reader = CreateReader(hashingStream, leaveOpen: true);
+        int lineCount = 0;
+        string? line;
+        while ((line = reader.ReadLine()) is not null)
+        {
+            RejectBinaryLine(line, relativePath);
+            lineCount++;
+        }
+
+        return new RepositoryFileInspection(sizeBytes, lineCount, hashingStream.CompleteHash());
+    }
 
     /// <summary>Reads every line from a bounded text file</summary>
     public async Task<string[]> ReadAllLinesAsync(string relativePath, CancellationToken cancellationToken = default)
@@ -79,8 +100,10 @@ public sealed class RepositoryFileReader
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxLines);
 
         using FileStream file = OpenFile(relativePath);
+        long sizeBytes = file.Length;
         EnsureText(file, relativePath);
-        using var reader = CreateReader(file, relativePath);
+        using var hashingStream = CreateHashingStream(file, relativePath);
+        using var reader = CreateReader(hashingStream, leaveOpen: true);
         var selected = new List<(int Number, string Text)>();
         int requestedEnd = (int)Math.Min(endLine, (long)startLine + maxLines - 1);
         int lineNumber = 0;
@@ -95,54 +118,7 @@ public sealed class RepositoryFileReader
             }
         }
 
-        return new RepositoryLineRange(selected, lineNumber, Math.Min(requestedEnd, lineNumber), endLine > requestedEnd);
-    }
-
-    /// <summary>Reads a bounded file from an immutable Git tree object, used when the file no longer exists in the working tree</summary>
-    public static async Task<string[]> ReadGitBlobLinesAsync(GitRunner git, string treePath, string revision, string path, int maxFileBytes)
-    {
-        ArgumentNullException.ThrowIfNull(git);
-        ArgumentException.ThrowIfNullOrWhiteSpace(treePath);
-        ArgumentException.ThrowIfNullOrWhiteSpace(revision);
-        ArgumentException.ThrowIfNullOrWhiteSpace(path);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxFileBytes);
-
-        string objectName = $"{revision}:{path}";
-        GitResult sizeResult = await git.RunAsync("-C", treePath, "cat-file", "-s", objectName);
-        if (sizeResult.ExitCode != 0 || !long.TryParse(sizeResult.StandardOutput.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out long size))
-        {
-            throw new RepositoryFileException(RepositoryFileError.ReadFailed, $"could not read deleted file '{path}' from baseline {revision}");
-        }
-
-        if (size > maxFileBytes)
-        {
-            throw new RepositoryFileException(RepositoryFileError.TooLarge, $"'{path}' exceeds maxFileBytes limit of {maxFileBytes} bytes in baseline {revision}");
-        }
-
-        GitResult contentResult = await git.RunAsync("-C", treePath, "cat-file", "blob", objectName);
-        if (contentResult.ExitCode != 0)
-        {
-            throw new RepositoryFileException(RepositoryFileError.ReadFailed, $"could not read deleted file '{path}' from baseline {revision}");
-        }
-
-        if (Encoding.UTF8.GetByteCount(contentResult.StandardOutput) > maxFileBytes)
-        {
-            throw new RepositoryFileException(RepositoryFileError.TooLarge, $"'{path}' grew beyond maxFileBytes limit of {maxFileBytes} bytes while reading baseline {revision}");
-        }
-
-        if (contentResult.StandardOutput.Contains('\0'))
-        {
-            throw new RepositoryFileException(RepositoryFileError.Binary, $"'{path}' is a binary file in baseline {revision}");
-        }
-
-        var lines = new List<string>();
-        using var reader = new StringReader(contentResult.StandardOutput);
-        while (reader.ReadLine() is { } line)
-        {
-            lines.Add(line);
-        }
-
-        return [.. lines];
+        return new RepositoryLineRange(selected, lineNumber, Math.Min(requestedEnd, lineNumber), endLine > requestedEnd, sizeBytes, hashingStream.CompleteHash());
     }
 
     private FileStream OpenFile(string relativePath)
@@ -170,7 +146,11 @@ public sealed class RepositoryFileReader
         }
     }
 
-    private StreamReader CreateReader(FileStream file, string relativePath) => new(new ReadLimitStream(file, _maxFileBytes, () => TooLarge(relativePath)), Encoding.UTF8, true, 4096);
+    private StreamReader CreateReader(FileStream file, string relativePath) => CreateReader(new ReadLimitStream(file, _maxFileBytes, () => TooLarge(relativePath)));
+
+    private HashingReadStream CreateHashingStream(FileStream file, string relativePath) => new(new ReadLimitStream(file, _maxFileBytes, () => TooLarge(relativePath)));
+
+    private static StreamReader CreateReader(Stream stream, bool leaveOpen = false) => new(stream, Encoding.UTF8, true, 4096, leaveOpen);
 
     private static void EnsureText(FileStream file, string relativePath)
     {
@@ -204,6 +184,61 @@ public sealed class RepositoryFileReader
 
     private RepositoryFileException TooLarge(string relativePath) =>
         new(RepositoryFileError.TooLarge, $"'{relativePath}' exceeds maxFileBytes limit of {_maxFileBytes} bytes");
+
+    private sealed class HashingReadStream : Stream
+    {
+        private readonly Stream _inner;
+        private readonly IncrementalHash _hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        private bool _completed;
+
+        public HashingReadStream(Stream inner)
+        {
+            _inner = inner;
+        }
+
+        public override bool CanRead => _inner.CanRead;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => _inner.Length;
+        public override long Position { get => _inner.Position; set => throw new NotSupportedException(); }
+
+        /// <summary>Completes and returns the SHA-256 hash after the stream has been fully consumed</summary>
+        public string CompleteHash()
+        {
+            if (_completed)
+            {
+                throw new InvalidOperationException("The content hash was already completed");
+            }
+
+            _completed = true;
+            return Convert.ToHexString(_hash.GetHashAndReset());
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => Read(buffer.AsSpan(offset, count));
+
+        public override int Read(Span<byte> buffer)
+        {
+            int read = _inner.Read(buffer);
+            _hash.AppendData(buffer[..read]);
+            return read;
+        }
+
+        public override void Flush() => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _hash.Dispose();
+                _inner.Dispose();
+            }
+
+            base.Dispose(disposing);
+        }
+    }
 
     private sealed class ReadLimitStream : Stream
     {

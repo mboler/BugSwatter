@@ -29,6 +29,21 @@ public sealed class FileReviewerTests : IDisposable
         Assert.Contains("    20 | int value20;", userPrompt);
     }
 
+    /// <summary>Verifies the reviewer reports exact controller-selected source metadata without source text</summary>
+    [Fact]
+    public async Task ReportsSelectedSourceRangeMetadata()
+    {
+        WriteLines("src/Foo.cs", "one", "two", "three");
+        var handler = new StubHttpMessageHandler();
+        handler.Enqueue(HttpStatusCode.OK, StubHttpMessageHandler.FinalResponse("Nothing of concern."));
+        var selections = new List<ReviewContextSelectionEvent>();
+        var reviewer = new FileReviewer(CreateLoop(handler), _tree.Path, "system prompt", 800, 100000, 0, contextObserver: selections.Add);
+
+        await reviewer.ReviewAsync(new ChangedFile("src/Foo.cs", ChangeKind.Modified, [new LineRange(1, 3)]));
+
+        Assert.Equal(new ReviewContextSelectionEvent("src/Foo.cs", 1, 3, 3, 11), Assert.Single(selections));
+    }
+
     [Fact]
     public async Task StructuredCandidateSeverityIsCapturedAndHiddenFromTheProseReport()
     {

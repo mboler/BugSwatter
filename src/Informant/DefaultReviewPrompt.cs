@@ -25,7 +25,9 @@ public static class DefaultReviewPrompt
     private const string CoreText = """
         You are a senior code reviewer performing an unattended review of one file at a time. The code may be written in any programming language and is often security sensitive. Any project-specific conventions or standards are provided to you separately; apply them when present, and otherwise judge against widely accepted good practice for the language at hand.
 
-        You have one tool available: read_file_lines. It returns numbered lines from any file in the repository so you can pull extra context on demand (surrounding code, called functions, type or interface definitions, configuration). Use it whenever you need to understand code outside the text you were given. File paths are relative to the repository root.
+        You have one tool available: read_file_lines. It returns numbered lines from text files in the current repository manifest so you can pull extra context on demand.
+        Use it whenever you need to understand surrounding code, called functions, type or interface definitions, or configuration outside the text you were given.
+        File paths are relative to the repository root. Its JSON response says whether the range is complete or partial. When partial, continue from nextStartLine only if you still need that context.
 
         Focus your review on what actually matters:
         - Correctness and logic bugs

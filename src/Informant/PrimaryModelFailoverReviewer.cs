@@ -13,6 +13,12 @@ public interface IPrimaryModelSession
 
     /// <summary>Reviews one changed file with this target</summary>
     Task<FileReviewResult> ReviewAsync(ChangedFile file, CancellationToken cancellationToken = default);
+
+    /// <summary>Requests one bounded tool-free repository plan from this target</summary>
+    Task<string> PlanAsync(string systemPrompt, string userPrompt, CancellationToken cancellationToken = default);
+
+    /// <summary>Reviews one complete clustered execution unit with this target</summary>
+    Task<ReviewUnitResult> ReviewUnitAsync(ReviewExecutionUnit unit, CancellationToken cancellationToken = default);
 }
 
 /// <summary>Production primary-model session backed by one model client and one file reviewer</summary>
@@ -20,19 +26,22 @@ public sealed class PrimaryModelSession : IPrimaryModelSession
 {
     private readonly ModelClient _client;
     private readonly FileReviewer _reviewer;
+    private readonly ClusteredReviewReviewer _clusteredReviewer;
     private readonly int _maxContextCharacters;
 
     /// <summary>Creates a session over an already-running configured model</summary>
-    public PrimaryModelSession(PrimaryModelTarget target, ModelClient client, FileReviewer reviewer, int maxContextCharacters)
+    public PrimaryModelSession(PrimaryModelTarget target, ModelClient client, FileReviewer reviewer, ClusteredReviewReviewer clusteredReviewer, int maxContextCharacters)
     {
         ArgumentNullException.ThrowIfNull(target);
         ArgumentNullException.ThrowIfNull(client);
         ArgumentNullException.ThrowIfNull(reviewer);
+        ArgumentNullException.ThrowIfNull(clusteredReviewer);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxContextCharacters);
 
         Target = target;
         _client = client;
         _reviewer = reviewer;
+        _clusteredReviewer = clusteredReviewer;
         _maxContextCharacters = maxContextCharacters;
     }
 
@@ -44,6 +53,16 @@ public sealed class PrimaryModelSession : IPrimaryModelSession
 
     /// <inheritdoc />
     public Task<FileReviewResult> ReviewAsync(ChangedFile file, CancellationToken cancellationToken = default) => _reviewer.ReviewAsync(file, cancellationToken);
+
+    /// <inheritdoc />
+    public async Task<string> PlanAsync(string systemPrompt, string userPrompt, CancellationToken cancellationToken = default)
+    {
+        ChatMessage response = await _client.CompleteAsync([new ChatMessage { Role = "system", Content = systemPrompt }, new ChatMessage { Role = "user", Content = userPrompt }], [], cancellationToken);
+        return !string.IsNullOrWhiteSpace(response.Content) ? response.Content : throw new ModelCallException("Model returned an empty repository planning answer");
+    }
+
+    /// <inheritdoc />
+    public Task<ReviewUnitResult> ReviewUnitAsync(ReviewExecutionUnit unit, CancellationToken cancellationToken = default) => _clusteredReviewer.ReviewAsync(unit, cancellationToken);
 }
 
 /// <summary>A model target that failed verification or exhausted its retries during a primary review</summary>
@@ -121,6 +140,66 @@ public sealed class PrimaryModelFailoverReviewer
         throw new InvalidOperationException("The primary model failover loop ended without a result.");
     }
 
+    /// <summary>Requests a planning batch and permanently advances to a fallback target after a model-layer failure</summary>
+    public async Task<string> PlanAsync(string systemPrompt, string userPrompt, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(systemPrompt);
+        ArgumentException.ThrowIfNullOrWhiteSpace(userPrompt);
+
+        while (_activeSession is { } session)
+        {
+            try
+            {
+                return await session.PlanAsync(systemPrompt, userPrompt, cancellationToken);
+            }
+            catch (ModelCallException ex)
+            {
+                RecordFailure(session.Target, $"repository planning failed: {ex.Message}");
+                _activeSession = null;
+                if (!await ActivateNextAsync(cancellationToken))
+                {
+                    break;
+                }
+
+                Log.Warning("Retrying repository planning batch from the beginning with fallback model target {Target}", _activeSession!.Target.Name);
+            }
+        }
+
+        string details = string.Join("; ", _failures.Select(failure => $"{failure.Target.Name}: {failure.Reason}"));
+        throw new InformantFatalException($"All configured primary models were exhausted during repository planning. {details}");
+    }
+
+    /// <summary>Reviews one clustered unit, restarting that complete unit on the next verified model after a model-layer failure</summary>
+    public async Task<ReviewUnitResult> ReviewUnitAsync(ReviewExecutionUnit unit, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(unit);
+
+        if (_activeSession is null)
+        {
+            return new ReviewUnitResult(unit, [], FileReviewFailureKind.Model, "all configured primary models were exhausted earlier in the run");
+        }
+
+        while (_activeSession is { } session)
+        {
+            ReviewUnitResult result = AttachModel(await session.ReviewUnitAsync(unit, cancellationToken), session.Target);
+            if (result.FailureKind != FileReviewFailureKind.Model)
+            {
+                return result;
+            }
+
+            RecordFailure(session.Target, result.FailureReason ?? "clustered model review failed without a reason");
+            _activeSession = null;
+            if (!await ActivateNextAsync(cancellationToken))
+            {
+                return result;
+            }
+
+            Log.Warning("Retrying review unit {Unit} from the beginning with fallback model target {Target}", unit.Id, _activeSession!.Target.Name);
+        }
+
+        throw new InvalidOperationException("The primary model failover loop ended without a clustered result");
+    }
+
     private async Task<bool> ActivateNextAsync(CancellationToken cancellationToken)
     {
         while (_nextSessionIndex < _sessions.Count)
@@ -171,4 +250,7 @@ public sealed class PrimaryModelFailoverReviewer
 
         return result with { ReviewModelName = target.ModelName, ReviewModelProfile = target.Name };
     }
+
+    private static ReviewUnitResult AttachModel(ReviewUnitResult result, PrimaryModelTarget target) =>
+        result with { ReviewModelName = target.ModelName, ReviewModelProfile = target.Name };
 }

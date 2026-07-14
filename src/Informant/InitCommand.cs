@@ -38,6 +38,9 @@ public static class InitCommand
           // "changed" reviews only files changed since the last reviewed SHA; "full" reviews the whole tree
           "reviewMode": "changed",
 
+          // "exhaustive" deeply reviews every candidate; "adaptive" may defer full-file review but still covers changed content
+          "reviewStrategy": "exhaustive",
+
           "reportDirectory": "reports",
 
           // Delete recognized report artifacts after this many days; -1 keeps them forever
@@ -51,6 +54,10 @@ public static class InitCommand
           // Markdown guidance files appended to the prompt: globs match at the working-tree root, absolute paths name
           // exact files. Defaults to none; this starter opts in with AGENTS.md, and an empty list disables it.
           "promptIncludeFiles": ["AGENTS.md"],
+
+          // Optional repository-relative files, directories, or globs to prioritize as planning context.
+          // Seeds do not bypass manifest safety checks or the configured context budget.
+          "seedPaths": [],
 
           // Target character budget per review call, kept deliberately below the model's context window
           "maxContextCharacters": 24000,
@@ -114,7 +121,8 @@ public static class InitCommand
         File.WriteAllText(promptPath, DefaultReviewPrompt.Text + Environment.NewLine);
 
         Console.WriteLine($"Wrote {InformantConfig.FileName} and {PromptFileName} to {directory}");
-        Console.WriteLine("Edit the config (repository, branch, working tree, git path, model endpoint and name), then run 'Informant verify' to prove tool-calling before the first review run. See DOCUMENTATION.md for every option");
+        Console.WriteLine("Edit the config (repository, branch, working tree, git path, model endpoint and name), then run 'Informant verify' to prove tool-calling before the first review run. "
+            + "See DOCUMENTATION.md for every option");
         
         return 0;
     }

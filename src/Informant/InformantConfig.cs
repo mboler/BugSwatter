@@ -57,6 +57,10 @@ public sealed class InformantConfig
     [JsonConverter(typeof(JsonStringEnumConverter<ReviewMode>))]
     public ReviewMode ReviewMode { get; init; } = ReviewMode.Changed;
 
+    /// <summary>Whether every candidate receives deep review or full-file review may be adaptively deferred</summary>
+    [JsonConverter(typeof(JsonStringEnumConverter<ReviewStrategy>))]
+    public ReviewStrategy ReviewStrategy { get; init; } = ReviewStrategy.Exhaustive;
+
     /// <summary>Directory the run reports and changed-file lists are written to, resolved from the configuration directory when relative</summary>
     public string ReportDirectory
     {
@@ -84,8 +88,13 @@ public sealed class InformantConfig
         init => _reviewPromptFile = value;
     }
 
-    /// <summary>Glob patterns for Markdown guidance files appended to the review prompt. Relative patterns match at the working-tree root, so a repository's own AGENTS.md informs its review; absolute paths name exact files. Defaults to none; the starter config opts in with AGENTS.md</summary>
+    /// <summary>
+    /// Glob patterns for Markdown guidance appended to the review prompt, with relative patterns rooted in the working tree and absolute patterns naming exact files.
+    /// </summary>
     public IReadOnlyList<string> PromptIncludeFiles { get; init; } = [];
+
+    /// <summary>Repository-relative files, directories, or glob patterns prioritized as initial planning context without expanding the read boundary or context budget</summary>
+    public IReadOnlyList<string> SeedPaths { get; init; } = [];
 
     /// <summary>Target character budget per review call, deliberately kept well below the model's advertised context window</summary>
     public int MaxContextCharacters { get; init; } = 24000;
@@ -162,7 +171,7 @@ public sealed class InformantConfig
         return config;
     }
 
-    /// <summary>Assembles the review prompt: the base (inline text, else prompt file, else the built-in default) plus every Markdown guidance file matched by <see cref="PromptIncludeFiles"/> in the working tree</summary>
+    /// <summary>Assembles the selected base prompt plus every Markdown guidance file matched by <see cref="PromptIncludeFiles"/> in the working tree</summary>
     public string ResolveReviewPrompt(string workingTreePath)
     {
         var builder = new StringBuilder(ResolveBasePrompt().TrimEnd());
@@ -268,7 +277,8 @@ public sealed class InformantConfig
 
         if (!Path.IsPathFullyQualified(WorkingTreePath))
         {
-            throw new InformantFatalException($"workingTreePath must be an absolute path, got '{WorkingTreePath}'. Informant only operates destructively on an explicitly configured absolute tree, never on the current directory");
+            throw new InformantFatalException($"workingTreePath must be an absolute path, got '{WorkingTreePath}'. "
+                + "Informant only operates destructively on an explicitly configured absolute tree, never on the current directory");
         }
 
         if (!File.Exists(GitExecutablePath))
@@ -282,8 +292,12 @@ public sealed class InformantConfig
         }
 
         ValidateFallbackModels();
+        ValidateSeedPaths();
 
-        RequirePositive(MaxContextCharacters, "maxContextCharacters");
+        if (MaxContextCharacters < ReadFileLinesTool.MinimumMaxResultCharacters * 4)
+        {
+            throw new InformantFatalException($"maxContextCharacters must be at least {ReadFileLinesTool.MinimumMaxResultCharacters * 4}, got {MaxContextCharacters}");
+        }
         RequirePositive(MaxFileLines, "maxFileLines");
         RequirePositive(MaxFileBytes, "maxFileBytes");
         RequirePositive(MaxModelResponseBytes, "maxModelResponseBytes");
@@ -342,6 +356,27 @@ public sealed class InformantConfig
             if (!targets.Add($"{fallback.Endpoint.TrimEnd('/')}|{fallback.ModelName}"))
             {
                 throw new InformantFatalException($"{fieldName} duplicates an earlier endpoint and model combination");
+            }
+        }
+    }
+
+    private void ValidateSeedPaths()
+    {
+        if (SeedPaths is null)
+        {
+            throw new InformantFatalException("seedPaths must be an array; use an empty array or omit it to disable configured seeds");
+        }
+
+        for (int index = 0; index < SeedPaths.Count; index++)
+        {
+            string seedPath = SeedPaths[index];
+            try
+            {
+                RepositoryRelativePath.Normalize(seedPath);
+            }
+            catch (ArgumentException ex)
+            {
+                throw new InformantFatalException($"seedPaths[{index}] must be a repository-relative file, directory, or glob pattern: {ex.Message}", ex);
             }
         }
     }

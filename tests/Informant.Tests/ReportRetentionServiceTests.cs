@@ -16,7 +16,10 @@ public sealed class ReportRetentionServiceTests : IDisposable
         "Informant-Report-2026-06-01_01-02-03.md",
         "Informant-Report-2026-06-01_01-02-03-validated.md",
         "Informant-Report-2026-06-01_01-02-03-validated.json",
-        "Informant-Changes-2026-06-01_01-02-03.json"
+        "Informant-Changes-2026-06-01_01-02-03.json",
+        "Informant-Manifest-2026-06-01_01-02-03.json",
+        "Informant-Coverage-2026-06-01_01-02-03.json",
+        "Informant-Trace-2026-06-01_01-02-03.jsonl"
     };
 
     public static TheoryData<string> UnmanagedArtifactNames => new()
@@ -28,6 +31,11 @@ public sealed class ReportRetentionServiceTests : IDisposable
         "Informant-Report-latest.md",
         "Informant-Changes-2026-06-01_01-02-03.md",
         "Informant-Changes-2026-06-01_01-02-03-validated.json",
+        "Informant-Manifest-2026-06-01_01-02-03.md",
+        "Informant-Manifest-2026-06-01_01-02-03.json.bak",
+        "Informant-Coverage-2026-06-01_01-02-03.md",
+        "Informant-Trace-2026-06-01_01-02-03.json",
+        "Informant-Trace-2026-06-01_01-02-03.jsonl.bak",
         "informant.state.json",
         "informant-.log",
         "notes.md"

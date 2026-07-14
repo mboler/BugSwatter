@@ -73,6 +73,8 @@ public sealed class SecondOpinionReviewerTests : IDisposable
         string userPrompt = request.RootElement.GetProperty("messages")[1].GetProperty("content").GetString()!;
         Assert.Contains("The local model thinks x is unused.", userPrompt);
         Assert.Contains("     3 |     int x;", userPrompt);
+        Assert.DoesNotContain("Repository manifest", userPrompt, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("planning batch", userPrompt, StringComparison.OrdinalIgnoreCase);
         Assert.False(request.RootElement.TryGetProperty("tools", out _));
     }
 
@@ -136,6 +138,35 @@ public sealed class SecondOpinionReviewerTests : IDisposable
         Assert.NotNull(await reviewer.ValidateAsync(localResult));
         using var request = JsonDocument.Parse(handler.RequestBodies[0]);
         Assert.Contains("public static class RemovedApi", request.RootElement.GetProperty("messages")[1].GetProperty("content").GetString());
+    }
+
+    /// <summary>Verifies second-opinion tool calls cannot read a live path absent from the current run manifest</summary>
+    [Fact]
+    public async Task ToolEnabledSecondOpinionCannotReadExistingPathAbsentFromManifest()
+    {
+        File.WriteAllLines(Path.Combine(_tree.Path, "Foo.cs"), ["class Foo { }"]);
+        File.WriteAllLines(Path.Combine(_tree.Path, "untracked.txt"), ["outside manifest content"]);
+        var reader = new RepositoryFileReader(_tree.Path);
+        RepositoryFileInspection inspection = reader.Inspect("Foo.cs");
+        var entry = new RepositoryManifestEntry("Foo.cs", "100644", "blob", "object", inspection.SizeBytes, inspection.LineCount, inspection.ContentHash, ".cs", true,
+            RepositoryManifestDisposition.Text, ChangeKind.Modified);
+        var manifest = new RepositoryManifest("repository", "main", reader.Root, "baseline", "tip", ReviewMode.Changed, "2026-07-14_00-00-00", DateTimeOffset.UnixEpoch, [entry]);
+        var readEvents = new List<RepositoryReadAuditEvent>();
+        var handler = new StubHttpMessageHandler();
+        handler.Enqueue(HttpStatusCode.OK, StubHttpMessageHandler.ToolCallResponse(("call_1", ReadFileLinesTool.ToolName, StubHttpMessageHandler.ReadArguments("untracked.txt", 1, 1))));
+        handler.Enqueue(HttpStatusCode.OK, StubHttpMessageHandler.FinalResponse("VERDICT complete"));
+        var client = new ModelClient(new HttpClient(handler), "https://api.example.test/v1", "frontier-1", TimeSpan.FromSeconds(5), "key");
+        var reviewer = new SecondOpinionReviewer(client, _tree.Path, "validation system prompt", 24000, 30, true, 5, manifest: manifest, readAuditObserver: readEvents.Add);
+        var localResult = new FileReviewResult(new ChangedFile("Foo.cs", ChangeKind.Modified, [new LineRange(1, 1)]), FileReviewStatus.Reviewed, "findings", 1, 1, null);
+
+        Assert.NotNull(await reviewer.ValidateAsync(localResult));
+        using var secondRequest = JsonDocument.Parse(handler.RequestBodies[1]);
+        JsonElement messages = secondRequest.RootElement.GetProperty("messages");
+        string toolResult = messages[messages.GetArrayLength() - 1].GetProperty("content").GetString()!;
+        using JsonDocument resultDocument = JsonDocument.Parse(toolResult);
+        Assert.Equal("UnknownPath", resultDocument.RootElement.GetProperty("reasonCode").GetString());
+        Assert.DoesNotContain("outside manifest content", toolResult);
+        Assert.Equal(RepositoryReadOutcome.Rejected, Assert.Single(readEvents).Outcome);
     }
 
     private SecondOpinionReviewer CreateReviewer(StubHttpMessageHandler handler, bool enableToolCalls = false) => new(new ModelClient(new HttpClient(handler), "https://api.example.test/v1", "frontier-1", TimeSpan.FromSeconds(5), "key"), _tree.Path, "validation system prompt", 100000, 30, enableToolCalls, 5);

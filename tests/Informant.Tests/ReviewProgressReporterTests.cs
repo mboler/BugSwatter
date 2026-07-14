@@ -50,6 +50,26 @@ public sealed class ReviewProgressReporterTests
         Assert.Equal(5, snapshots[^1].FileCount);
     }
 
+    [Fact]
+    public void ModelFailoverUpdatesTargetWithoutLosingCurrentFile()
+    {
+        var output = new StringWriter();
+        var reporter = new ReviewProgressReporter(ProgressOutput.Json, output);
+        reporter.ReportFile("Primary review", "primary-model", "primary", "src/Worker.cs", 2, 5);
+
+        reporter.ReportModelTarget("backup-model", "backup-server");
+
+        ReviewProgressSnapshot snapshot = output.ToString()
+            .Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries)
+            .Select(Parse)
+            .Last();
+        Assert.Equal("backup-model", snapshot.ModelName);
+        Assert.Equal("backup-server", snapshot.ModelProfile);
+        Assert.Equal("src/Worker.cs", snapshot.CurrentFile);
+        Assert.Equal(2, snapshot.FileIndex);
+        Assert.Equal(5, snapshot.FileCount);
+    }
+
     private static ReviewProgressSnapshot Parse(string line)
     {
         Assert.True(ReviewProgressMarker.TryParse(line, out ReviewProgressSnapshot? snapshot));

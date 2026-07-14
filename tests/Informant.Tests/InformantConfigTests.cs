@@ -26,6 +26,8 @@ public sealed class InformantConfigTests : IDisposable
         Assert.Equal(4 * 1024 * 1024, config.MaxModelResponseBytes);
         Assert.Equal(2, config.PerFileRetryCount);
         Assert.Equal(1800, config.RequestTimeoutSeconds);
+        Assert.Empty(config.FallbackModels);
+        Assert.Single(config.GetPrimaryModelTargets());
         Assert.Null(config.ConsoleLogging);
         Assert.Equal(config.WorkingTreePath, config.ResolvedAllowedReadRoot);
     }
@@ -93,6 +95,55 @@ public sealed class InformantConfigTests : IDisposable
         WriteConfig(values => values["modelEndpoint"] = "not a url");
         InformantFatalException ex = Assert.Throws<InformantFatalException>(() => InformantConfig.Load(_directory.Path));
         Assert.Contains("modelEndpoint", ex.Message);
+    }
+
+    [Fact]
+    public void LoadsOrderedFallbackModels()
+    {
+        WriteConfig(values => values["fallbackModels"] = new[]
+        {
+            new Dictionary<string, object?> { ["name"] = "backup-one", ["endpoint"] = "http://backup-one.example/v1", ["modelName"] = "model-one" },
+            new Dictionary<string, object?> { ["name"] = "backup-two", ["endpoint"] = "http://backup-two.example/v1", ["modelName"] = "model-two" }
+        });
+
+        InformantConfig config = InformantConfig.Load(_directory.Path);
+        IReadOnlyList<PrimaryModelTarget> targets = config.GetPrimaryModelTargets();
+
+        Assert.Equal(3, targets.Count);
+        Assert.Equal(["primary", "backup-one", "backup-two"], targets.Select(target => target.Name));
+        Assert.False(targets[0].IsFallback);
+        Assert.True(targets[1].IsFallback);
+    }
+
+    [Theory]
+    [InlineData("name", "")]
+    [InlineData("endpoint", "not-a-url")]
+    [InlineData("modelName", "")]
+    public void InvalidFallbackFieldThrowsFatal(string field, string value)
+    {
+        var fallback = new Dictionary<string, object?> { ["name"] = "backup", ["endpoint"] = "http://backup.example/v1", ["modelName"] = "backup-model" };
+        fallback[field] = value;
+        WriteConfig(values => values["fallbackModels"] = new[]
+        {
+            fallback
+        });
+
+        InformantFatalException exception = Assert.Throws<InformantFatalException>(() => InformantConfig.Load(_directory.Path));
+
+        Assert.Contains($"fallbackModels[0].{field}", exception.Message);
+    }
+
+    [Fact]
+    public void DuplicateFallbackTargetThrowsFatal()
+    {
+        WriteConfig(values => values["fallbackModels"] = new[]
+        {
+            new Dictionary<string, object?> { ["name"] = "duplicate", ["endpoint"] = "http://localhost:1234/v1/", ["modelName"] = "test-model" }
+        });
+
+        InformantFatalException exception = Assert.Throws<InformantFatalException>(() => InformantConfig.Load(_directory.Path));
+
+        Assert.Contains("duplicates", exception.Message);
     }
 
     [Theory]

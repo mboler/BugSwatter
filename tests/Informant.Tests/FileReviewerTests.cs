@@ -102,6 +102,7 @@ public sealed class FileReviewerTests : IDisposable
         FileReviewResult missing = await reviewer.ReviewAsync(new ChangedFile("gone.cs", ChangeKind.Modified, [new LineRange(1, 1)]));
         Assert.Contains("not present", missing.SkipReason);
         Assert.Equal(FileReviewStatus.Failed, missing.Status);
+        Assert.Equal(FileReviewFailureKind.Repository, missing.FailureKind);
 
         WriteLines("renamed.cs", "unchanged content");
         FileReviewResult rangeless = await reviewer.ReviewAsync(new ChangedFile("renamed.cs", ChangeKind.Renamed, []));
@@ -162,6 +163,7 @@ public sealed class FileReviewerTests : IDisposable
 
         Assert.False(result.FullyReviewed);
         Assert.Equal(FileReviewStatus.Failed, result.Status);
+        Assert.Equal(FileReviewFailureKind.Model, result.FailureKind);
         Assert.Null(result.Findings);
         Assert.Contains("failed after 2 retries", result.SkipReason);
         Assert.Equal(3, handler.RequestBodies.Count);
@@ -265,6 +267,7 @@ public sealed class FileReviewerTests : IDisposable
 
         Assert.False(result.FullyReviewed);
         Assert.Equal(FileReviewStatus.Partial, result.Status);
+        Assert.Equal(FileReviewFailureKind.Model, result.FailureKind);
         Assert.Contains("first part ok", result.Findings);
         Assert.Equal(1, result.CompletedChunks);
         Assert.Equal(2, result.TotalChunks);

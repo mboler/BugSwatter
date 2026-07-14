@@ -16,10 +16,11 @@ public sealed class ReportWriter
     private readonly string _modelEndpoint;
     private readonly int _maxContextCharacters;
     private readonly int _maxFileLines;
+    private readonly IReadOnlyList<PrimaryModelTarget> _modelTargets;
     private DateTimeOffset _startedAt;
 
     /// <summary>Creates the report writer for this run; the review model, endpoint and context settings are recorded in the header</summary>
-    public ReportWriter(string directory, string runStamp, string modelName, string modelEndpoint, int maxContextCharacters, int maxFileLines)
+    public ReportWriter(string directory, string runStamp, string modelName, string modelEndpoint, int maxContextCharacters, int maxFileLines, IReadOnlyList<PrimaryModelTarget>? modelTargets = null)
     {
         Directory.CreateDirectory(directory);
         _path = Path.Combine(directory, $"Informant-Report-{runStamp}.md");
@@ -27,6 +28,7 @@ public sealed class ReportWriter
         _modelEndpoint = modelEndpoint;
         _maxContextCharacters = maxContextCharacters;
         _maxFileLines = maxFileLines;
+        _modelTargets = modelTargets ?? [new PrimaryModelTarget("primary", modelEndpoint, modelName, false)];
     }
 
     /// <summary>Full path of the report file</summary>
@@ -52,6 +54,7 @@ public sealed class ReportWriter
         builder.AppendLine($"| Reviewed tip SHA | {tipSha} |");
         builder.AppendLine($"| Review model | {_modelName} |");
         builder.AppendLine($"| Model endpoint | {_modelEndpoint} |");
+        builder.AppendLine($"| Configured fallback models | {_modelTargets.Count - 1} |");
         builder.AppendLine($"| Context budget | {_maxContextCharacters} characters |");
         builder.AppendLine($"| Max file lines before chunking | {_maxFileLines} |");
         builder.AppendLine($"| Files reviewed | {PendingReviewed} |");
@@ -75,6 +78,10 @@ public sealed class ReportWriter
         builder.AppendLine();
         builder.AppendLine($"Status: {result.File.Kind} | Changed line ranges: {FormatRanges(result.File.ChangedRanges)}");
         builder.AppendLine($"Review result: {result.Status}");
+        if (result.ReviewModelName is not null)
+        {
+            builder.AppendLine($"Review model: {result.ReviewModelProfile ?? "primary"} (`{result.ReviewModelName}`)");
+        }
         builder.AppendLine();
 
         if (result.TotalChunks > 1)
@@ -108,7 +115,7 @@ public sealed class ReportWriter
     }
 
     /// <summary>Appends the run summary, lists skipped or partial files with reasons, and patches the header counts and duration</summary>
-    public void Finalize(int reviewedCount, IReadOnlyList<(string Path, string Reason)> skipped, TimeSpan duration)
+    public void Finalize(int reviewedCount, IReadOnlyList<(string Path, string Reason)> skipped, TimeSpan duration, IReadOnlyList<PrimaryModelFailure>? modelFailures = null)
     {
         ArgumentNullException.ThrowIfNull(skipped);
 
@@ -124,6 +131,17 @@ public sealed class ReportWriter
             foreach ((string path, string reason) in skipped)
             {
                 builder.AppendLine($"- {path}: {reason}");
+            }
+        }
+
+        builder.AppendLine();
+        builder.AppendLine($"Primary model target failures: {modelFailures?.Count ?? 0}");
+        if (modelFailures is { Count: > 0 })
+        {
+            builder.AppendLine();
+            foreach (PrimaryModelFailure failure in modelFailures)
+            {
+                builder.AppendLine($"- {failure.Target.Name} (`{failure.Target.ModelName}`): {failure.Reason}");
             }
         }
 

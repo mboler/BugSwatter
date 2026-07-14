@@ -21,6 +21,26 @@ public sealed class JobConfigReaderTests : IDisposable
     }
 
     [Fact]
+    public void ReadsPreferredAndDistinctFallbackEndpointsInOrder()
+    {
+        string path = Path.Combine(_directory.Path, "informant.json");
+        File.WriteAllText(path, """
+            {
+              "modelEndpoint": "http://primary.example/v1",
+              "fallbackModels": [
+                { "name": "backup-one", "endpoint": "http://backup-one.example/v1", "modelName": "one" },
+                { "name": "same-server", "endpoint": "http://primary.example/v1", "modelName": "two" },
+                { "name": "backup-two", "endpoint": "http://backup-two.example/v1", "modelName": "three" }
+              ]
+            }
+            """);
+
+        IReadOnlyList<string> endpoints = JobConfigReader.TryReadModelEndpoints(path);
+
+        Assert.Equal(["http://primary.example/v1", "http://backup-one.example/v1", "http://backup-two.example/v1"], endpoints);
+    }
+
+    [Fact]
     public void ReadsEffectiveEnvironmentOverride()
     {
         string path = Path.Combine(_directory.Path, "informant.json");

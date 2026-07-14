@@ -30,6 +30,11 @@ public static class InitCommand
           "modelEndpoint": "http://localhost:1234/v1",
           "modelName": "your-model-name",
 
+          // Optional ordered alternatives that must already be loaded and serving requests; Informant never loads models.
+          // After retries are exhausted, the failed file is restarted on the next verified target and the run keeps one report.
+          // Example: [{ "name": "backup-server", "endpoint": "http://backup-host:1234/v1", "modelName": "backup-model" }]
+          "fallbackModels": [],
+
           // "changed" reviews only files changed since the last reviewed SHA; "full" reviews the whole tree
           "reviewMode": "changed",
 

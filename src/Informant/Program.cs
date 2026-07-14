@@ -132,17 +132,15 @@ internal static class Program
         string changesPath = ChangeSetFile.Write(config.ReportDirectory, runStamp, baselineSha, tipSha, config.ReviewMode, files);
         Log.Information("Change set with {Count} files persisted to {Path}", files.Count, changesPath);
 
-        var report = new ReportWriter(config.ReportDirectory, runStamp, config.ModelName, config.ModelEndpoint, config.MaxContextCharacters, config.MaxFileLines);
+        IReadOnlyList<PrimaryModelTarget> modelTargets = config.GetPrimaryModelTargets();
+        var report = new ReportWriter(config.ReportDirectory, runStamp, config.ModelName, config.ModelEndpoint, config.MaxContextCharacters, config.MaxFileLines, modelTargets);
         report.WriteHeader(config.RepositoryUrl, config.Branch, config.ReviewMode, baselineSha, tipSha, startedAt);
 
         progress.ReportPhase("Verifying primary model", config.ModelName, "primary");
-        var client = new ModelClient(SharedHttpClient, config.ModelEndpoint, config.ModelName, TimeSpan.FromSeconds(config.RequestTimeoutSeconds), maxResponseBytes: config.MaxModelResponseBytes,
-            progressObserver: progress.ObserveModelCall);
-        await ToolCallingVerifier.RequireToolCallingAsync(client, config.MaxContextCharacters);
-
-        var loop = new ToolCallLoop(client, new ReadFileLinesTool(config.ResolvedAllowedReadRoot, config.MaxFileBytes), config.MaxContextCharacters);
-        var reviewer = new FileReviewer(loop, config.WorkingTreePath, config.ResolveReviewPrompt(config.WorkingTreePath), config.MaxFileLines, config.MaxContextCharacters,
-            config.PerFileRetryCount, config.MaxFileBytes, git);
+        string reviewPrompt = config.ResolveReviewPrompt(config.WorkingTreePath);
+        IPrimaryModelSession[] sessions = [.. modelTargets.Select(target => CreatePrimaryModelSession(target, config, reviewPrompt, git, progress))];
+        var reviewer = new PrimaryModelFailoverReviewer(sessions, target => progress.ReportModelTarget(target.ModelName, target.Name));
+        await reviewer.InitializeAsync();
 
         int reviewedCount = 0;
         var skipped = new List<(string Path, string Reason)>();
@@ -151,7 +149,8 @@ internal static class Program
         {
             var file = files[index];
             Log.Information("Reviewing {Path} ({Position}/{Count})", file.Path, index + 1, files.Count);
-            progress.ReportFile("Primary review", config.ModelName, "primary", file.Path, index + 1, files.Count);
+            PrimaryModelTarget activeTarget = reviewer.ActiveTarget ?? modelTargets[^1];
+            progress.ReportFile("Primary review", activeTarget.ModelName, activeTarget.Name, file.Path, index + 1, files.Count);
 
             var result = await reviewer.ReviewAsync(file);
             report.AppendFileSection(result);
@@ -168,7 +167,7 @@ internal static class Program
         }
 
         progress.ReportPhase("Writing primary report");
-        report.Finalize(reviewedCount, skipped, stopwatch.Elapsed);
+        report.Finalize(reviewedCount, skipped, stopwatch.Elapsed, reviewer.Failures);
         bool baselineAdvanced = ReviewCompletion.CanAdvanceBaseline(results);
         if (baselineAdvanced)
         {
@@ -203,9 +202,25 @@ internal static class Program
             }
         }
 
-        progress.ReportCompleted();
+        if (baselineAdvanced)
+        {
+            progress.ReportCompleted();
+        }
+        else
+        {
+            progress.ReportFailed();
+        }
         EmitReportPath(primaryReportPath);
-        return 0;
+        return baselineAdvanced ? 0 : 1;
+    }
+
+    private static IPrimaryModelSession CreatePrimaryModelSession(PrimaryModelTarget target, InformantConfig config, string reviewPrompt, GitRunner git, ReviewProgressReporter progress)
+    {
+        var client = new ModelClient(SharedHttpClient, target.Endpoint, target.ModelName, TimeSpan.FromSeconds(config.RequestTimeoutSeconds), maxResponseBytes: config.MaxModelResponseBytes,
+            progressObserver: progress.ObserveModelCall);
+        var loop = new ToolCallLoop(client, new ReadFileLinesTool(config.ResolvedAllowedReadRoot, config.MaxFileBytes), config.MaxContextCharacters);
+        var reviewer = new FileReviewer(loop, config.WorkingTreePath, reviewPrompt, config.MaxFileLines, config.MaxContextCharacters, config.PerFileRetryCount, config.MaxFileBytes, git);
+        return new PrimaryModelSession(target, client, reviewer, config.MaxContextCharacters);
     }
 
     private static void ApplyReportRetention(InformantConfig config)
@@ -415,19 +430,24 @@ internal static class Program
 
     private static async Task<int> VerifyToolCallingAsync(InformantConfig config)
     {
-        var client = new ModelClient(SharedHttpClient, config.ModelEndpoint, config.ModelName, TimeSpan.FromSeconds(config.RequestTimeoutSeconds), maxResponseBytes: config.MaxModelResponseBytes);
-
-        var result = await ToolCallingVerifier.VerifyAsync(client, config.MaxContextCharacters);
-        Log.Information("Tool-calling verification against {Endpoint} with model {Model}: {Outcome}. {Detail}", config.ModelEndpoint, config.ModelName, result.Success ? "PASSED" : "FAILED", result.Detail);
-
-        // The Serilog console sink already surfaces the verdict when it is active; when it is off (redirected output
-        // or a config override) write the verdict to stdout directly so the invoker always receives exactly one copy
-        if (!_consoleLogging)
+        bool allPassed = true;
+        foreach (PrimaryModelTarget target in config.GetPrimaryModelTargets())
         {
-            Console.WriteLine($"Tool-calling verification {(result.Success ? "PASSED" : "FAILED")}: {result.Detail}");
+            var client = new ModelClient(SharedHttpClient, target.Endpoint, target.ModelName, TimeSpan.FromSeconds(config.RequestTimeoutSeconds), maxResponseBytes: config.MaxModelResponseBytes);
+            VerificationResult result = await ToolCallingVerifier.VerifyAsync(client, config.MaxContextCharacters);
+            allPassed &= result.Success;
+            Log.Information("Tool-calling verification for {Target} against {Endpoint} with model {Model}: {Outcome}. {Detail}", target.Name, target.Endpoint, target.ModelName,
+                result.Success ? "PASSED" : "FAILED", result.Detail);
+
+            // The Serilog console sink already surfaces the verdict when it is active; when it is off (redirected output
+            // or a config override) write the verdict to stdout directly so the invoker always receives exactly one copy
+            if (!_consoleLogging)
+            {
+                Console.WriteLine($"Tool-calling verification for {target.Name} {(result.Success ? "PASSED" : "FAILED")}: {result.Detail}");
+            }
         }
 
-        return result.Success ? 0 : 1;
+        return allPassed ? 0 : 1;
     }
 
     private static async Task<IReadOnlyList<ChangedFile>> DetectReviewSetAsync(InformantConfig config, GitRunner git, string? baselineSha, string tipSha)
@@ -497,7 +517,7 @@ internal static class Program
         Console.WriteLine("Usage (run from the directory holding informant.json, or pass --config):");
         Console.WriteLine("  Informant [--config <path>] [--progress json]   run a review");
         Console.WriteLine("  Informant init                        write a starter informant.json and review-prompt.txt");
-        Console.WriteLine("  Informant verify [--config <path>]    prove the configured model performs tool-calling, then exit");
+        Console.WriteLine("  Informant verify [--config <path>]    prove all configured primary models perform tool-calling, then exit");
         Console.WriteLine("  Informant validate [--config <path>]  check config, endpoint reachability and secrets, then exit");
         Console.WriteLine("  Informant help                        show this help");
         Console.WriteLine();

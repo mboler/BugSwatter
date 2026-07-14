@@ -88,6 +88,24 @@ public sealed class ReviewProgressReporter
         }
     }
 
+    /// <summary>Updates the active model without clearing the current phase or file when a primary review fails over between targets</summary>
+    public void ReportModelTarget(string modelName, string modelProfile)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(modelName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(modelProfile);
+        if (!_enabled)
+        {
+            return;
+        }
+
+        lock (_gate)
+        {
+            _modelName = modelName;
+            _modelProfile = modelProfile;
+            WriteSnapshot();
+        }
+    }
+
     /// <summary>Observes model request lifecycle events, request counts, and provider-reported token usage</summary>
     public void ObserveModelCall(ModelCallProgress progress)
     {

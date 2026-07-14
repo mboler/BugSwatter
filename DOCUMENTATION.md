@@ -36,7 +36,7 @@ Running BugSwatter requires:
 - An OpenAI-compatible endpoint for the primary review model
 - A model that supports OpenAI-style tool calling for the primary review
 
-The first release has no primary-model API-key setting. The primary endpoint must accept requests without application-level authentication, normally because it is a local model server or an internal gateway. Keep such an endpoint on a trusted network. The optional second opinion supports an API-key reference.
+Primary and fallback models have no API-key setting. Their endpoints must accept requests without application-level authentication, normally because they are local model servers or internal gateways. Keep those endpoints on a trusted network. The optional second opinion supports an API-key reference.
 
 The framework-dependent release archives do not include .NET. Informant needs the .NET 10 runtime. Marshal also hosts Kestrel when its web server is enabled, so installing both the .NET 10 runtime and ASP.NET Core 10 runtime is the simplest supported deployment. The .NET 10 SDK includes both and is sufficient on development machines.
 
@@ -67,9 +67,9 @@ Download the Windows archive and `SHA256SUMS.txt` from the same GitHub Release. 
 The Windows executables are not code-signed, so Windows may identify them as coming from an unknown publisher or display a SmartScreen warning. Download releases only from this GitHub repository, and proceed only after the archive's checksum matches `SHA256SUMS.txt`.
 
 ```powershell
-Get-FileHash .\BugSwatter-0.6.1-win-x64.zip -Algorithm SHA256
-Expand-Archive .\BugSwatter-0.6.1-win-x64.zip -DestinationPath C:\BugSwatter\releases
-Move-Item C:\BugSwatter\releases\BugSwatter-0.6.1-win-x64 C:\BugSwatter\bin
+Get-FileHash .\BugSwatter-0.7.0-win-x64.zip -Algorithm SHA256
+Expand-Archive .\BugSwatter-0.7.0-win-x64.zip -DestinationPath C:\BugSwatter\releases
+Move-Item C:\BugSwatter\releases\BugSwatter-0.7.0-win-x64 C:\BugSwatter\bin
 C:\BugSwatter\bin\Informant.exe help
 ```
 
@@ -83,7 +83,7 @@ After comparing the archive's SHA-256 value with `SHA256SUMS.txt`:
 
 ```bash
 sudo mkdir -p /opt/bugswatter
-sudo tar -xzf BugSwatter-0.6.1-linux-x64.tar.gz -C /opt/bugswatter --strip-components=1
+sudo tar -xzf BugSwatter-0.7.0-linux-x64.tar.gz -C /opt/bugswatter --strip-components=1
 sudo chmod 755 /opt/bugswatter/Informant /opt/bugswatter/Marshal
 /opt/bugswatter/Informant help
 ```
@@ -106,7 +106,7 @@ C:\BugSwatter\bin\Informant.exe
 
 The `workingTreePath` must be an absolute path dedicated to Informant. It is cloned when missing and destructively reset and cleaned on later runs. Never use your development checkout.
 
-`validate` checks configuration, paths, endpoint reachability, and required secret references. `verify` performs the stronger tool-calling probe required by a real review. Run both as the same operating-system account that will run Informant unattended.
+`validate` checks configuration, paths, every primary and fallback endpoint, and required secret references. `verify` performs the stronger tool-calling probe against every configured primary-review model. Run both as the same operating-system account that will run Informant unattended.
 
 ## Safety model
 
@@ -136,7 +136,7 @@ These controls limit what the model can do, but they do not make model findings 
 | `Informant [--config <path>] [--progress json]` | Run a review, optionally adding machine-readable progress snapshots to standard output |
 | `Informant init` | Write starter files in the current directory without overwriting existing files |
 | `Informant validate [--config <path>]` | Validate configuration, endpoint reachability, paths, and secrets |
-| `Informant verify [--config <path>]` | Prove that the primary model performs tool calling |
+| `Informant verify [--config <path>]` | Prove that every configured primary and fallback model performs tool calling |
 | `Informant help` | Show command-line help |
 
 Without `--config`, Informant reads `informant.json` from the current directory. Quote paths containing spaces:
@@ -163,6 +163,7 @@ JSON comments and trailing commas are supported.
 | `gitExecutablePath` | Git executable path | required |
 | `modelEndpoint` | OpenAI-compatible primary model base URL | required |
 | `modelName` | Model identifier sent to the endpoint | required |
+| `fallbackModels` | Ordered already-running alternatives, each with `name`, `endpoint`, and `modelName` | empty |
 | `allowedReadRoot` | Root available to `read_file_lines` | working tree |
 | `reviewMode` | `changed` or `full` | `changed` |
 | `reportDirectory` | Report and change-list directory | `reports` |
@@ -187,12 +188,35 @@ JSON comments and trailing commas are supported.
 
 The context budget is measured in characters, not tokens. Lower values reduce prompt size and cost but can reduce useful context. Higher values can slow local inference and increase cloud charges.
 
+### Primary-model failover
+
+The preferred `modelEndpoint` and `modelName` remain the first target. `fallbackModels` adds ordered alternatives without changing existing single-model configurations:
+
+```jsonc
+"modelEndpoint": "http://primary-model-host:1234/v1",
+"modelName": "primary-review-model",
+"fallbackModels": [
+  {
+    "name": "backup-server",
+    "endpoint": "http://backup-model-host:1234/v1",
+    "modelName": "backup-review-model"
+  }
+]
+```
+
+Every configured model must already be loaded and serving its OpenAI-compatible endpoint. Informant never starts a model server, loads or unloads a model, selects a GPU, or changes model-server settings.
+
+Informant first applies `perFileRetryCount` to the selected target. If model requests still fail, or if the target fails the mandatory tool-calling probe, that target is unavailable for the remainder of the run and Informant advances to the next target. A file that partially completed is restarted from the beginning on the fallback so one file never combines findings from two models. Files already completed are not repeated, and subsequent files stay on the fallback. A normal response with no findings and an unparseable candidate-severity block do not cause failover; unparseable severity remains `undetermined`.
+
+Repository and file-read failures do not cause model failover because another model cannot repair them. Cancellation also stops the run instead of starting a fallback. If every target fails, the report remains incomplete, the command exits with code `1`, and the baseline does not advance.
+
 ## Environment-variable overrides
 
 Both applications layer prefixed environment variables over JSON configuration. A double underscore separates nested sections:
 
 ```text
 INFORMANT_ModelName=review-model
+INFORMANT_FallbackModels__0__ModelName=backup-review-model
 INFORMANT_SecondOpinion__ModelName=validator-model
 INFORMANT_ReportRetentionDays=45
 MARSHAL_PerRunTimeoutMinutes=240
@@ -230,7 +254,7 @@ A review with work to do writes:
 - `Informant-Report-<timestamp>-validated.md` when the second opinion completes
 - `Informant-Report-<timestamp>-validated.json` when the second opinion completes
 
-The primary report records repository, branch, review mode, baseline and tip SHAs, model identity, timing, reviewed files, changed line ranges, findings, skipped files, and completion status. Sections are appended as files complete, so a process failure retains finished work and leaves an incomplete marker in the report.
+The primary report records repository, branch, review mode, baseline and tip SHAs, the model used for each reviewed file, primary-target failures, timing, reviewed files, changed line ranges, findings, skipped files, and completion status. Failover still produces one primary report. Sections are appended as files complete, so a process failure retains finished work and leaves an incomplete marker in the report.
 
 Deleted files are reviewed from the immutable baseline Git object. The prompt asks the model to examine surviving references and consequences of removal. Renames and filenames containing spaces or leading or trailing spaces are parsed from Git's null-delimited output rather than whitespace splitting.
 
@@ -380,7 +404,7 @@ Marshal is an optional long-running dispatcher. It reviews no code itself. Trigg
 
 All jobs share one bounded in-memory queue with a single consumer. Duplicate work for the same Informant configuration coalesces. A trigger received while that repository is running creates at most one rerun. The queue holds up to 128 entries and is not persisted across restarts.
 
-Each Informant child has a configurable timeout. Timeout or Marshal shutdown kills the complete Informant process tree where the operating system permits it. Before starting a job, Marshal probes its model endpoint. Unreachable endpoints use per-repository exponential backoff from 30 seconds to 15 minutes.
+Each Informant child has a configurable timeout. Timeout or Marshal shutdown kills the complete Informant process tree where the operating system permits it. Before starting a job, Marshal probes the preferred and fallback model endpoints. It launches Informant when any one answers and lets Informant make the final verified selection. When none answer, the job uses per-repository exponential backoff from 30 seconds to 15 minutes.
 
 ## Marshal configuration
 
@@ -652,7 +676,7 @@ Build local framework-dependent release archives with:
 
 The Linux archive should be produced on Linux so executable permission bits are set correctly. The script reads the version from `Directory.Build.props`, refuses to overwrite an existing archive, and can validate an expected `v<version>` tag.
 
-GitHub Actions runs build, test, dependency policy, vulnerability reporting, and package smoke tests on Windows and Linux for pushes and pull requests. Pushing a tag such as `v0.6.1` first runs the same CI, builds both archives, writes `SHA256SUMS.txt`, and creates a GitHub Release. The tag must exactly match the version in `Directory.Build.props`. Release packages remain framework-dependent and do not bundle .NET.
+GitHub Actions runs build, test, dependency policy, vulnerability reporting, and package smoke tests on Windows and Linux for pushes and pull requests. Pushing a tag such as `v0.7.0` first runs the same CI, builds both archives, writes `SHA256SUMS.txt`, and creates a GitHub Release. The tag must exactly match the version in `Directory.Build.props`. Release packages remain framework-dependent and do not bundle .NET.
 
 Opt-in integration tests are skipped in ordinary CI. Live model tests require `INFORMANT_IT=1`, `INFORMANT_IT_ENDPOINT`, and `INFORMANT_IT_MODEL`; optional second-opinion coverage also uses `INFORMANT_IT_SO_ENDPOINT` and `INFORMANT_IT_SO_MODEL`. The ACS email test uses `BUGSWATTER_EMAIL_IT=1`, `BUGSWATTER_EMAIL_IT_ACS_CONNECTION`, `BUGSWATTER_EMAIL_IT_FROM`, and `BUGSWATTER_EMAIL_IT_TO`. Never commit those values.
 

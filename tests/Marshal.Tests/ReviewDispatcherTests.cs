@@ -201,6 +201,34 @@ public sealed class ReviewDispatcherTests
         Assert.True(checker.Calls >= 2, $"expected at least two health checks, saw {checker.Calls}");
     }
 
+    [Fact]
+    public async Task ReachableFallbackLetsInformantRunWhenPreferredEndpointIsDown()
+    {
+        using var directory = new TempDirectory();
+        string configPath = Path.Combine(directory.Path, "informant.json");
+        File.WriteAllText(configPath, """
+            {
+              "modelEndpoint": "http://primary.example/v1",
+              "fallbackModels": [
+                { "name": "backup", "endpoint": "http://backup.example/v1", "modelName": "backup-model" }
+              ]
+            }
+            """);
+
+        var queue = new ReviewQueue();
+        var runner = new StubRunner();
+        var checker = new StubHealthChecker { MissesBeforeReachable = 1 };
+        ReviewDispatcher dispatcher = CreateDispatcher(queue, runner, checker);
+
+        queue.Enqueue(new ReviewJobConfig { Name = "fallback", InformantConfigPath = configPath }, "initial");
+        await dispatcher.StartAsync(CancellationToken.None);
+        await WaitUntilAsync(() => runner.TotalRuns == 1, TimeSpan.FromSeconds(10));
+        await dispatcher.StopAsync(CancellationToken.None);
+
+        Assert.Equal(1, runner.TotalRuns);
+        Assert.Equal(2, checker.Calls);
+    }
+
     private static ReviewDispatcher CreateDispatcher(ReviewQueue queue, IInformantRunner runner, IEndpointHealthChecker checker, BackoffTracker? backoff = null, CurrentReviewStatusStore? current = null) =>
         new(queue, runner, checker, backoff ?? new BackoffTracker(TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(15)),
             new RunHistoryStore(Path.Combine(Path.GetTempPath(), "marshal-history-" + Guid.NewGuid().ToString("N") + ".jsonl")), current ?? new CurrentReviewStatusStore());

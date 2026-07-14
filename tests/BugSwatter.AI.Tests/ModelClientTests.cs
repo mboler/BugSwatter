@@ -64,6 +64,34 @@ public sealed class ModelClientTests
     }
 
     [Fact]
+    public async Task RateLimitRetriesAfterProviderDelay()
+    {
+        var handler = new StubHttpMessageHandler();
+        handler.EnqueueRateLimited("""{"error":"slow down"}""", TimeSpan.Zero);
+        handler.Enqueue(HttpStatusCode.OK, StubHttpMessageHandler.FinalResponse("ok"));
+
+        ChatMessage reply = await CreateClient(handler).CompleteAsync([new ChatMessage { Role = "user", Content = "go" }], []);
+
+        Assert.Equal("ok", reply.Content);
+        Assert.Equal(2, handler.RequestBodies.Count);
+    }
+
+    [Fact]
+    public async Task RepeatedRateLimitStopsAfterBoundedRetries()
+    {
+        var handler = new StubHttpMessageHandler();
+        for (int attempt = 0; attempt < 4; attempt++)
+        {
+            handler.EnqueueRateLimited("""{"error":"still limited"}""", TimeSpan.Zero);
+        }
+
+        ModelCallException ex = await Assert.ThrowsAsync<ModelCallException>(() => CreateClient(handler).CompleteAsync([new ChatMessage { Role = "user", Content = "go" }], []));
+
+        Assert.Contains("429", ex.Message);
+        Assert.Equal(4, handler.RequestBodies.Count);
+    }
+
+    [Fact]
     public async Task UnparseableBodyThrowsModelCallException()
     {
         var handler = new StubHttpMessageHandler();

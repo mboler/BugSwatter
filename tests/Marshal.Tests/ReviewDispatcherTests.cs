@@ -38,6 +38,27 @@ internal sealed class StubRunner : IInformantRunner
     }
 }
 
+/// <summary>Runner that remains active until a test explicitly releases it</summary>
+internal sealed class GatedRunner : IInformantRunner
+{
+    private readonly TaskCompletionSource _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Completes when the dispatcher has entered the runner</summary>
+    public Task Started => _started.Task;
+
+    /// <summary>Allows the active run to complete</summary>
+    public void Release() => _release.TrySetResult();
+
+    /// <inheritdoc />
+    public async Task<ReviewRunOutcome> RunAsync(ReviewJobConfig job, CancellationToken cancellationToken)
+    {
+        _started.TrySetResult();
+        await _release.Task.WaitAsync(cancellationToken);
+        return new ReviewRunOutcome(0, TimeSpan.Zero, false, null, null);
+    }
+}
+
 /// <summary>Stub checker: the first <see cref="MissesBeforeReachable"/> checks report unreachable, then reachable</summary>
 internal sealed class StubHealthChecker : IEndpointHealthChecker
 {
@@ -150,16 +171,17 @@ public sealed class ReviewDispatcherTests
     public async Task CurrentActivityExistsOnlyWhileTheRunnerIsActive()
     {
         var queue = new ReviewQueue();
-        var runner = new StubRunner { RunDuration = TimeSpan.FromMilliseconds(250) };
+        var runner = new GatedRunner();
         var current = new CurrentReviewStatusStore();
         ReviewDispatcher dispatcher = CreateDispatcher(queue, runner, new StubHealthChecker(), current: current);
 
         queue.Enqueue(new ReviewJobConfig { Name = "visible", InformantConfigPath = @"C:\jobs\visible\informant.json" }, "manual");
         await dispatcher.StartAsync(CancellationToken.None);
 
-        await WaitUntilAsync(() => current.Snapshot() is not null, TimeSpan.FromSeconds(5));
+        await runner.Started.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal("Starting Informant", current.Snapshot()!.Phase);
-        await WaitUntilAsync(() => runner.TotalRuns == 1 && current.Snapshot() is null, TimeSpan.FromSeconds(10));
+        runner.Release();
+        await WaitUntilAsync(() => current.Snapshot() is null, TimeSpan.FromSeconds(5));
         await dispatcher.StopAsync(CancellationToken.None);
     }
 

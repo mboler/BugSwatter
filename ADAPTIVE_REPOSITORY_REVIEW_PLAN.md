@@ -319,17 +319,17 @@ Planned commit: `Audit and bound model file requests`
 
 ### Phase 3: Repository briefing, context packer, and planning contract
 
-- [ ] Add root guidance and manifest prioritization
-- [ ] Add validated `seedPaths` configuration
-- [ ] Implement deterministic character-budget packing
-- [ ] Add compact and partitioned manifest representations
-- [ ] Define the versioned planning JSON contract
-- [ ] Parse and validate planned paths, units, priorities, requested context, and deferrals
-- [ ] Add deterministic fallback and omitted-change repair
-- [ ] Add tests using C#, Python, JavaScript, mixed-language, documentation-only, and unknown-extension fixtures
-- [ ] Add tests for malformed JSON, invented paths, duplicated paths, omitted changes, tiny budgets, and weak planning output
-- [ ] Build the solution and run the affected tests
-- [ ] Update this document with results
+- [x] Add root guidance and manifest prioritization
+- [x] Add validated `seedPaths` configuration
+- [x] Implement deterministic character-budget packing
+- [x] Add compact and partitioned manifest representations
+- [x] Define the versioned planning JSON contract
+- [x] Parse and validate planned paths, units, priorities, requested context, and deferrals
+- [x] Add deterministic fallback and omitted-change repair
+- [x] Add tests using C#, Python, JavaScript, mixed-language, documentation-only, and unknown-extension fixtures
+- [x] Add tests for malformed JSON, invented paths, duplicated paths, omitted changes, tiny budgets, and weak planning output
+- [x] Build the solution and run the affected tests
+- [x] Update this document with results
 
 Planned commit: `Add code-agnostic repository planning`
 
@@ -460,3 +460,4 @@ At minimum, automated coverage must include:
 | 2026-07-14 | Plan | Approved | Decisions approved, feature branch created, and no production code changed | `Document adaptive repository review overhaul` |
 | 2026-07-14 | 1 | Complete | Immutable Git-tree catalog and bounded common file inspection added; no-change integration proves in-memory recalculation without artifacts or a model call; solution build has zero warnings; 556 tests ran, 550 passed, and 6 opt-in live tests skipped | `Add per-run repository manifest` |
 | 2026-07-14 | 2 | Complete | Manifest-gated live reads now verify path, type, size, line count, and SHA-256 content; tool results have explicit line and character bounds; controller selections and model tool activity are written to a metadata-only retained JSONL trace; 571 tests ran, 565 passed, and 6 opt-in live tests skipped | `Audit and bound model file requests` |
+| 2026-07-14 | 3 | Complete | Added safe repository-relative path syntax in Common, validated seed paths, code-agnostic role-ranked briefings, bounded exact-path manifest partitions, deterministic whole-block context packing, and a versioned plan validator with fallback and coverage repair; production orchestration remains unchanged until Phase 4; solution build has zero warnings; 603 tests ran, 597 passed, and 6 opt-in live tests skipped | `Add code-agnostic repository planning` |

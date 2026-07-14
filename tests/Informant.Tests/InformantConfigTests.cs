@@ -27,6 +27,7 @@ public sealed class InformantConfigTests : IDisposable
         Assert.Equal(2, config.PerFileRetryCount);
         Assert.Equal(1800, config.RequestTimeoutSeconds);
         Assert.Empty(config.FallbackModels);
+        Assert.Empty(config.SeedPaths);
         Assert.Single(config.GetPrimaryModelTargets());
         Assert.Null(config.ConsoleLogging);
         Assert.Equal(config.WorkingTreePath, config.ResolvedAllowedReadRoot);
@@ -165,6 +166,29 @@ public sealed class InformantConfigTests : IDisposable
         InformantFatalException exception = Assert.Throws<InformantFatalException>(() => InformantConfig.Load(_directory.Path));
 
         Assert.Contains("maxContextCharacters", exception.Message);
+    }
+
+    /// <summary>Verifies repository-relative files, directories, and glob patterns load in configured order</summary>
+    [Fact]
+    public void LoadsSeedPaths()
+    {
+        WriteConfig(values => values["seedPaths"] = new[] { "src", "tools/*.ps1", "docs/**/*.md" });
+
+        Assert.Equal(["src", "tools/*.ps1", "docs/**/*.md"], InformantConfig.Load(_directory.Path).SeedPaths);
+    }
+
+    /// <summary>Verifies seeds cannot escape or replace the repository-root planning boundary</summary>
+    [Theory]
+    [InlineData("../outside")]
+    [InlineData("C:\\outside")]
+    [InlineData("/outside")]
+    public void RejectsUnsafeSeedPath(string seedPath)
+    {
+        WriteConfig(values => values["seedPaths"] = new[] { seedPath });
+
+        InformantFatalException exception = Assert.Throws<InformantFatalException>(() => InformantConfig.Load(_directory.Path));
+
+        Assert.Contains("seedPaths[0]", exception.Message);
     }
 
     [Theory]

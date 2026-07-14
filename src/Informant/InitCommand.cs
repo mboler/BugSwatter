@@ -52,6 +52,10 @@ public static class InitCommand
           // exact files. Defaults to none; this starter opts in with AGENTS.md, and an empty list disables it.
           "promptIncludeFiles": ["AGENTS.md"],
 
+          // Optional repository-relative files, directories, or globs to prioritize as planning context.
+          // Seeds do not bypass manifest safety checks or the configured context budget.
+          "seedPaths": [],
+
           // Target character budget per review call, kept deliberately below the model's context window
           "maxContextCharacters": 24000,
 

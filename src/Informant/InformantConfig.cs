@@ -87,6 +87,9 @@ public sealed class InformantConfig
     /// <summary>Glob patterns for Markdown guidance files appended to the review prompt. Relative patterns match at the working-tree root, so a repository's own AGENTS.md informs its review; absolute paths name exact files. Defaults to none; the starter config opts in with AGENTS.md</summary>
     public IReadOnlyList<string> PromptIncludeFiles { get; init; } = [];
 
+    /// <summary>Repository-relative files, directories, or glob patterns prioritized as initial planning context without expanding the read boundary or context budget</summary>
+    public IReadOnlyList<string> SeedPaths { get; init; } = [];
+
     /// <summary>Target character budget per review call, deliberately kept well below the model's advertised context window</summary>
     public int MaxContextCharacters { get; init; } = 24000;
 
@@ -282,6 +285,7 @@ public sealed class InformantConfig
         }
 
         ValidateFallbackModels();
+        ValidateSeedPaths();
 
         if (MaxContextCharacters < ReadFileLinesTool.MinimumMaxResultCharacters * 4)
         {
@@ -345,6 +349,27 @@ public sealed class InformantConfig
             if (!targets.Add($"{fallback.Endpoint.TrimEnd('/')}|{fallback.ModelName}"))
             {
                 throw new InformantFatalException($"{fieldName} duplicates an earlier endpoint and model combination");
+            }
+        }
+    }
+
+    private void ValidateSeedPaths()
+    {
+        if (SeedPaths is null)
+        {
+            throw new InformantFatalException("seedPaths must be an array; use an empty array or omit it to disable configured seeds");
+        }
+
+        for (int index = 0; index < SeedPaths.Count; index++)
+        {
+            string seedPath = SeedPaths[index];
+            try
+            {
+                RepositoryRelativePath.Normalize(seedPath);
+            }
+            catch (ArgumentException ex)
+            {
+                throw new InformantFatalException($"seedPaths[{index}] must be a repository-relative file, directory, or glob pattern: {ex.Message}", ex);
             }
         }
     }

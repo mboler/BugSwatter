@@ -391,8 +391,8 @@ Planned commit: `Document and validate adaptive repository review`
 
 ### Phase 8: Version, publish branch, and review
 
-- [ ] Apply the approved minor-version bump in a separate commit
-- [ ] Run the final clean build and complete test suite
+- [x] Apply the approved minor-version bump in a separate commit
+- [x] Run the final clean build and complete test suite
 - [ ] Confirm the working tree is clean
 - [ ] Push `feature/adaptive-repository-review`
 - [ ] Open a draft pull request with the phase commits preserved
@@ -465,3 +465,4 @@ At minimum, automated coverage must include:
 | 2026-07-14 | 5 | Complete | Added exhaustive and adaptive strategy selection with exhaustive as the default; adaptive deferrals receive mandatory changed-line windows with surrounding context; metadata-only coverage artifacts distinguish deep, mandatory-change, deferred, excluded, failed, and partial outcomes; reports state adaptive limitations and baseline advancement now follows the approved coverage rule; solution build has zero warnings; 632 tests ran, 626 passed, and 6 opt-in live tests skipped | `Add adaptive review strategy and coverage ledger` |
 | 2026-07-14 | 6 | Complete | Added bounded LM Studio v1 metadata discovery in BugSwatter.AI and character-budget advisory policy in Informant; validation reports loaded and maximum context, warns without overriding explicit configuration, and treats missing generic-provider metadata as normal; malformed and contradictory metadata are non-blocking warnings; solution build has zero warnings; 392 affected tests ran, 387 passed, and 5 opt-in live tests skipped | `Validate model context capacity when available` |
 | 2026-07-14 | 7 | Complete | Connected manifest-verified root, seed, and changed source to bounded production planning; added metadata-only model request size, lifecycle, duration, and provider token telemetry; README, operating documentation, and security guidance now cover strategies, artifacts, costs, retention, and privacy. Scripted fixtures verify clustered planning, tool counts, redaction, bounded second-opinion inputs, and report completion. Opt-in live checks passed completion, native tool use, and defect detection on both a 12B local model in 39.3 seconds and a 35B local model in 3 minutes 40 seconds. The solution build has zero warnings; 646 tests ran, 640 passed, and 6 opt-in tests skipped; branch-added C# passed `dotnet format`; dependency policy found no Newtonsoft.Json; the NuGet vulnerability check found no known vulnerable packages; and the 207-file disclosure scan found no local addresses, local paths, legacy name, private keys, or high-signal secrets | `Document and validate adaptive repository review` |
+| 2026-07-14 | 8 | In review | Shared product version changed to 0.8.1 in its own checkpoint; final Release build completed with zero warnings; 646 Release tests ran, 640 passed, and 6 opt-in live tests skipped | `Bump version for adaptive repository review` |

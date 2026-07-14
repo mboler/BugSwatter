@@ -25,8 +25,9 @@ public sealed class SecondOpinionReportWriter
     public string ReportPath => _path;
 
     /// <summary>Writes the deterministic header; counts, duration and completion time carry pending markers until <see cref="Finalize"/></summary>
-    public void WriteHeader(string modelName, string endpoint, string sourceReportPath, DateTimeOffset startedAt, int contextLines)
+    public void WriteHeader(SecondOpinionModelSelection selection, string sourceReportPath, DateTimeOffset startedAt, int contextLines)
     {
+        ArgumentNullException.ThrowIfNull(selection);
         _startedAt = startedAt;
 
         var builder = new StringBuilder();
@@ -37,8 +38,11 @@ public sealed class SecondOpinionReportWriter
         builder.AppendLine($"| Pass started | {startedAt:yyyy-MM-dd HH:mm:ss zzz} |");
         builder.AppendLine($"| Pass completed | {PendingCompleted} |");
         builder.AppendLine($"| Pass duration | {PendingDuration} |");
-        builder.AppendLine($"| Validating model | {modelName} |");
-        builder.AppendLine($"| Endpoint | {endpoint} |");
+        builder.AppendLine($"| Validating model | {selection.Model.ModelName} |");
+        builder.AppendLine($"| Model profile | {selection.ProfileName} |");
+        builder.AppendLine($"| Endpoint | {selection.Model.Endpoint} |");
+        builder.AppendLine($"| Primary candidate severity | {selection.PrimaryClassification.DisplaySeverity} |");
+        builder.AppendLine($"| Selection reason | {selection.SelectionReason} |");
         builder.AppendLine($"| Context window | {contextLines} lines around each change |");
         builder.AppendLine($"| Source report | {Path.GetFileName(sourceReportPath)} |");
         builder.AppendLine($"| Files validated | {PendingValidated} |");

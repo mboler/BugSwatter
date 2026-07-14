@@ -147,7 +147,9 @@ public sealed class InformantConfigTests : IDisposable
             values["reviewPrompt"] = "inline prompt";
             values["reviewPromptFile"] = "does-not-exist.txt";
         });
-        Assert.Equal("inline prompt", InformantConfig.Load(_directory.Path).ResolveReviewPrompt(EmptyTree()));
+        string prompt = InformantConfig.Load(_directory.Path).ResolveReviewPrompt(EmptyTree());
+        Assert.StartsWith("inline prompt", prompt);
+        Assert.Contains(DefaultReviewPrompt.StructuredFindingsMarker, prompt);
     }
 
     [Fact]
@@ -156,7 +158,9 @@ public sealed class InformantConfigTests : IDisposable
         string promptPath = Path.Combine(_directory.Path, "prompt.txt");
         File.WriteAllText(promptPath, "prompt from file");
         WriteConfig(values => values["reviewPromptFile"] = promptPath);
-        Assert.Equal("prompt from file", InformantConfig.Load(_directory.Path).ResolveReviewPrompt(EmptyTree()));
+        string prompt = InformantConfig.Load(_directory.Path).ResolveReviewPrompt(EmptyTree());
+        Assert.StartsWith("prompt from file", prompt);
+        Assert.Contains(DefaultReviewPrompt.StructuredFindingsMarker, prompt);
     }
 
     [Fact]
@@ -180,7 +184,9 @@ public sealed class InformantConfigTests : IDisposable
         Assert.Equal(Path.Combine(_directory.Path, "artifacts", "reports"), config.ReportDirectory);
         Assert.Equal(Path.Combine(_directory.Path, "state", "review.json"), config.StateFilePath);
         Assert.Equal(Path.Combine(_directory.Path, "logs", "informant-.log"), config.LogFilePath);
-        Assert.Equal("prompt from relative file", config.ResolveReviewPrompt(EmptyTree()));
+        string prompt = config.ResolveReviewPrompt(EmptyTree());
+        Assert.StartsWith("prompt from relative file", prompt);
+        Assert.Contains(DefaultReviewPrompt.StructuredFindingsMarker, prompt);
     }
 
     [Fact]
@@ -218,6 +224,16 @@ public sealed class InformantConfigTests : IDisposable
     }
 
     [Fact]
+    public void ExistingStructuredContractIsNotAppendedTwice()
+    {
+        WriteConfig(values => values["reviewPrompt"] = $"custom guidance\n\n{DefaultReviewPrompt.StructuredFindingsContract}");
+
+        string prompt = InformantConfig.Load(_directory.Path).ResolveReviewPrompt(EmptyTree());
+
+        Assert.Equal(1, CountOccurrences(prompt, DefaultReviewPrompt.StructuredFindingsMarker));
+    }
+
+    [Fact]
     public void AgentsFileInTreeIsAppendedWhenListed()
     {
         string tree = EmptyTree();
@@ -226,9 +242,10 @@ public sealed class InformantConfigTests : IDisposable
 
         string prompt = InformantConfig.Load(_directory.Path).ResolveReviewPrompt(tree);
 
-        Assert.StartsWith(DefaultReviewPrompt.Text, prompt);
+        Assert.StartsWith("You are a senior code reviewer", prompt);
         Assert.Contains("Additional project guidance from AGENTS.md", prompt);
         Assert.Contains("Always use tabs. Just kidding.", prompt);
+        Assert.EndsWith(DefaultReviewPrompt.StructuredFindingsContract, prompt);
     }
 
     [Fact]

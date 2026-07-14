@@ -14,6 +14,8 @@ internal sealed class StubHttpMessageHandler : HttpMessageHandler
 
     public List<string?> AuthorizationHeaders { get; } = [];
 
+    public List<string?> ApiKeyHeaders { get; } = [];
+
     public void Enqueue(HttpStatusCode status, string body, TimeSpan delay = default) => _responders.Enqueue(async cancellationToken =>
     {
         if (delay > TimeSpan.Zero)
@@ -45,6 +47,7 @@ internal sealed class StubHttpMessageHandler : HttpMessageHandler
         RequestBodies.Add(request.Content is null ? "" : await request.Content.ReadAsStringAsync(cancellationToken));
         RequestUris.Add(request.RequestUri);
         AuthorizationHeaders.Add(request.Headers.Authorization?.ToString());
+        ApiKeyHeaders.Add(request.Headers.TryGetValues("api-key", out IEnumerable<string>? values) ? values.Single() : null);
 
         if (_responders.Count == 0)
         {

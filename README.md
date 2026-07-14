@@ -17,7 +17,7 @@ BugSwatter is self-hosted and ships as two applications:
 - **Informant** refreshes a dedicated clone, finds files changed since the last completed review, sends them to an OpenAI-compatible model, and writes timestamped reports
 - **Marshal** is an optional long-running dispatcher that starts Informant from schedules, repository polling, filesystem changes, webhooks, or the built-in dashboard
 
-The primary review can stay on your network through LM Studio, llama.cpp, Ollama, or another OpenAI-compatible endpoint. A second opinion can use another local model or a cloud model to validate findings and assign severity.
+The primary review can stay on your network through LM Studio, llama.cpp, Ollama, or another OpenAI-compatible endpoint. A second opinion can use one other local or cloud model to validate findings and assign severity. Advanced configuration can select that one validator from as many as three profiles according to the highest candidate severity in the primary run.
 
 BugSwatter is deliberately not a general-purpose agentic coding harness. The models do not get a shell, MCP servers or adapters, Git access, general filesystem access, or tools that can edit code. Their only model-directed action is asking Informant for a bounded range of numbered lines through its application-owned `read_file_lines` tool. Informant validates every request and either performs the read itself or refuses it. The model can ask for context and return review text; it cannot execute actions on your machine.
 
@@ -44,7 +44,7 @@ The first successful run reviews all tracked files. Later `changed` runs compare
 
 - **Local-first:** keep primary review code on your network
 - **Changed-file reviews:** after the first run, review only changes since the last successfully completed primary review
-- **Second opinion:** optionally ask a different local or cloud model to confirm findings and assign severity
+- **Second opinion:** use one validator for every run, or route each complete run to one of as many as three local or cloud model profiles according to its highest primary candidate severity
 - **No agentic harness:** models can request bounded, read-only line ranges through Informant's single application-owned tool, but cannot write files, execute commands, or invoke Git; no MCP server or adapter is involved
 - **Multiple triggers:** use daily schedules, outbound repository polling, filesystem watching, GitHub webhooks, or Azure DevOps service hooks
 - **Unattended operation:** run Marshal in the foreground, as a Windows service, or as a systemd service

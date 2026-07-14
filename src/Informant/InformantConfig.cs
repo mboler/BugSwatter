@@ -196,7 +196,7 @@ public sealed class InformantConfig
             }
         }
 
-        return builder.ToString();
+        return DefaultReviewPrompt.EnsureStructuredFindingsContract(builder.ToString());
     }
 
     private string ResolveBasePrompt()

@@ -40,15 +40,20 @@ public sealed class SecondOpinionJsonReport
     }
 
     /// <summary>Writes the companion json artifact and returns its path</summary>
-    public string Write(string directory, string runStamp, string validatingModel, string endpoint, string sourceReportPath)
+    public string Write(string directory, string runStamp, SecondOpinionModelSelection selection, string sourceReportPath)
     {
+        ArgumentNullException.ThrowIfNull(selection);
         Directory.CreateDirectory(directory);
         string path = Path.Combine(directory, $"Informant-Report-{runStamp}-validated.json");
 
         var document = new
         {
-            validatingModel,
-            endpoint,
+            validatingModel = selection.Model.ModelName,
+            modelProfile = selection.ProfileName,
+            endpoint = selection.Model.Endpoint,
+            primaryCandidateSeverity = selection.PrimaryClassification.DisplaySeverity,
+            primarySeverityDetermined = selection.PrimaryClassification.SeverityDetermined,
+            selectionReason = selection.SelectionReason,
             sourceReport = Path.GetFileName(sourceReportPath),
             maxSeverity = SeverityDetermined ? MaxSeverity.ToString() : "Undetermined",
             severityDetermined = SeverityDetermined,

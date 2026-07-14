@@ -21,15 +21,20 @@ public sealed class ModelClient
     private readonly TimeSpan _requestTimeout;
     private readonly string? _apiKey;
     private readonly int _maxResponseBytes;
+    private readonly ModelAuthentication _authentication;
 
     /// <summary>Creates a client over an injected HttpClient; an optional API key is sent per request as a bearer token
-    /// so authenticated cloud endpoints work through the same client as local endpoints</summary>
+    /// or api-key header so authenticated cloud endpoints work through the same client as local endpoints</summary>
     public ModelClient(HttpClient httpClient, string endpoint, string modelName, TimeSpan requestTimeout, string? apiKey = null,
-        int maxResponseBytes = DefaultMaxResponseBytes)
+        int maxResponseBytes = DefaultMaxResponseBytes, ModelAuthentication authentication = ModelAuthentication.Bearer)
     {
         ArgumentNullException.ThrowIfNull(httpClient);
         ArgumentNullException.ThrowIfNull(endpoint);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxResponseBytes);
+        if (!Enum.IsDefined(authentication))
+        {
+            throw new ArgumentOutOfRangeException(nameof(authentication), authentication, "The model authentication mode is not supported");
+        }
 
         _http = httpClient;
         try
@@ -53,6 +58,7 @@ public sealed class ModelClient
         _requestTimeout = requestTimeout;
         _apiKey = apiKey;
         _maxResponseBytes = maxResponseBytes;
+        _authentication = authentication;
     }
 
     /// <summary>Sends the conversation with the offered tools and returns the assistant message of the first choice</summary>
@@ -72,7 +78,14 @@ public sealed class ModelClient
             httpRequest.Content = content;
             if (_apiKey is not null)
             {
-                httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
+                if (_authentication == ModelAuthentication.ApiKey)
+                {
+                    httpRequest.Headers.Add("api-key", _apiKey);
+                }
+                else
+                {
+                    httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
+                }
             }
 
             using var response = await _http.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, timeoutSource.Token);

@@ -30,6 +30,26 @@ public sealed class FileReviewerTests : IDisposable
     }
 
     [Fact]
+    public async Task StructuredCandidateSeverityIsCapturedAndHiddenFromTheProseReport()
+    {
+        WriteLines("src/Foo.cs", "class Foo { }");
+        var handler = new StubHttpMessageHandler();
+        handler.Enqueue(HttpStatusCode.OK, StubHttpMessageHandler.FinalResponse("""
+            High-severity issue in Foo.cs.
+            ```json
+            { "findings": [ { "file": "src/Foo.cs", "line": 1, "severity": "high", "summary": "bug" } ] }
+            ```
+            """));
+
+        FileReviewResult result = await CreateReviewer(handler).ReviewAsync(new ChangedFile("src/Foo.cs", ChangeKind.Modified, [new LineRange(1, 1)]));
+
+        Assert.True(result.CandidateSeverityDetermined);
+        Assert.Equal(Severity.High, result.CandidateSeverity);
+        Assert.Contains("High-severity issue", result.Findings);
+        Assert.DoesNotContain("```json", result.Findings);
+    }
+
+    [Fact]
     public async Task AddedFileIsWhollyTheSubject()
     {
         WriteLines("New.cs", "class New { }");
@@ -183,6 +203,53 @@ public sealed class FileReviewerTests : IDisposable
         Assert.DoesNotContain("10-12", secondPrompt);
         Assert.Contains("    51 | var x51 = 51;", secondPrompt);
         Assert.Contains("part 2 of 3", secondPrompt);
+    }
+
+    [Fact]
+    public async Task ChunkedReviewUsesTheHighestParsedCandidateSeverity()
+    {
+        WriteLines("big.cs", Enumerable.Range(1, 100).Select(number => $"var x{number} = {number};").ToArray());
+        var handler = new StubHttpMessageHandler();
+        handler.Enqueue(HttpStatusCode.OK, StubHttpMessageHandler.FinalResponse("""
+            Low finding.
+            ```json
+            { "findings": [ { "file": "big.cs", "line": 1, "severity": "low", "summary": "low" } ] }
+            ```
+            """));
+        handler.Enqueue(HttpStatusCode.OK, StubHttpMessageHandler.FinalResponse("""
+            Critical finding.
+            ```json
+            { "findings": [ { "file": "big.cs", "line": 75, "severity": "critical", "summary": "critical" } ] }
+            ```
+            """));
+
+        var reviewer = new FileReviewer(CreateLoop(handler), _tree.Path, "system prompt", 50, 1000000, 0);
+
+        FileReviewResult result = await reviewer.ReviewAsync(new ChangedFile("big.cs", ChangeKind.Modified, [new LineRange(1, 100)]));
+
+        Assert.True(result.CandidateSeverityDetermined);
+        Assert.Equal(Severity.Critical, result.CandidateSeverity);
+    }
+
+    [Fact]
+    public async Task OneUnparseableChunkMakesCandidateSeverityUndetermined()
+    {
+        WriteLines("big.cs", Enumerable.Range(1, 100).Select(number => $"var x{number} = {number};").ToArray());
+        var handler = new StubHttpMessageHandler();
+        handler.Enqueue(HttpStatusCode.OK, StubHttpMessageHandler.FinalResponse("""
+            Low finding.
+            ```json
+            { "findings": [ { "file": "big.cs", "line": 1, "severity": "low", "summary": "low" } ] }
+            ```
+            """));
+        handler.Enqueue(HttpStatusCode.OK, StubHttpMessageHandler.FinalResponse("prose without the required JSON"));
+
+        var reviewer = new FileReviewer(CreateLoop(handler), _tree.Path, "system prompt", 50, 1000000, 0);
+
+        FileReviewResult result = await reviewer.ReviewAsync(new ChangedFile("big.cs", ChangeKind.Modified, [new LineRange(1, 100)]));
+
+        Assert.False(result.CandidateSeverityDetermined);
+        Assert.Equal(Severity.Low, result.CandidateSeverity);
     }
 
     [Fact]

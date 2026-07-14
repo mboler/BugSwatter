@@ -49,7 +49,7 @@ The first public release intentionally does not provide dashboard authentication
 
 Never commit passwords, API keys, ACS connection strings, personal access tokens, SSH private keys, webhook secrets, or configuration files containing them.
 
-Informant API, SMTP, and ACS secrets must use `env:` or `file:` references. Windows service passwords supplied to the installer also require a reference. Marshal webhook secrets additionally permit literals for small internal deployments; when using a literal, protect the configuration file as a secret.
+Informant model API, SMTP, and ACS secrets must use `env:` or `file:` references, including API keys declared inside second-opinion model profiles. Windows service passwords supplied to the installer also require a reference. Marshal webhook secrets additionally permit literals for small internal deployments; when using a literal, protect the configuration file as a secret.
 
 Prefer narrowly scoped, read-only repository credentials. Restrict secret files to the Marshal service identity and rotate a credential if it appears in a log, report, command history, issue, test artifact, or commit.
 

@@ -247,6 +247,7 @@ The optional second opinion sends the primary findings and relevant code excerpt
   "endpoint": "https://api.example.com/v1",
   "modelName": "validator-model",
   "apiKey": "env:INFORMANT_SECOND_OPINION_KEY",
+  "authentication": "bearer",
   "prompt": null,
   "promptFile": null,
   "requestTimeoutSeconds": 1800,
@@ -261,6 +262,7 @@ The optional second opinion sends the primary findings and relevant code excerpt
 | `endpoint` | Validator base URL | required |
 | `modelName` | Validator model identifier | required |
 | `apiKey` | `env:` or `file:` reference; omit for an unauthenticated local endpoint | null |
+| `authentication` | `bearer` for an Authorization bearer credential, or `apiKey` for the Azure `api-key` header | `bearer` |
 | `prompt` | Inline validation prompt | null |
 | `promptFile` | Validation prompt file used when inline text is absent | built-in prompt |
 | `requestTimeoutSeconds` | Timeout for each validation request | `1800` |
@@ -268,7 +270,53 @@ The optional second opinion sends the primary findings and relevant code excerpt
 | `maxFileReads` | Additional repository reads allowed per file when the validator supports tools | `5` |
 | `reviewSkippedFiles` | Ask the validator to review files the primary model could not complete | `true` |
 
-The validator endpoint is probed before code is sent. Tool calling is optional for the validator. When supported, it can request more lines through the same confined read-only tool, limited by `maxFileReads`. Otherwise it works from the supplied excerpt.
+This simple form preserves the original behavior: every run uses the one configured validator.
+
+### Severity-routed model profiles
+
+Advanced configuration can declare one to three OpenAI-compatible model profiles and map the primary run's candidate severity to one of them:
+
+```jsonc
+"secondOpinion": {
+  "profiles": {
+    "economy": {
+      "endpoint": "http://model-server.internal:1234/v1",
+      "modelName": "local-validator"
+    },
+    "balanced": {
+      "endpoint": "https://provider.example/v1",
+      "modelName": "balanced-model",
+      "apiKey": "env:INFORMANT_BALANCED_KEY"
+    },
+    "premium": {
+      "endpoint": "https://your-resource.openai.azure.com/openai/v1",
+      "modelName": "premium-deployment",
+      "apiKey": "env:INFORMANT_PREMIUM_KEY",
+      "authentication": "apiKey"
+    }
+  },
+  "routeBySeverity": {
+    "none": "economy",
+    "low": "economy",
+    "medium": "balanced",
+    "high": "premium",
+    "critical": "premium",
+    "undetermined": "premium"
+  },
+  "requestTimeoutSeconds": 1800,
+  "contextLines": 30,
+  "maxFileReads": 5,
+  "reviewSkippedFiles": true
+}
+```
+
+The simple `endpoint`, `modelName`, `apiKey`, and `authentication` fields cannot be mixed with `profiles`. Profile names are local labels. Each profile has its own endpoint, model name, optional secret reference, and authentication mode. The shared prompt, timeout, context, tool-read, and skipped-file settings remain at the `secondOpinion` level.
+
+All six `routeBySeverity` entries are required: `none`, `low`, `medium`, `high`, `critical`, and `undetermined`. Each entry must name one configured profile. The primary model supplies structured candidate severity for each reviewed file. Informant takes the highest candidate severity across the complete run and selects exactly one validator for that run. It does not run several second opinions, rotate by day, or choose a different model for each file.
+
+Informant appends the structured findings contract to the configured primary review prompt at runtime, including an existing editable `review-prompt.txt`. The contract does not replace custom review guidance. If a primary response has malformed or missing structured findings, or any attempted primary review fails or is partial, the run uses the fail-safe `undetermined` route. Selection details are written to the validated Markdown and JSON reports.
+
+The selected validator endpoint is probed before code is sent. Tool calling is optional for the validator. When supported, it can request more lines through the same confined read-only tool, limited by `maxFileReads`. Set `maxFileReads` to `0` to disable validator tool access. Otherwise it works from the supplied excerpt.
 
 A public-cloud validator receives findings, code excerpts, and any extra lines it requests. Disable the second opinion or use an internal model for repositories whose code must remain on your network. The validator provider may retain prompts or metadata according to its own terms.
 

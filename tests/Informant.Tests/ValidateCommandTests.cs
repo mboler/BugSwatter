@@ -72,6 +72,58 @@ public sealed class ValidateCommandTests
         Assert.Contains(checks, check => check.Label == "second-opinion endpoint reachable");
     }
 
+    [Fact]
+    public async Task AdvancedSecondOpinionChecksEveryProfileAndSecret()
+    {
+        var handler = new StubHttpMessageHandler();
+        handler.Enqueue(HttpStatusCode.OK, "{}");
+        handler.Enqueue(HttpStatusCode.OK, "{}");
+        handler.Enqueue(HttpStatusCode.OK, "{}");
+        handler.Enqueue(HttpStatusCode.OK, "{}");
+        var config = new InformantConfig
+        {
+            RepositoryUrl = "https://example.test/repo.git",
+            Branch = "main",
+            WorkingTreePath = @"C:\informant\tree",
+            GitExecutablePath = TestGit.ExecutablePath,
+            ModelEndpoint = "http://localhost:1234/v1",
+            ModelName = "test-model",
+            SecondOpinion = new SecondOpinionConfig
+            {
+                Profiles = new Dictionary<string, SecondOpinionModelProfile>
+                {
+                    ["economy"] = new() { Endpoint = "https://economy.example/v1", ModelName = "economy" },
+                    ["balanced"] = new() { Endpoint = "https://balanced.example/v1", ModelName = "balanced" },
+                    ["premium"] = new() { Endpoint = "https://premium.example/v1", ModelName = "premium", ApiKey = "env:INFORMANT_VALIDATE_PREMIUM" }
+                },
+                RouteBySeverity = new Dictionary<string, string>
+                {
+                    ["none"] = "economy",
+                    ["low"] = "economy",
+                    ["medium"] = "balanced",
+                    ["high"] = "premium",
+                    ["critical"] = "premium",
+                    ["undetermined"] = "premium"
+                }
+            }
+        };
+
+        Environment.SetEnvironmentVariable("INFORMANT_VALIDATE_PREMIUM", "present");
+        try
+        {
+            IReadOnlyList<ValidationCheck> checks = await ValidateCommand.GatherChecksAsync(config, new HttpClient(handler));
+
+            Assert.Contains(checks, check => check.Label == "second-opinion profile 'economy' endpoint reachable");
+            Assert.Contains(checks, check => check.Label == "second-opinion profile 'balanced' endpoint reachable");
+            Assert.Contains(checks, check => check.Label == "second-opinion profile 'premium' endpoint reachable");
+            Assert.Contains(checks, check => check.Label == "second-opinion profile 'premium' API key" && check.Passed);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("INFORMANT_VALIDATE_PREMIUM", null);
+        }
+    }
+
     private static InformantConfig BuildConfig(bool withSecondOpinion, string? apiKeyVar) => new()
     {
         RepositoryUrl = "https://example.test/repo.git",

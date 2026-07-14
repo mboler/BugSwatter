@@ -68,8 +68,10 @@ public static class InitCommand
           // Optional second-opinion validation pass against a stronger model, cloud or local; null disables it.
           // WARNING: a cloud endpoint receives findings and referenced code; see DOCUMENTATION.md before enabling one.
           // apiKey must be an env:VARIABLE_NAME or file:PATH reference when the endpoint needs auth; omit it for local endpoints.
+          // authentication is "bearer" by default; use "apiKey" for an Azure endpoint that expects the api-key header.
           // maxFileReads caps the validator's extra reads per file (default 5); reviewSkippedFiles also reviews files the local pass skipped (default true).
           // Example: { "endpoint": "https://api.openai.com/v1", "modelName": "gpt-5", "apiKey": "env:INFORMANT_SECOND_OPINION_KEY", "contextLines": 30, "maxFileReads": 5, "reviewSkippedFiles": true }
+          // DOCUMENTATION.md describes the advanced one-to-three-profile severity router.
           "secondOpinion": null,
 
           // Optional report email; null disables it. Only sends when a second opinion also completed.

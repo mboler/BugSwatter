@@ -43,10 +43,14 @@ public static class ValidateCommand
 
         if (config.SecondOpinion is { } secondOpinion)
         {
-            checks.Add(await ProbeHttpAsync(http, secondOpinion.Endpoint, "second-opinion endpoint"));
-            if (secondOpinion.RequiresApiKey)
+            foreach (NamedSecondOpinionModel configuredModel in secondOpinion.GetConfiguredModels())
             {
-                checks.Add(CheckSecretReference("second-opinion API key", secondOpinion.ApiKey, secondOpinion.ResolveApiKey()));
+                string label = configuredModel.Name == "single" ? "second-opinion" : $"second-opinion profile '{configuredModel.Name}'";
+                checks.Add(await ProbeHttpAsync(http, configuredModel.Model.Endpoint, $"{label} endpoint"));
+                if (configuredModel.Model.RequiresApiKey)
+                {
+                    checks.Add(CheckSecretReference($"{label} API key", configuredModel.Model.ApiKey, configuredModel.Model.ResolveApiKey()));
+                }
             }
         }
 

@@ -18,6 +18,12 @@ public sealed class ModelClientTests
     };
 
     [Fact]
+    public void RejectsUnknownAuthenticationMode()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => new ModelClient(new HttpClient(), "http://localhost:1234/v1", "model", TimeSpan.FromSeconds(1), authentication: (ModelAuthentication)99));
+    }
+
+    [Fact]
     public async Task SendsModelMessagesToolsAndToolChoice()
     {
         var handler = new StubHttpMessageHandler();
@@ -139,6 +145,21 @@ public sealed class ModelClientTests
         await client.CompleteAsync([new ChatMessage { Role = "user", Content = "go" }], []);
 
         Assert.Equal("Bearer secret-key", handler.AuthorizationHeaders[0]);
+        Assert.Null(handler.ApiKeyHeaders[0]);
+    }
+
+    [Fact]
+    public async Task ApiKeyHeaderCanBeSelectedForAzureEndpoints()
+    {
+        var handler = new StubHttpMessageHandler();
+        handler.Enqueue(HttpStatusCode.OK, StubHttpMessageHandler.FinalResponse("ok"));
+        var client = new ModelClient(new HttpClient(handler), "https://example.openai.azure.com/openai/v1", "deployment-name", TimeSpan.FromSeconds(5), "secret-key",
+            authentication: ModelAuthentication.ApiKey);
+
+        await client.CompleteAsync([new ChatMessage { Role = "user", Content = "go" }], []);
+
+        Assert.Null(handler.AuthorizationHeaders[0]);
+        Assert.Equal("secret-key", handler.ApiKeyHeaders[0]);
     }
 
     [Fact]
@@ -149,6 +170,7 @@ public sealed class ModelClientTests
         await CreateClient(handler).CompleteAsync([new ChatMessage { Role = "user", Content = "go" }], []);
 
         Assert.Null(handler.AuthorizationHeaders[0]);
+        Assert.Null(handler.ApiKeyHeaders[0]);
     }
 
     [Fact]

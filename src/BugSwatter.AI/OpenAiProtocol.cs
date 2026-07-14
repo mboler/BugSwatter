@@ -3,6 +3,17 @@ using System.Text.Json.Serialization;
 
 namespace BugSwatter.AI;
 
+/// <summary>How an OpenAI-compatible endpoint expects an API key to be sent</summary>
+[JsonConverter(typeof(JsonStringEnumConverter<ModelAuthentication>))]
+public enum ModelAuthentication
+{
+    /// <summary>Send the key as an Authorization bearer credential, used by OpenAI and most compatible providers</summary>
+    Bearer,
+
+    /// <summary>Send the key in the api-key header, supported by Azure OpenAI and Microsoft Foundry</summary>
+    ApiKey
+}
+
 /// <summary>One chat message in the OpenAI-compatible wire format; assistant replies carrying tool calls are echoed back verbatim, and tool results reference the call they answer</summary>
 public sealed record ChatMessage
 {

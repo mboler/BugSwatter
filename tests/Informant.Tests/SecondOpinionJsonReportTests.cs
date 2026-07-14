@@ -18,9 +18,14 @@ public sealed class SecondOpinionJsonReportTests : IDisposable
         Assert.Equal(Severity.High, report.MaxSeverity);
         Assert.False(report.SeverityDetermined);
 
-        string path = report.Write(_directory.Path, "2026-07-11_10-00-00", "gpt-x", "https://api.example/v1", "Informant-Report-2026-07-11_10-00-00.md");
+        var selection = new SecondOpinionModelSelection("premium", new SecondOpinionModelProfile { ModelName = "gpt-x", Endpoint = "https://api.example/v1" },
+            new PrimaryReviewClassification(Severity.High, true), true);
+        string path = report.Write(_directory.Path, "2026-07-11_10-00-00", selection, "Informant-Report-2026-07-11_10-00-00.md");
 
         using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
+        Assert.Equal("premium", document.RootElement.GetProperty("modelProfile").GetString());
+        Assert.Equal("High", document.RootElement.GetProperty("primaryCandidateSeverity").GetString());
+        Assert.True(document.RootElement.GetProperty("primarySeverityDetermined").GetBoolean());
         Assert.Equal("Undetermined", document.RootElement.GetProperty("maxSeverity").GetString());
         Assert.False(document.RootElement.GetProperty("severityDetermined").GetBoolean());
         Assert.Equal(2, document.RootElement.GetProperty("fileCount").GetInt32());

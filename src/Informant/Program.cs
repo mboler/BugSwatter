@@ -300,19 +300,6 @@ internal static class Program
         var stopwatch = Stopwatch.StartNew();
         try
         {
-            string? apiKey = secondOpinion.ResolveApiKey();
-            if (secondOpinion.RequiresApiKey && string.IsNullOrEmpty(apiKey))
-            {
-                Log.Error("Second opinion is configured but the environment variable referenced by '{Reference}' is not set; skipping the validation pass. The local review report stands", secondOpinion.ApiKey);
-                return null;
-            }
-
-            var client = new ModelClient(SharedHttpClient, secondOpinion.Endpoint, secondOpinion.ModelName, TimeSpan.FromSeconds(secondOpinion.RequestTimeoutSeconds), apiKey, config.MaxModelResponseBytes);
-
-            // Gate: prove endpoint, model and key with a minimal round trip before any code leaves the machine
-            await client.CompleteAsync([new ChatMessage { Role = "user", Content = "Reply with the single word READY." }], []);
-            Log.Information("Second-opinion endpoint verified: {Model} at {Endpoint}", secondOpinion.ModelName, secondOpinion.Endpoint);
-
             List<FileReviewResult> toValidate = [.. results.Where(result => result.Findings is not null)];
 
             // Optionally also look at files the local reviewer could not review, so a changed file the first model skipped is not left silently unreviewed
@@ -327,15 +314,37 @@ internal static class Program
                 return null;
             }
 
+            PrimaryReviewClassification classification = PrimaryReviewClassification.FromResults(results);
+            SecondOpinionModelSelection selection = secondOpinion.SelectModel(classification);
+            SecondOpinionModelProfile selectedModel = selection.Model;
+            Log.Information("Second-opinion routing: {Reason}", selection.SelectionReason);
+
+            string? apiKey = selectedModel.ResolveApiKey();
+            if (selectedModel.RequiresApiKey && string.IsNullOrEmpty(apiKey))
+            {
+                Log.Error("Second-opinion profile {Profile} is configured but the secret referenced by '{Reference}' is not set; skipping the validation pass. The local review report stands", selection.ProfileName,
+                    selectedModel.ApiKey);
+                return null;
+            }
+
+            var client = new ModelClient(SharedHttpClient, selectedModel.Endpoint, selectedModel.ModelName, TimeSpan.FromSeconds(secondOpinion.RequestTimeoutSeconds), apiKey, config.MaxModelResponseBytes,
+                selectedModel.Authentication);
+
+            // Gate: prove endpoint, model and key with a minimal round trip before any code leaves the machine
+            await client.CompleteAsync([new ChatMessage { Role = "user", Content = "Reply with the single word READY." }], []);
+            Log.Information("Second-opinion endpoint verified: {Model} at {Endpoint}", selectedModel.ModelName, selectedModel.Endpoint);
+
             // The local reviewer must support tool-calling, but the validator need not: probe it, and when it does,
             // let it read more of a file on demand within a per-file budget; when it does not, it validates from the excerpt only
             VerificationResult toolProbe = await ToolCallingVerifier.VerifyAsync(client, config.MaxContextCharacters);
-            Log.Information("Second-opinion tool-calling: {Status} ({Detail})", toolProbe.Success ? $"supported, up to {secondOpinion.MaxFileReads} reads per file" : "not supported, validating from the excerpt only", toolProbe.Detail);
+            bool enableToolCalls = toolProbe.Success && secondOpinion.MaxFileReads > 0;
+            string toolStatus = enableToolCalls ? $"supported, up to {secondOpinion.MaxFileReads} reads per file" : "disabled, validating from the excerpt only";
+            Log.Information("Second-opinion tool-calling: {Status} ({Detail})", toolStatus, toolProbe.Detail);
 
-            var validator = new SecondOpinionReviewer(client, config.WorkingTreePath, secondOpinion.ResolvePrompt(), config.MaxContextCharacters, secondOpinion.ContextLines, toolProbe.Success, secondOpinion.MaxFileReads,
+            var validator = new SecondOpinionReviewer(client, config.WorkingTreePath, secondOpinion.ResolvePrompt(), config.MaxContextCharacters, secondOpinion.ContextLines, enableToolCalls, secondOpinion.MaxFileReads,
                 config.MaxFileBytes, git);
             var writer = new SecondOpinionReportWriter(config.ReportDirectory, runStamp);
-            writer.WriteHeader(secondOpinion.ModelName, secondOpinion.Endpoint, sourceReportPath, DateTimeOffset.Now, secondOpinion.ContextLines);
+            writer.WriteHeader(selection, sourceReportPath, DateTimeOffset.Now, secondOpinion.ContextLines);
             var jsonReport = new SecondOpinionJsonReport();
 
             int validated = 0;
@@ -363,7 +372,7 @@ internal static class Program
             }
 
             writer.Finalize(validated, failed, stopwatch.Elapsed);
-            string jsonPath = jsonReport.Write(config.ReportDirectory, runStamp, secondOpinion.ModelName, secondOpinion.Endpoint, sourceReportPath);
+            string jsonPath = jsonReport.Write(config.ReportDirectory, runStamp, selection, sourceReportPath);
             Log.Information("Second opinion complete: {Validated} validated, {Failed} failed, max confirmed severity {Severity}, reports at {Report} and {Json}", validated, failed, jsonReport.MaxSeverity, writer.ReportPath, jsonPath);
 
             return new SecondOpinionOutcome(writer.ReportPath, jsonPath, jsonReport.MaxSeverity, jsonReport.SeverityDetermined, validated, failed);

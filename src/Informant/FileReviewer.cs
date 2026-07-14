@@ -21,7 +21,8 @@ public enum FileReviewStatus
 }
 
 /// <summary>Outcome of reviewing one file, with an explicit status separating expected exclusions from failures that must preserve the previous baseline</summary>
-public sealed record FileReviewResult(ChangedFile File, FileReviewStatus Status, string? Findings, int CompletedChunks, int TotalChunks, string? SkipReason)
+public sealed record FileReviewResult(ChangedFile File, FileReviewStatus Status, string? Findings, int CompletedChunks, int TotalChunks, string? SkipReason, Severity CandidateSeverity = Severity.None,
+    bool CandidateSeverityDetermined = false)
 {
     /// <summary>True when every part of the file was reviewed</summary>
     public bool FullyReviewed => Status == FileReviewStatus.Reviewed;
@@ -103,17 +104,25 @@ public sealed class FileReviewer
 
         IReadOnlyList<SourceChunk> chunks = SourceChunker.Split(lines, _maxFileLines, _maxContentCharacters);
         var findings = new StringBuilder();
+        Severity candidateSeverity = Severity.None;
+        bool candidateSeverityDetermined = true;
 
         for (int index = 0; index < chunks.Count; index++)
         {
             string userPrompt = BuildUserPrompt(file, lines, chunks[index], index + 1, chunks.Count);
 
-            string? partFindings = await RunWithRetriesAsync(file, index + 1, chunks.Count, userPrompt, cancellationToken);
-            if (partFindings is null)
+            PrimaryReviewPart? partReview = await RunWithRetriesAsync(file, index + 1, chunks.Count, userPrompt, cancellationToken);
+            if (partReview is null)
             {
                 string reason = $"part {index + 1} of {chunks.Count} failed after {_retryCount} retries";
                 FileReviewStatus status = index == 0 ? FileReviewStatus.Failed : FileReviewStatus.Partial;
-                return new FileReviewResult(file, status, findings.Length > 0 ? findings.ToString() : null, index, chunks.Count, reason);
+                return new FileReviewResult(file, status, findings.Length > 0 ? findings.ToString() : null, index, chunks.Count, reason, candidateSeverity, false);
+            }
+
+            candidateSeverityDetermined &= partReview.CandidateSeverityDetermined;
+            if (partReview.CandidateSeverity > candidateSeverity)
+            {
+                candidateSeverity = partReview.CandidateSeverity;
             }
 
             if (chunks.Count > 1)
@@ -122,14 +131,14 @@ public sealed class FileReviewer
                 findings.AppendLine();
             }
 
-            findings.AppendLine(partFindings.Trim());
+            findings.AppendLine(partReview.Findings.Trim());
             findings.AppendLine();
         }
 
-        return new FileReviewResult(file, FileReviewStatus.Reviewed, findings.ToString().TrimEnd() + Environment.NewLine, chunks.Count, chunks.Count, null);
+        return new FileReviewResult(file, FileReviewStatus.Reviewed, findings.ToString().TrimEnd() + Environment.NewLine, chunks.Count, chunks.Count, null, candidateSeverity, candidateSeverityDetermined);
     }
 
-    private async Task<string?> RunWithRetriesAsync(ChangedFile file, int part, int totalParts, string userPrompt, CancellationToken cancellationToken)
+    private async Task<PrimaryReviewPart?> RunWithRetriesAsync(ChangedFile file, int part, int totalParts, string userPrompt, CancellationToken cancellationToken)
     {
         for (int attempt = 0; attempt <= _retryCount; attempt++)
         {
@@ -137,7 +146,14 @@ public sealed class FileReviewer
             {
                 var result = await _loop.RunAsync(_systemPrompt, userPrompt, cancellationToken);
                 Log.Information("Reviewed {Path} part {Part}/{Total}: {ToolCalls} tool calls, {Characters} finding characters", file.Path, part, totalParts, result.ToolCallCount, result.FinalContent.Length);
-                return result.FinalContent;
+
+                bool parsed = PrimaryReviewParser.TryParse(result.FinalContent, out ParsedPrimaryReview? primaryReview, out string prose);
+                if (!parsed)
+                {
+                    Log.Warning("Review of {Path} part {Part}/{Total} returned no parseable candidate-severity JSON; advanced second-opinion routing will fail safe", file.Path, part, totalParts);
+                }
+
+                return new PrimaryReviewPart(prose, primaryReview?.MaxSeverity ?? Severity.None, parsed);
             }
             catch (ModelCallException ex)
             {
@@ -147,6 +163,8 @@ public sealed class FileReviewer
 
         return null;
     }
+
+    private sealed record PrimaryReviewPart(string Findings, Severity CandidateSeverity, bool CandidateSeverityDetermined);
 
     private static FileReviewResult NotReviewable(ChangedFile file, string reason)
     {

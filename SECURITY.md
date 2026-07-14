@@ -6,7 +6,7 @@ BugSwatter is pre-1.0. Security fixes are made only on the latest development li
 
 | Version | Supported |
 | --- | --- |
-| Latest 0.5.x release | Yes |
+| Latest 0.6.x release | Yes |
 | Earlier versions | No |
 
 ## Report a vulnerability privately

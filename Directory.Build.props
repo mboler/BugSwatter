@@ -1,8 +1,8 @@
 <Project>
 
-  <!-- Shared metadata for every project. Pre-1.0: this is the fifth feature wave, so 0.5.0 -->
+  <!-- Shared metadata for every project. Pre-1.0: this is the sixth feature wave, so 0.6.0 -->
   <PropertyGroup>
-    <Version>0.5.0</Version>
+    <Version>0.6.0</Version>
     <Product>BugSwatter</Product>
     <Authors>Mark Boler</Authors>
     <Company>Mark Boler</Company>

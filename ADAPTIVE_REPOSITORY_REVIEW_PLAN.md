@@ -393,9 +393,9 @@ Planned commit: `Document and validate adaptive repository review`
 
 - [x] Apply the approved minor-version bump in a separate commit
 - [x] Run the final clean build and complete test suite
-- [ ] Confirm the working tree is clean
-- [ ] Push `feature/adaptive-repository-review`
-- [ ] Open a draft pull request with the phase commits preserved
+- [x] Confirm the working tree is clean
+- [x] Push `feature/adaptive-repository-review`
+- [x] Open a draft pull request with the phase commits preserved
 - [ ] Wait for owner review and approval before merging
 - [ ] Tag and release only after the pull request is merged and the release workflow is green
 

@@ -37,7 +37,7 @@ BugSwatter reduces model privileges, but it is not a security boundary for an un
 - AI findings are advisory and can contain false positives or miss real vulnerabilities
 - A cloud model receives configured code excerpts and may retain prompts or metadata under the provider's terms
 - Marshal's dashboard and API use unauthenticated HTTP. They are intended only for localhost, a trusted internal network, or a protected VPN
-- Any client that reaches the dashboard API can inspect operational metadata, enqueue reviews, and remove waiting reviews
+- Any client that reaches the dashboard API can inspect operational metadata, including current file and model names and provider-reported usage, enqueue reviews, and remove waiting reviews
 - GitHub webhook signatures authenticate payloads but do not encrypt HTTP traffic
 - Azure DevOps webhook Basic credentials are exposed to anyone who can observe an unprotected HTTP path
 - Repository polling uses outbound Git and avoids opening an inbound port, but still relies on the service account's Git credentials

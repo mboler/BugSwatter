@@ -8,6 +8,7 @@ public sealed class CommandLineArgumentsTests
         var arguments = CommandLineArguments.Parse([]);
         Assert.Equal("run", arguments.Command);
         Assert.Null(arguments.ConfigPath);
+        Assert.Equal(ProgressOutput.None, arguments.ProgressOutput);
     }
 
     [Fact]
@@ -32,6 +33,28 @@ public sealed class CommandLineArgumentsTests
         var arguments = CommandLineArguments.Parse(["--config", "cfg.json", "verify"]);
         Assert.Equal("verify", arguments.Command);
         Assert.Equal("cfg.json", arguments.ConfigPath);
+    }
+
+    [Fact]
+    public void JsonProgressOutputParsesWithoutChangingTheCommand()
+    {
+        var arguments = CommandLineArguments.Parse(["--progress", "json", "--config", "cfg.json"]);
+
+        Assert.Equal("run", arguments.Command);
+        Assert.Equal("cfg.json", arguments.ConfigPath);
+        Assert.Equal(ProgressOutput.Json, arguments.ProgressOutput);
+    }
+
+    [Theory]
+    [InlineData("--progress requires")]
+    [InlineData("Unsupported --progress")]
+    public void InvalidProgressOutputIsFatal(string expectedMessage)
+    {
+        string[] arguments = expectedMessage.StartsWith("Unsupported", StringComparison.Ordinal) ? ["--progress", "xml"] : ["--progress"];
+
+        InformantFatalException ex = Assert.Throws<InformantFatalException>(() => CommandLineArguments.Parse(arguments));
+
+        Assert.Contains(expectedMessage, ex.Message);
     }
 
     [Fact]

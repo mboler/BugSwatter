@@ -116,6 +116,26 @@ public sealed record ChatResponse
     /// <summary>Completion choices; Informant uses the first</summary>
     [JsonPropertyName("choices")]
     public IReadOnlyList<ChatChoice>? Choices { get; init; }
+
+    /// <summary>Optional token counts reported by the provider</summary>
+    [JsonPropertyName("usage")]
+    public ChatUsage? Usage { get; init; }
+}
+
+/// <summary>OpenAI chat-completions token usage; compatible endpoints may omit the object or individual counts</summary>
+public sealed record ChatUsage
+{
+    /// <summary>Tokens in the submitted messages and tool definitions</summary>
+    [JsonPropertyName("prompt_tokens")]
+    public long? PromptTokens { get; init; }
+
+    /// <summary>Tokens generated in the assistant response</summary>
+    [JsonPropertyName("completion_tokens")]
+    public long? CompletionTokens { get; init; }
+
+    /// <summary>Total tokens counted by the provider</summary>
+    [JsonPropertyName("total_tokens")]
+    public long? TotalTokens { get; init; }
 }
 
 /// <summary>One completion choice</summary>

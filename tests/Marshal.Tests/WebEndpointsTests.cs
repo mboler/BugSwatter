@@ -3,6 +3,15 @@ namespace Marshal.Tests;
 public sealed class WebEndpointsTests
 {
     [Fact]
+    public void DashboardUsesTheProductNameAndExplainsTokenCounts()
+    {
+        Assert.Contains("<title>BugSwatter Dashboard</title>", DashboardPage.Html);
+        Assert.Contains("<h1>BugSwatter Dashboard</h1>", DashboardPage.Html);
+        Assert.Contains("Provider-reported tokens", DashboardPage.Html);
+        Assert.DoesNotContain("Marshal dashboard", DashboardPage.Html);
+    }
+
+    [Fact]
     public async Task BodyWithinTheLimitIsReadCompletely()
     {
         byte[] payload = new byte[64 * 1024];

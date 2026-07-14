@@ -11,21 +11,24 @@ public sealed class ReviewDispatcher : BackgroundService
     private readonly IEndpointHealthChecker _healthChecker;
     private readonly BackoffTracker _backoff;
     private readonly RunHistoryStore _history;
+    private readonly CurrentReviewStatusStore _current;
 
     /// <summary>Creates the dispatcher over the shared queue, runner, endpoint health checker, backoff tracker and history store</summary>
-    public ReviewDispatcher(ReviewQueue queue, IInformantRunner runner, IEndpointHealthChecker healthChecker, BackoffTracker backoff, RunHistoryStore history)
+    public ReviewDispatcher(ReviewQueue queue, IInformantRunner runner, IEndpointHealthChecker healthChecker, BackoffTracker backoff, RunHistoryStore history, CurrentReviewStatusStore current)
     {
         ArgumentNullException.ThrowIfNull(queue);
         ArgumentNullException.ThrowIfNull(runner);
         ArgumentNullException.ThrowIfNull(healthChecker);
         ArgumentNullException.ThrowIfNull(backoff);
         ArgumentNullException.ThrowIfNull(history);
+        ArgumentNullException.ThrowIfNull(current);
 
         _queue = queue;
         _runner = runner;
         _healthChecker = healthChecker;
         _backoff = backoff;
         _history = history;
+        _current = current;
     }
 
     /// <inheritdoc />
@@ -54,6 +57,8 @@ public sealed class ReviewDispatcher : BackgroundService
 
             Log.Information("Review starting for {Job} (trigger: {Reason})", request.Job.Name, request.Reason);
             DateTimeOffset startedUtc = DateTimeOffset.UtcNow;
+            _current.Begin(request, startedUtc);
+            bool cancelled = false;
 
             try
             {
@@ -63,7 +68,7 @@ public sealed class ReviewDispatcher : BackgroundService
             }
             catch (OperationCanceledException)
             {
-                break;
+                cancelled = true;
             }
             catch (Exception ex)
             {
@@ -71,10 +76,18 @@ public sealed class ReviewDispatcher : BackgroundService
                 Log.Error(ex, "Review of {Job} aborted by an unexpected error; continuing with the next queued request", request.Job.Name);
                 RecordHistory(request, startedUtc, null, ex.Message);
             }
-
-            if (_queue.CompleteRunning())
+            finally
             {
-                Log.Information("Rerun re-queued for {Job}: triggers arrived while its review ran", request.Job.Name);
+                _current.Clear(request.Job.Name);
+                if (_queue.CompleteRunning())
+                {
+                    Log.Information("Rerun re-queued for {Job}: triggers arrived while its review ran", request.Job.Name);
+                }
+            }
+
+            if (cancelled)
+            {
+                break;
             }
         }
 

@@ -33,13 +33,14 @@ public static class WebEndpoints
             queueDepth = queue.WaitingCount
         }));
 
-        app.MapGet("/api/status", (ReviewQueue queue, MarshalStatus status) => Results.Json(new
+        app.MapGet("/api/status", (ReviewQueue queue, MarshalStatus status, CurrentReviewStatusStore current) => Results.Json(new
         {
             startedUtc = status.StartedUtc.ToString("O"),
             uptimeSeconds = Math.Round((DateTimeOffset.UtcNow - status.StartedUtc).TotalSeconds, 0),
             running = queue.RunningJobName,
             queueDepth = queue.WaitingCount,
-            jobCount = config.Jobs.Count
+            jobCount = config.Jobs.Count,
+            activity = current.Snapshot()
         }));
 
         app.MapGet("/api/history", (RunHistoryStore history) => Results.Json(history.ReadRecent(100)));

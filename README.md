@@ -48,6 +48,7 @@ The first successful run reviews all tracked files. Later `changed` runs compare
 - **No agentic harness:** models can request bounded, read-only line ranges through Informant's single application-owned tool, but cannot write files, execute commands, or invoke Git; no MCP server or adapter is involved
 - **Multiple triggers:** use daily schedules, outbound repository polling, filesystem watching, GitHub webhooks, or Azure DevOps service hooks
 - **Unattended operation:** run Marshal in the foreground, as a Windows service, or as a systemd service
+- **Live review status:** the dashboard shows the current phase, file, model request state, elapsed time, and provider-reported token usage
 - **No installer or bundled runtime:** GitHub Releases provide framework-dependent Windows and Linux archives for machines with .NET 10 installed
 
 ## Important safety boundaries
@@ -58,7 +59,7 @@ Working-tree refresh is intentionally destructive: Informant uses `fetch`, `rese
 
 The `read_file_lines` tool can return at most 400 numbered lines per call from a bounded text file inside the repository root. It rejects absolute paths, paths outside the root, symbolic links, junctions, mount points, other reparse points, binary files, and oversized files. This uses ordinary OpenAI-compatible model tool calling through Informant, not MCP, and gives the model no direct filesystem access.
 
-Marshal's optional dashboard is HTTP-only and has no authentication or authorization. Anyone who can reach it can see operational details, enqueue reviews, and remove waiting jobs. Bind it to `localhost` unless you deliberately place it on a trusted internal or VPN network. Never expose it directly to the public internet.
+Marshal's optional dashboard is HTTP-only and has no authentication or authorization. Anyone who can reach it can see operational details, including current file and model names, enqueue reviews, and remove waiting jobs. Bind it to `localhost` unless you deliberately place it on a trusted internal or VPN network. Never expose it directly to the public internet.
 
 AI output can be incomplete or wrong. Treat reports as leads for human review, not as proof that code is safe. BugSwatter is pre-1.0, so test it against a noncritical repository before relying on unattended operation.
 

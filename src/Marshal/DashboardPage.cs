@@ -10,7 +10,7 @@ public static class DashboardPage
         <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <title>Marshal dashboard</title>
+        <title>BugSwatter Dashboard</title>
         <style>
           :root { color-scheme: light dark; }
           body { font-family: system-ui, sans-serif; margin: 0; padding: 1.5rem; max-width: 1100px; margin: 0 auto; }
@@ -35,7 +35,7 @@ public static class DashboardPage
         </style>
         </head>
         <body>
-        <h1>Marshal dashboard</h1>
+        <h1>BugSwatter Dashboard</h1>
         <div class="status" id="status"></div>
         <div class="jobs" id="jobs"></div>
         <table>
@@ -46,13 +46,40 @@ public static class DashboardPage
         <script>
           function esc(s) { return (s ?? '').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
           function tile(label, value) { return '<div class="tile"><div class="label">' + label + '</div><div class="value">' + esc(value) + '</div></div>'; }
+          function duration(seconds) {
+            const value = Math.max(0, Math.floor(seconds || 0));
+            const hours = Math.floor(value / 3600);
+            const minutes = Math.floor((value % 3600) / 60);
+            const remainder = value % 60;
+            return (hours ? hours + 'h ' : '') + (hours || minutes ? minutes + 'm ' : '') + remainder + 's';
+          }
+          function reportedTokens(activity) {
+            if (activity.totalTokens == null && activity.promptTokens == null && activity.completionTokens == null) return 'not reported';
+            const total = activity.totalTokens == null ? '-' : activity.totalTokens.toLocaleString();
+            const prompt = activity.promptTokens == null ? '-' : activity.promptTokens.toLocaleString();
+            const completion = activity.completionTokens == null ? '-' : activity.completionTokens.toLocaleString();
+            return total + ' total (' + prompt + ' input, ' + completion + ' output)';
+          }
           async function refresh() {
             try {
               const status = await (await fetch('/api/status')).json();
-              const mins = Math.floor(status.uptimeSeconds / 60);
-              document.getElementById('status').innerHTML =
-                tile('Running', status.running ?? 'idle') + tile('Queue depth', status.queueDepth) +
-                tile('Jobs', status.jobCount) + tile('Uptime', mins + ' min');
+              const activity = status.activity;
+              let statusHtml = tile('State', activity ? 'running' : 'idle');
+              if (activity) {
+                const started = new Date(activity.startedUtc);
+                const model = activity.modelName ? activity.modelName + (activity.modelProfile ? ' (' + activity.modelProfile + ')' : '') : '-';
+                const file = activity.currentFile ? (activity.fileIndex && activity.fileCount ? activity.fileIndex + '/' + activity.fileCount + ' - ' : '') + activity.currentFile : '-';
+                const request = activity.modelRequestActive ? 'waiting for response' : 'between requests';
+                statusHtml += tile('Job', activity.job) + tile('Trigger', activity.trigger) + tile('Phase', activity.phase) + tile('Started', started.toLocaleString()) +
+                  tile('Elapsed', duration((Date.now() - started.getTime()) / 1000)) + tile('Model', model) + tile('Model request', request) +
+                  tile('Requests', activity.modelRequestCount) + tile('Provider-reported tokens', reportedTokens(activity)) + tile('File', file);
+                if (activity.modelRequestStartedUtc) {
+                  const modelStarted = new Date(activity.modelRequestStartedUtc);
+                  statusHtml += tile('Model request started', modelStarted.toLocaleString()) + tile('Model request elapsed', duration((Date.now() - modelStarted.getTime()) / 1000));
+                }
+              }
+              statusHtml += tile('Queue depth', status.queueDepth) + tile('Jobs', status.jobCount) + tile('Uptime', duration(status.uptimeSeconds));
+              document.getElementById('status').innerHTML = statusHtml;
               const jobs = await (await fetch('/api/jobs')).json();
               const queue = await (await fetch('/api/queue')).json();
               const waiting = new Set((queue.waiting || []).map(w => w.job));
@@ -70,7 +97,7 @@ public static class DashboardPage
                 '</td><td>' + esc(h.durationSeconds) + 's</td><td>' + esc((h.reportPath ?? '').split(/[\\/]/).pop()) + '</td></tr>').join('');
               document.getElementById('footer').textContent = 'Updated ' + new Date().toLocaleTimeString() + ' - ' + history.length + ' recent runs';
             } catch (e) {
-              document.getElementById('footer').textContent = 'Could not reach Marshal: ' + e;
+              document.getElementById('footer').textContent = 'Could not reach BugSwatter: ' + e;
             }
           }
           document.getElementById('jobs').addEventListener('click', async e => {

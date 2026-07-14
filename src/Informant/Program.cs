@@ -15,6 +15,7 @@ internal static class Program
 
     private static async Task<int> Main(string[] args)
     {
+        ReviewProgressReporter? progress = null;
         try
         {
             var arguments = CommandLineArguments.Parse(args);
@@ -29,6 +30,12 @@ internal static class Program
                     return InitCommand.Run(Directory.GetCurrentDirectory());
             }
 
+            if (arguments.Command == "run")
+            {
+                progress = new ReviewProgressReporter(arguments.ProgressOutput, Console.Out);
+                progress.ReportPhase("Loading configuration");
+            }
+
             (InformantConfig config, string configPath) = LoadConfig(arguments);
             
             _consoleLogging = LoggingSetup.Initialize(config.LogLevel, config.LogFilePath, config.ConsoleLogging);
@@ -39,7 +46,7 @@ internal static class Program
             switch (arguments.Command)
             {
                 case "run":
-                    return await RunReviewAsync(config);
+                    return await RunReviewAsync(config, progress!);
 
                 case "verify":
                     return await VerifyToolCallingAsync(config);
@@ -55,17 +62,20 @@ internal static class Program
         }
         catch (InformantFatalException ex)
         {
+            progress?.ReportFailed();
             ReportFatal(ex.Message);
             return 1;
         }
         catch (GitOperationException ex)
         {
+            progress?.ReportFailed();
             ReportFatal(ex.Message);
             return 1;
         }
         catch (Exception ex)
         {
             // catch-all so an unattended run always exits with a logged reason instead of an unhandled crash
+            progress?.ReportFailed();
             ReportFatal(ex.ToString());
             return 1;
         }
@@ -84,10 +94,11 @@ internal static class Program
         return (InformantConfig.LoadFile(configPath), configPath);
     }
 
-    private static async Task<int> RunReviewAsync(InformantConfig config)
+    private static async Task<int> RunReviewAsync(InformantConfig config, ReviewProgressReporter progress)
     {
         var stopwatch = Stopwatch.StartNew();
         DateTimeOffset startedAt = DateTimeOffset.Now;
+        progress.ReportPhase("Preparing repository");
         ApplyReportRetention(config);
 
         PrintDestructiveTreeWarning(config);
@@ -95,6 +106,7 @@ internal static class Program
 
         var git = new GitRunner(config.GitExecutablePath);
         var tree = new WorkingTreeManager(git, config.RepositoryUrl, config.Branch, config.WorkingTreePath);
+        progress.ReportPhase("Refreshing repository");
         await tree.EnsureFreshTreeAsync();
         string tipSha = await tree.GetTipShaAsync();
 
@@ -104,6 +116,7 @@ internal static class Program
 
         // One clock read for both the metadata timestamp and the artifact-name stamp keeps them consistent
         string runStamp = startedAt.ToString("yyyy-MM-dd_HH-mm-ss");
+        progress.ReportPhase("Detecting changes");
         IReadOnlyList<ChangedFile> files = await DetectReviewSetAsync(config, git, baselineSha, tipSha);
 
         if (files.Count == 0)
@@ -111,6 +124,7 @@ internal static class Program
             // An empty report is noise: a run with nothing to review leaves no artifacts, only this log record
             state.SetBaseline(config.RepositoryUrl, config.Branch, tipSha);
             Log.Information("Run complete: no changes to review since the baseline; no report written");
+            progress.ReportCompleted();
             EmitReportPath(null);
             return 0;
         }
@@ -121,7 +135,9 @@ internal static class Program
         var report = new ReportWriter(config.ReportDirectory, runStamp, config.ModelName, config.ModelEndpoint, config.MaxContextCharacters, config.MaxFileLines);
         report.WriteHeader(config.RepositoryUrl, config.Branch, config.ReviewMode, baselineSha, tipSha, startedAt);
 
-        var client = new ModelClient(SharedHttpClient, config.ModelEndpoint, config.ModelName, TimeSpan.FromSeconds(config.RequestTimeoutSeconds), maxResponseBytes: config.MaxModelResponseBytes);
+        progress.ReportPhase("Verifying primary model", config.ModelName, "primary");
+        var client = new ModelClient(SharedHttpClient, config.ModelEndpoint, config.ModelName, TimeSpan.FromSeconds(config.RequestTimeoutSeconds), maxResponseBytes: config.MaxModelResponseBytes,
+            progressObserver: progress.ObserveModelCall);
         await ToolCallingVerifier.RequireToolCallingAsync(client, config.MaxContextCharacters);
 
         var loop = new ToolCallLoop(client, new ReadFileLinesTool(config.ResolvedAllowedReadRoot, config.MaxFileBytes), config.MaxContextCharacters);
@@ -135,6 +151,7 @@ internal static class Program
         {
             var file = files[index];
             Log.Information("Reviewing {Path} ({Position}/{Count})", file.Path, index + 1, files.Count);
+            progress.ReportFile("Primary review", config.ModelName, "primary", file.Path, index + 1, files.Count);
 
             var result = await reviewer.ReviewAsync(file);
             report.AppendFileSection(result);
@@ -150,6 +167,7 @@ internal static class Program
             }
         }
 
+        progress.ReportPhase("Writing primary report");
         report.Finalize(reviewedCount, skipped, stopwatch.Elapsed);
         bool baselineAdvanced = ReviewCompletion.CanAdvanceBaseline(results);
         if (baselineAdvanced)
@@ -168,7 +186,8 @@ internal static class Program
         string primaryReportPath = report.ReportPath;
         if (config.SecondOpinion is { } secondOpinion)
         {
-            SecondOpinionOutcome? outcome = await RunSecondOpinionAsync(secondOpinion, config, git, results, runStamp, report.ReportPath);
+            progress.ReportPhase("Selecting second opinion");
+            SecondOpinionOutcome? outcome = await RunSecondOpinionAsync(secondOpinion, config, git, results, runStamp, report.ReportPath, progress);
 
             if (outcome is not null)
             {
@@ -178,11 +197,13 @@ internal static class Program
                 // Email is gated on a completed second opinion, so it only fires when there is a validated report to send
                 if (config.Email is { } email)
                 {
+                    progress.ReportPhase("Sending email");
                     await SendReportEmailAsync(email, config, outcome, report.ReportPath);
                 }
             }
         }
 
+        progress.ReportCompleted();
         EmitReportPath(primaryReportPath);
         return 0;
     }
@@ -295,7 +316,7 @@ internal static class Program
     }
 
     private static async Task<SecondOpinionOutcome?> RunSecondOpinionAsync(SecondOpinionConfig secondOpinion, InformantConfig config, GitRunner git, IReadOnlyList<FileReviewResult> results, string runStamp,
-        string sourceReportPath)
+        string sourceReportPath, ReviewProgressReporter progress)
     {
         var stopwatch = Stopwatch.StartNew();
         try
@@ -318,6 +339,7 @@ internal static class Program
             SecondOpinionModelSelection selection = secondOpinion.SelectModel(classification);
             SecondOpinionModelProfile selectedModel = selection.Model;
             Log.Information("Second-opinion routing: {Reason}", selection.SelectionReason);
+            progress.ReportPhase("Verifying second-opinion model", selectedModel.ModelName, selection.ProfileName);
 
             string? apiKey = selectedModel.ResolveApiKey();
             if (selectedModel.RequiresApiKey && string.IsNullOrEmpty(apiKey))
@@ -328,7 +350,7 @@ internal static class Program
             }
 
             var client = new ModelClient(SharedHttpClient, selectedModel.Endpoint, selectedModel.ModelName, TimeSpan.FromSeconds(secondOpinion.RequestTimeoutSeconds), apiKey, config.MaxModelResponseBytes,
-                selectedModel.Authentication);
+                selectedModel.Authentication, progress.ObserveModelCall);
 
             // Gate: prove endpoint, model and key with a minimal round trip before any code leaves the machine
             await client.CompleteAsync([new ChatMessage { Role = "user", Content = "Reply with the single word READY." }], []);
@@ -353,6 +375,7 @@ internal static class Program
             {
                 var result = toValidate[index];
                 Log.Information("Second opinion for {Path} ({Position}/{Count})", result.File.Path, index + 1, toValidate.Count);
+                progress.ReportFile("Second-opinion review", selectedModel.ModelName, selection.ProfileName, result.File.Path, index + 1, toValidate.Count);
 
                 string? validation = await validator.ValidateAsync(result);
                 if (validation is null)
@@ -472,12 +495,13 @@ internal static class Program
         Console.WriteLine("Informant, an unattended local-model code-review harness");
         Console.WriteLine();
         Console.WriteLine("Usage (run from the directory holding informant.json, or pass --config):");
-        Console.WriteLine("  Informant [--config <path>]           run a review");
+        Console.WriteLine("  Informant [--config <path>] [--progress json]   run a review");
         Console.WriteLine("  Informant init                        write a starter informant.json and review-prompt.txt");
         Console.WriteLine("  Informant verify [--config <path>]    prove the configured model performs tool-calling, then exit");
         Console.WriteLine("  Informant validate [--config <path>]  check config, endpoint reachability and secrets, then exit");
         Console.WriteLine("  Informant help                        show this help");
         Console.WriteLine();
         Console.WriteLine("--config names the config file explicitly; relative paths inside the config resolve against that file's directory. Without it, informant.json is read from the current directory");
+        Console.WriteLine("--progress json adds versioned INFORMANT-PROGRESS snapshots to stdout for a supervisor or line-oriented script; normal standalone output is unchanged when omitted");
     }
 }

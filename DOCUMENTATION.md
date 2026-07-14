@@ -133,7 +133,7 @@ These controls limit what the model can do, but they do not make model findings 
 
 | Command | Effect |
 | --- | --- |
-| `Informant [--config <path>]` | Run a review |
+| `Informant [--config <path>] [--progress json]` | Run a review, optionally adding machine-readable progress snapshots to standard output |
 | `Informant init` | Write starter files in the current directory without overwriting existing files |
 | `Informant validate [--config <path>]` | Validate configuration, endpoint reachability, paths, and secrets |
 | `Informant verify [--config <path>]` | Prove that the primary model performs tool calling |
@@ -146,6 +146,8 @@ Informant.exe --config "C:\BugSwatter Jobs\sample\informant.json"
 ```
 
 Relative paths inside a configuration file resolve from that file's directory, not from the process working directory. `workingTreePath` is the exception and must be absolute.
+
+Standalone Informant keeps its normal human-readable console and log behavior. Passing `--progress json` additionally writes complete, versioned `INFORMANT-PROGRESS:` JSON snapshots, one per line, for Marshal or a line-oriented script. Snapshots report the current phase, file position, selected model profile, whether a non-streaming model request is waiting for a response, the number of requests started, and cumulative token usage returned by the provider. Providers may omit usage, so token fields remain unavailable until a completed response reports them. BugSwatter does not estimate tokens in a response that is still being generated.
 
 Exit code `0` means the command completed successfully. Exit code `1` means a fatal condition was written to standard error and the configured log.
 
@@ -520,7 +522,7 @@ When `webServer.enabled` is true, Marshal serves HTTP only. HTTPS and certificat
 | --- | --- | --- |
 | `/` and `/dashboard` | GET | Dashboard |
 | `/health` | GET | Liveness, uptime, running job, and queue depth |
-| `/api/status` | GET | Process and queue status |
+| `/api/status` | GET | Process, queue, and current review activity |
 | `/api/history` | GET | Up to 100 recent completed runs |
 | `/api/jobs` | GET | Jobs, repository mappings, paths, and triggers |
 | `/api/jobs/{name}/run` | POST | Enqueue a job |
@@ -529,11 +531,13 @@ When `webServer.enabled` is true, Marshal serves HTTP only. HTTPS and certificat
 | `/webhook/github` | POST | GitHub push webhook when enabled |
 | `/webhook/azuredevops` | POST | Azure DevOps push webhook when enabled |
 
+The page title is **BugSwatter Dashboard**. While a review runs, it shows the dispatched job and trigger state, review start and elapsed time, phase, file position, selected model and profile, whether a model request is waiting for a response, that request's start and elapsed time, request count, and cumulative provider-reported tokens. Informant uses non-streaming requests, so the token count changes only after a response completes. A provider that does not return OpenAI-compatible usage fields is shown as `not reported`. Marshal ignores malformed, missing, and unsupported progress lines; they never fail the child review, and the basic starting state remains available when no valid progress has arrived.
+
 There is no dashboard or API authentication, authorization, CSRF protection, TLS, or rate limiting. Any client that can reach the listener can inspect operational details, trigger model usage, or cancel waiting work. HTTP traffic can be read or modified by any party able to observe the network path. Azure DevOps Basic credentials are not confidential without a protected transport such as a trusted VPN.
 
 The intended deployment is `localhost` or a trusted internal network with firewall or VPN controls. Do not expose the listener directly to the public internet. For remote access on a trusted LAN, bind an internal address or `0.0.0.0` and add a narrowly scoped host-firewall rule. Omit `webServer` entirely when the dashboard and webhooks are not needed. Outbound polling works without an open inbound port.
 
-The history API includes report paths and the jobs API includes configured watch paths and repository identifiers. The dashboard does not serve report file contents, but the metadata can still be sensitive.
+The history API includes report paths, the jobs API includes configured watch paths and repository identifiers, and live status includes current file names, model names, and usage counts. The dashboard does not serve report file contents, but the metadata can still be sensitive.
 
 ## Windows service deployment
 

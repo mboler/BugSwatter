@@ -185,5 +185,56 @@ public sealed class ModelClientTests
         Assert.False(request.RootElement.TryGetProperty("tool_choice", out _));
     }
 
+    [Fact]
+    public async Task ReportsRequestLifecycleAndProviderTokenUsage()
+    {
+        var handler = new StubHttpMessageHandler();
+        handler.Enqueue(HttpStatusCode.OK, """{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":120,"completion_tokens":30,"total_tokens":150}}""");
+        var progress = new List<ModelCallProgress>();
+        var client = new ModelClient(new HttpClient(handler), "http://localhost:9999/v1", "test-model", TimeSpan.FromSeconds(5), progressObserver: progress.Add);
+
+        await client.CompleteAsync([new ChatMessage { Role = "user", Content = "go" }], []);
+
+        Assert.Collection(progress,
+            started =>
+            {
+                Assert.Equal(ModelCallState.Started, started.State);
+                Assert.Equal("test-model", started.ModelName);
+                Assert.Null(started.Usage);
+            },
+            completed =>
+            {
+                Assert.Equal(ModelCallState.Completed, completed.State);
+                Assert.Equal(new ModelTokenUsage(120, 30, 150), completed.Usage);
+                Assert.True(completed.Duration >= TimeSpan.Zero);
+            });
+    }
+
+    [Fact]
+    public async Task ReportsFailedRequestWithoutMaskingTheModelError()
+    {
+        var handler = new StubHttpMessageHandler();
+        handler.Enqueue(HttpStatusCode.BadGateway, """{"error":"down"}""");
+        var progress = new List<ModelCallProgress>();
+        var client = new ModelClient(new HttpClient(handler), "http://localhost:9999/v1", "test-model", TimeSpan.FromSeconds(5), progressObserver: progress.Add);
+
+        ModelCallException exception = await Assert.ThrowsAsync<ModelCallException>(() => client.CompleteAsync([new ChatMessage { Role = "user", Content = "go" }], []));
+
+        Assert.Contains("502", exception.Message);
+        Assert.Equal([ModelCallState.Started, ModelCallState.Failed], progress.Select(item => item.State));
+    }
+
+    [Fact]
+    public async Task ProgressObserverFailureDoesNotFailTheModelRequest()
+    {
+        var handler = new StubHttpMessageHandler();
+        handler.Enqueue(HttpStatusCode.OK, StubHttpMessageHandler.FinalResponse("ok"));
+        var client = new ModelClient(new HttpClient(handler), "http://localhost:9999/v1", "test-model", TimeSpan.FromSeconds(5), progressObserver: _ => throw new InvalidOperationException("observer failed"));
+
+        ChatMessage reply = await client.CompleteAsync([new ChatMessage { Role = "user", Content = "go" }], []);
+
+        Assert.Equal("ok", reply.Content);
+    }
+
     private static ModelClient CreateClient(StubHttpMessageHandler handler) => new(new HttpClient(handler), "http://localhost:9999/v1", "test-model", TimeSpan.FromSeconds(5));
 }

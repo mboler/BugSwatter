@@ -145,6 +145,7 @@ internal static class Program
 
         services.AddSingleton(config);
         services.AddSingleton<ReviewQueue>();
+        services.AddSingleton<CurrentReviewStatusStore>();
         services.AddSingleton<WebhookDeliveryTracker>();
         services.AddSingleton<IInformantRunner, InformantProcessRunner>();
         services.AddSingleton(new HttpClient());

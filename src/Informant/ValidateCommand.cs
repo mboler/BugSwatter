@@ -4,7 +4,7 @@ using BugSwatter.Common;
 namespace Informant;
 
 /// <summary>The result of one validation check</summary>
-public sealed record ValidationCheck(string Label, bool Passed, string Detail);
+public sealed record ValidationCheck(string Label, bool Passed, string Detail, bool Warning = false);
 
 /// <summary>Runs deployment pre-flight checks so a misconfigured job fails at validate time instead of at 3am: config loads (proven by reaching here), endpoints answer, and every referenced environment variable actually resolves</summary>
 public static class ValidateCommand
@@ -22,7 +22,8 @@ public static class ValidateCommand
         Console.WriteLine("Informant configuration validation");
         foreach (ValidationCheck check in checks)
         {
-            Console.WriteLine($"  [{(check.Passed ? "PASS" : "FAIL")}] {check.Label}: {check.Detail}");
+            string outcome = !check.Passed ? "FAIL" : check.Warning ? "WARN" : "PASS";
+            Console.WriteLine($"  [{outcome}] {check.Label}: {check.Detail}");
         }
 
         int failed = checks.Count(check => !check.Passed);
@@ -43,7 +44,13 @@ public static class ValidateCommand
         foreach (PrimaryModelTarget target in config.GetPrimaryModelTargets())
         {
             string label = target.IsFallback ? $"fallback '{target.Name}' model endpoint" : "model endpoint";
-            checks.Add(await ProbeHttpAsync(http, target.Endpoint, label));
+            ValidationCheck endpointCheck = await ProbeHttpAsync(http, target.Endpoint, label);
+            checks.Add(endpointCheck);
+            if (endpointCheck.Passed)
+            {
+                string capacityLabel = target.IsFallback ? $"fallback '{target.Name}' model context capacity" : "model context capacity";
+                checks.Add(await CheckModelCapacityAsync(http, target, config.MaxContextCharacters, capacityLabel));
+            }
         }
 
         if (config.SecondOpinion is { } secondOpinion)
@@ -81,6 +88,13 @@ public static class ValidateCommand
         return result.Reachable
             ? new ValidationCheck($"{label} reachable", true, $"{endpoint} answered {result.StatusCode}")
             : new ValidationCheck($"{label} reachable", false, $"{endpoint} did not answer: {result.Error}");
+    }
+
+    private static async Task<ValidationCheck> CheckModelCapacityAsync(HttpClient http, PrimaryModelTarget target, int maxContextCharacters, string label)
+    {
+        ModelCapacityMetadataResult metadata = await ModelCapacityDiscovery.DiscoverLmStudioAsync(http, target.Endpoint, target.ModelName, ProbeTimeout);
+        ModelCapacityAdvisoryResult advisory = ModelCapacityAdvisory.Evaluate(maxContextCharacters, metadata);
+        return new ValidationCheck(label, true, advisory.Detail, advisory.Warning);
     }
 
     private static async Task<ValidationCheck> ProbeTcpAsync(string host, int port, string label)

@@ -9,6 +9,7 @@ public sealed class ValidateCommandTests
     {
         var handler = new StubHttpMessageHandler();
         handler.Enqueue(HttpStatusCode.OK, "{}");
+        handler.Enqueue(HttpStatusCode.NotFound, "{}");
         handler.Enqueue(HttpStatusCode.OK, "{}");
 
         InformantConfig config = BuildConfig(withSecondOpinion: true, apiKeyVar: "INFORMANT_VALIDATE_KEY");
@@ -46,7 +47,9 @@ public sealed class ValidateCommandTests
     {
         var handler = new StubHttpMessageHandler();
         handler.Enqueue(HttpStatusCode.OK, "{}");
+        handler.Enqueue(HttpStatusCode.NotFound, "{}");
         handler.Enqueue(HttpStatusCode.OK, "{}");
+        handler.Enqueue(HttpStatusCode.NotFound, "{}");
         handler.EnqueueException(new HttpRequestException("backup unavailable"));
         var config = new InformantConfig
         {
@@ -74,6 +77,7 @@ public sealed class ValidateCommandTests
     {
         var handler = new StubHttpMessageHandler();
         handler.Enqueue(HttpStatusCode.OK, "{}");
+        handler.Enqueue(HttpStatusCode.NotFound, "{}");
         handler.Enqueue(HttpStatusCode.OK, "{}");
 
         InformantConfig config = BuildConfig(withSecondOpinion: true, apiKeyVar: "INFORMANT_VALIDATE_UNSET");
@@ -91,6 +95,7 @@ public sealed class ValidateCommandTests
     {
         var handler = new StubHttpMessageHandler();
         handler.Enqueue(HttpStatusCode.OK, "{}");
+        handler.Enqueue(HttpStatusCode.NotFound, "{}");
         handler.Enqueue(HttpStatusCode.OK, "{}");
 
         InformantConfig config = BuildConfig(withSecondOpinion: true, apiKeyVar: null);
@@ -105,6 +110,7 @@ public sealed class ValidateCommandTests
     {
         var handler = new StubHttpMessageHandler();
         handler.Enqueue(HttpStatusCode.OK, "{}");
+        handler.Enqueue(HttpStatusCode.NotFound, "{}");
         handler.Enqueue(HttpStatusCode.OK, "{}");
         handler.Enqueue(HttpStatusCode.OK, "{}");
         handler.Enqueue(HttpStatusCode.OK, "{}");
@@ -152,7 +158,91 @@ public sealed class ValidateCommandTests
         }
     }
 
-    private static InformantConfig BuildConfig(bool withSecondOpinion, string? apiKeyVar) => new()
+    [Fact]
+    public async Task LoadedCapacityIsReportedWithoutWeakeningConfiguredBudget()
+    {
+        var handler = new StubHttpMessageHandler();
+        handler.Enqueue(HttpStatusCode.OK, "{}");
+        handler.Enqueue(HttpStatusCode.OK, CapacityJson(65536, 262144));
+        InformantConfig config = BuildConfig(withSecondOpinion: false, apiKeyVar: null);
+
+        IReadOnlyList<ValidationCheck> checks = await ValidateCommand.GatherChecksAsync(config, new HttpClient(handler));
+
+        ValidationCheck capacity = Assert.Single(checks, check => check.Label == "model context capacity");
+        Assert.True(capacity.Passed);
+        Assert.False(capacity.Warning);
+        Assert.Contains("65,536 loaded tokens", capacity.Detail);
+        Assert.Contains("262,144 maximum tokens", capacity.Detail);
+    }
+
+    [Fact]
+    public async Task UnsafeConfiguredBudgetProducesWarningWithoutFailingValidation()
+    {
+        var handler = new StubHttpMessageHandler();
+        handler.Enqueue(HttpStatusCode.OK, "{}");
+        handler.Enqueue(HttpStatusCode.OK, CapacityJson(32768, 262144));
+        InformantConfig config = BuildConfig(withSecondOpinion: false, apiKeyVar: null, maxContextCharacters: 200000);
+
+        IReadOnlyList<ValidationCheck> checks = await ValidateCommand.GatherChecksAsync(config, new HttpClient(handler));
+
+        ValidationCheck capacity = Assert.Single(checks, check => check.Label == "model context capacity");
+        Assert.True(capacity.Passed);
+        Assert.True(capacity.Warning);
+        Assert.Contains("may exceed", capacity.Detail);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.NotFound, "{}", false)]
+    [InlineData(HttpStatusCode.OK, "{not-json", true)]
+    public async Task MissingOrMalformedMetadataNeverFailsGenericProviderValidation(HttpStatusCode status, string body, bool warning)
+    {
+        var handler = new StubHttpMessageHandler();
+        handler.Enqueue(HttpStatusCode.OK, "{}");
+        handler.Enqueue(status, body);
+        InformantConfig config = BuildConfig(withSecondOpinion: false, apiKeyVar: null);
+
+        IReadOnlyList<ValidationCheck> checks = await ValidateCommand.GatherChecksAsync(config, new HttpClient(handler));
+
+        ValidationCheck capacity = Assert.Single(checks, check => check.Label == "model context capacity");
+        Assert.True(capacity.Passed);
+        Assert.Equal(warning, capacity.Warning);
+    }
+
+    [Fact]
+    public async Task ContradictoryMetadataWarnsWithoutFailingValidation()
+    {
+        var handler = new StubHttpMessageHandler();
+        handler.Enqueue(HttpStatusCode.OK, "{}");
+        handler.Enqueue(HttpStatusCode.OK, CapacityJson(65536, 32768));
+        InformantConfig config = BuildConfig(withSecondOpinion: false, apiKeyVar: null);
+
+        IReadOnlyList<ValidationCheck> checks = await ValidateCommand.GatherChecksAsync(config, new HttpClient(handler));
+
+        ValidationCheck capacity = Assert.Single(checks, check => check.Label == "model context capacity");
+        Assert.True(capacity.Passed);
+        Assert.True(capacity.Warning);
+        Assert.Contains("contradictory", capacity.Detail);
+    }
+
+    private static string CapacityJson(int loadedContextTokens, int maximumContextTokens) => $$"""
+        {
+          "models": [
+            {
+              "type": "llm",
+              "key": "test-model",
+              "max_context_length": {{maximumContextTokens}},
+              "loaded_instances": [
+                {
+                  "id": "test-model",
+                  "config": { "context_length": {{loadedContextTokens}} }
+                }
+              ]
+            }
+          ]
+        }
+        """;
+
+    private static InformantConfig BuildConfig(bool withSecondOpinion, string? apiKeyVar, int maxContextCharacters = 24000) => new()
     {
         RepositoryUrl = "https://example.test/repo.git",
         Branch = "main",
@@ -160,6 +250,7 @@ public sealed class ValidateCommandTests
         GitExecutablePath = TestGit.ExecutablePath,
         ModelEndpoint = "http://localhost:1234/v1",
         ModelName = "test-model",
+        MaxContextCharacters = maxContextCharacters,
         SecondOpinion = withSecondOpinion ? new SecondOpinionConfig { Endpoint = "http://localhost:1235/v1", ModelName = "validator", ApiKey = apiKeyVar is null ? null : $"env:{apiKeyVar}" } : null
     };
 }

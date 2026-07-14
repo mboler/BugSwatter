@@ -364,13 +364,13 @@ Planned commit: `Add adaptive review strategy and coverage ledger`
 
 ### Phase 6: Optional model-capacity advisory
 
-- [ ] Add optional provider metadata discovery without weakening explicit configuration
-- [ ] Support LM Studio loaded and maximum context metadata first
-- [ ] Warn on a clearly unsafe configured budget
-- [ ] Do not fail generic OpenAI-compatible providers that omit metadata
-- [ ] Add validation output and tests for available, missing, malformed, and contradictory metadata
-- [ ] Build the solution and run the affected tests
-- [ ] Update this document with results
+- [x] Add optional provider metadata discovery without weakening explicit configuration
+- [x] Support LM Studio loaded and maximum context metadata first
+- [x] Warn on a clearly unsafe configured budget
+- [x] Do not fail generic OpenAI-compatible providers that omit metadata
+- [x] Add validation output and tests for available, missing, malformed, and contradictory metadata
+- [x] Build the solution and run the affected tests
+- [x] Update this document with results
 
 Planned commit: `Validate model context capacity when available`
 
@@ -463,3 +463,4 @@ At minimum, automated coverage must include:
 | 2026-07-14 | 3 | Complete | Added safe repository-relative path syntax in Common, validated seed paths, code-agnostic role-ranked briefings, bounded exact-path manifest partitions, deterministic whole-block context packing, and a versioned plan validator with fallback and coverage repair; production orchestration remains unchanged until Phase 4; solution build has zero warnings; 603 tests ran, 597 passed, and 6 opt-in live tests skipped | `Add code-agnostic repository planning` |
 | 2026-07-14 | 4 | Complete | Replaced isolated production file calls with bounded manifest planning and sequential clustered units; invalid planning falls back without reducing exhaustive coverage; whole units restart on primary-model failover; completed units persist immediately and aggregate back to the existing per-file baseline and second-opinion contract; scripted tool-call, response attribution, malformed-severity, coverage, and failover tests were added; solution build has zero warnings; 618 tests ran, 612 passed, and 6 opt-in live tests skipped | `Review related files in bounded clusters` |
 | 2026-07-14 | 5 | Complete | Added exhaustive and adaptive strategy selection with exhaustive as the default; adaptive deferrals receive mandatory changed-line windows with surrounding context; metadata-only coverage artifacts distinguish deep, mandatory-change, deferred, excluded, failed, and partial outcomes; reports state adaptive limitations and baseline advancement now follows the approved coverage rule; solution build has zero warnings; 632 tests ran, 626 passed, and 6 opt-in live tests skipped | `Add adaptive review strategy and coverage ledger` |
+| 2026-07-14 | 6 | Complete | Added bounded LM Studio v1 metadata discovery in BugSwatter.AI and character-budget advisory policy in Informant; validation reports loaded and maximum context, warns without overriding explicit configuration, and treats missing generic-provider metadata as normal; malformed and contradictory metadata are non-blocking warnings; solution build has zero warnings; 392 affected tests ran, 387 passed, and 5 opt-in live tests skipped | `Validate model context capacity when available` |

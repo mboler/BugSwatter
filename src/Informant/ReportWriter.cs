@@ -3,7 +3,9 @@ using Serilog;
 
 namespace Informant;
 
-/// <summary>Writes the run report: structure, metadata and skip notes come deterministically from the harness, findings text comes verbatim from the model. Sections are appended to disk as each file completes so a crash never loses finished work; the header counts are patched in at finalization, so pending markers in a report mean the run did not complete</summary>
+/// <summary>
+/// Writes deterministic run metadata and model findings, appending completed file or clustered-unit sections immediately so a later interruption does not lose finished work.
+/// </summary>
 public sealed class ReportWriter
 {
     private const string PendingReviewed = "(pending: files reviewed)";
@@ -68,7 +70,8 @@ public sealed class ReportWriter
         builder.AppendLine($"| Files reviewed | {PendingReviewed} |");
         builder.AppendLine($"| Files skipped or partial | {PendingSkipped} |");
         builder.AppendLine();
-        builder.AppendLine("Findings are produced by the local review model, which cannot execute code; treat them as leads for human validation. Structure, metadata and skip notes are written deterministically by Informant.");
+        builder.AppendLine("Findings are produced by the local review model, which cannot execute code; treat them as leads for human validation. "
+            + "Structure, metadata and skip notes are written deterministically by Informant.");
         builder.AppendLine();
         builder.AppendLine("---");
         builder.AppendLine();
@@ -182,6 +185,51 @@ public sealed class ReportWriter
         builder.AppendLine();
         builder.Append($"Events: {summary.EventCount}; repository reads: {summary.ReadRequestCount} ");
         builder.AppendLine($"({summary.ServedReadCount} served, {summary.PartiallyServedReadCount} partial, {summary.RejectedReadCount} rejected); tool-call events: {summary.ToolCallEventCount}");
+        File.AppendAllText(_path, builder.ToString());
+    }
+
+    /// <summary>Appends one completed or failed clustered review unit immediately so completed work survives a later process interruption</summary>
+    public void AppendReviewUnitSection(ReviewUnitResult result)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+
+        var builder = new StringBuilder();
+        builder.AppendLine($"## Review unit {result.Unit.Id}");
+        builder.AppendLine();
+        builder.AppendLine($"Review result: {(result.Succeeded ? "Reviewed" : "Failed")}");
+        builder.AppendLine($"Rationale: {result.Unit.Rationale}");
+        if (result.ReviewModelName is not null)
+        {
+            builder.AppendLine($"Review model: {result.ReviewModelProfile ?? "primary"} (`{result.ReviewModelName}`)");
+        }
+
+        builder.AppendLine();
+        if (result.Succeeded)
+        {
+            foreach (ReviewUnitPartResult partResult in result.PartResults)
+            {
+                ReviewUnitPart part = partResult.Part;
+                builder.AppendLine($"### {part.File.Path}, part {part.PartNumber} of {part.TotalParts}, lines {part.StartLine}-{part.EndLine}");
+                builder.AppendLine();
+                builder.AppendLine(partResult.Findings.Trim());
+                builder.AppendLine();
+            }
+        }
+        else
+        {
+            builder.AppendLine($"FAILED: {result.FailureReason ?? "clustered review failed without a reason"}");
+            builder.AppendLine();
+            builder.AppendLine("Affected source parts:");
+            foreach (ReviewUnitPart part in result.Unit.Parts)
+            {
+                builder.AppendLine($"- {part.File.Path}, part {part.PartNumber} of {part.TotalParts}, lines {part.StartLine}-{part.EndLine}");
+            }
+
+            builder.AppendLine();
+        }
+
+        builder.AppendLine("---");
+        builder.AppendLine();
         File.AppendAllText(_path, builder.ToString());
     }
 

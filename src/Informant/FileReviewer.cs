@@ -59,14 +59,11 @@ public static class ReviewCompletion
 public sealed class FileReviewer
 {
     private readonly ToolCallLoop _loop;
-    private readonly RepositoryFileReader _fileReader;
-    private readonly GitRunner? _git;
-    private readonly string _treeRoot;
+    private readonly RepositoryReviewSourceLoader _sourceLoader;
     private readonly string _systemPrompt;
     private readonly int _maxFileLines;
     private readonly int _maxContentCharacters;
     private readonly int _retryCount;
-    private readonly int _maxFileBytes;
     private readonly Action<ReviewContextSelectionEvent>? _contextObserver;
 
     /// <summary>Creates a reviewer; content per call is capped at half the context budget, leaving the rest for the prompt and on-demand tool reads</summary>
@@ -77,14 +74,11 @@ public sealed class FileReviewer
         ArgumentNullException.ThrowIfNull(loop);
 
         _loop = loop;
-        _fileReader = new RepositoryFileReader(treeRoot, maxFileBytes);
-        _git = git;
-        _treeRoot = treeRoot;
+        _sourceLoader = new RepositoryReviewSourceLoader(treeRoot, maxFileBytes, git);
         _systemPrompt = systemPrompt;
         _maxFileLines = maxFileLines;
         _maxContentCharacters = Math.Max(2000, maxContextCharacters / 2);
         _retryCount = retryCount;
-        _maxFileBytes = maxFileBytes;
         _contextObserver = contextObserver;
     }
 
@@ -93,33 +87,13 @@ public sealed class FileReviewer
     {
         ArgumentNullException.ThrowIfNull(file);
 
-        if (file.Kind is ChangeKind.Modified or ChangeKind.Renamed && file.ChangedRanges.Count == 0)
+        PreparedReviewFile prepared = await _sourceLoader.LoadAsync(file, cancellationToken);
+        if (prepared.ImmediateResult is not null)
         {
-            return NotReviewable(file, "no line changes (pure rename or metadata-only change)");
+            return prepared.ImmediateResult;
         }
 
-        string[] lines;
-        try
-        {
-            lines = file.Kind == ChangeKind.Deleted
-                ? await ReadDeletedLinesAsync(file)
-                : await _fileReader.ReadAllLinesAsync(file.Path, cancellationToken);
-        }
-        catch (RepositoryFileException ex)
-        {
-            string reason = ex.Error == RepositoryFileError.NotFound ? "file not present in the working tree" : ex.Message;
-            return IsExpectedExclusion(ex.Error) ? NotReviewable(file, reason) : Failed(file, reason);
-        }
-
-        if (lines.Length == 0)
-        {
-            return NotReviewable(file, "empty file");
-        }
-
-        if (Array.Exists(lines, line => line.Contains('\0')))
-        {
-            return NotReviewable(file, "binary file");
-        }
+        string[] lines = prepared.Lines!;
 
         IReadOnlyList<SourceChunk> chunks = SourceChunker.Split(lines, _maxFileLines, _maxContentCharacters);
         var findings = new StringBuilder();
@@ -186,20 +160,6 @@ public sealed class FileReviewer
     }
 
     private sealed record PrimaryReviewPart(string Findings, Severity CandidateSeverity, bool CandidateSeverityDetermined);
-
-    private static FileReviewResult NotReviewable(ChangedFile file, string reason)
-    {
-        Log.Information("Not reviewing {Path}: {Reason}", file.Path, reason);
-        return new FileReviewResult(file, FileReviewStatus.NotReviewable, null, 0, 0, reason);
-    }
-
-    private static FileReviewResult Failed(ChangedFile file, string reason)
-    {
-        Log.Warning("Review failed for {Path}: {Reason}", file.Path, reason);
-        return new FileReviewResult(file, FileReviewStatus.Failed, null, 0, 0, reason, FailureKind: FileReviewFailureKind.Repository);
-    }
-
-    private static bool IsExpectedExclusion(RepositoryFileError error) => error is RepositoryFileError.ReparsePoint or RepositoryFileError.TooLarge or RepositoryFileError.Binary;
 
     private void ObserveContextSelection(ReviewContextSelectionEvent selection)
     {
@@ -302,13 +262,4 @@ public sealed class FileReviewer
         }
     }
 
-    private async Task<string[]> ReadDeletedLinesAsync(ChangedFile file)
-    {
-        if (_git is null || string.IsNullOrWhiteSpace(file.ContentRevision))
-        {
-            throw new RepositoryFileException(RepositoryFileError.ReadFailed, $"deleted file '{file.Path}' has no baseline Git revision available");
-        }
-
-        return await GitBlobReader.ReadLinesAsync(_git, _treeRoot, file.ContentRevision, file.Path, _maxFileBytes);
-    }
 }

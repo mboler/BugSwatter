@@ -64,6 +64,26 @@ public sealed class ReportWriterTests : IDisposable
         Assert.Contains("Review model: backup-server (`backup-model`)", report);
     }
 
+    /// <summary>Verifies clustered unit findings are persisted before final report aggregation</summary>
+    [Fact]
+    public void ClusteredUnitSectionAppendsIncrementallyToDisk()
+    {
+        ReportWriter writer = CreateWriter();
+        writer.WriteHeader("repo", "main", ReviewMode.Changed, "base", "tip", DateTimeOffset.Now);
+        var file = new ChangedFile("src/Foo.cs", ChangeKind.Modified, [new LineRange(1, 2)]);
+        var part = new ReviewUnitPart("part-000001", file, 1, 1, 1, 2, "source", 6);
+        var unit = new ReviewExecutionUnit("core", "related source", [], [part], "prompt");
+        var result = new ReviewUnitResult(unit, [new ReviewUnitPartResult(part, "cluster finding", Severity.Medium, true)], FileReviewFailureKind.None, null, "model", "primary");
+
+        writer.AppendReviewUnitSection(result);
+
+        string report = File.ReadAllText(writer.ReportPath);
+        Assert.Contains("## Review unit core", report);
+        Assert.Contains("### src/Foo.cs, part 1 of 1, lines 1-2", report);
+        Assert.Contains("cluster finding", report);
+        Assert.Contains("Review model: primary (`model`)", report);
+    }
+
     [Fact]
     public void NotReviewableSectionNamesTheReason()
     {

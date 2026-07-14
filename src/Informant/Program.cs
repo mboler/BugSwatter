@@ -153,30 +153,52 @@ internal static class Program
         var reviewer = new PrimaryModelFailoverReviewer(sessions, target => progress.ReportModelTarget(target.ModelName, target.Name));
         await reviewer.InitializeAsync();
 
-        int reviewedCount = 0;
-        var skipped = new List<(string Path, string Reason)>();
-        var results = new List<FileReviewResult>();
-        for (int index = 0; index < files.Count; index++)
+        progress.ReportPhase("Planning repository review", reviewer.ActiveTarget!.ModelName, reviewer.ActiveTarget.Name);
+        int manifestPartitionCharacters = Math.Max(256, config.MaxContextCharacters / 4);
+        RepositoryBriefing briefing = new RepositoryBriefingBuilder().Build(manifest, config.SeedPaths, manifestPartitionCharacters);
+        string[] candidatePaths = [.. manifest.Entries.Where(entry => entry.ChangeKind is not null && entry.Reviewable).Select(entry => entry.Path)];
+        var planner = new RepositoryReviewPlanner(config.MaxContextCharacters);
+        RepositoryPlanningResult planning = await planner.PlanAsync(manifest, briefing, candidatePaths, candidatePaths, allowDeferrals: false, reviewer.PlanAsync);
+        Log.Information("Repository planning produced {Units} units across {Batches} batches, with {ModelBatches} model calls, fallback {Fallback}, coverage repair {CoverageRepair}",
+            planning.Plan.Units.Count, planning.BatchCount, planning.ModelBatchCount, planning.Plan.UsedFallback, planning.Plan.CoverageRepaired);
+
+        var sourceLoader = new RepositoryReviewSourceLoader(config.WorkingTreePath, config.MaxFileBytes, git);
+        var unitBuilder = new ClusteredReviewUnitBuilder(sourceLoader, config.MaxFileLines, config.MaxContextCharacters, reviewPrompt, planning.Plan.RepositorySummary);
+        ClusteredReviewBuild reviewBuild = await unitBuilder.BuildAsync(planning.Plan, files);
+        foreach (FileReviewResult immediateResult in reviewBuild.ImmediateResults)
         {
-            var file = files[index];
-            traceContext.UnitId = file.Path;
-            Log.Information("Reviewing {Path} ({Position}/{Count})", file.Path, index + 1, files.Count);
-            PrimaryModelTarget activeTarget = reviewer.ActiveTarget ?? modelTargets[^1];
-            progress.ReportFile("Primary review", activeTarget.ModelName, activeTarget.Name, file.Path, index + 1, files.Count);
-
-            var result = await reviewer.ReviewAsync(file);
-            report.AppendFileSection(result);
-            results.Add(result);
-
-            if (result.FullyReviewed)
-            {
-                reviewedCount++;
-            }
-            else
-            {
-                skipped.Add((file.Path, result.SkipReason ?? "unknown"));
-            }
+            report.AppendFileSection(immediateResult);
         }
+
+        var unitResults = new List<ReviewUnitResult>(reviewBuild.Units.Count);
+        for (int index = 0; index < reviewBuild.Units.Count; index++)
+        {
+            ReviewExecutionUnit unit = reviewBuild.Units[index];
+            traceContext.UnitId = unit.Id;
+            Log.Information("Reviewing clustered unit {Unit} ({Position}/{Count}) with {Parts} source parts", unit.Id, index + 1, reviewBuild.Units.Count, unit.Parts.Count);
+            PrimaryModelTarget activeTarget = reviewer.ActiveTarget ?? modelTargets[^1];
+            progress.ReportFile("Primary clustered review", activeTarget.ModelName, activeTarget.Name, unit.Id, index + 1, reviewBuild.Units.Count);
+
+            ReviewUnitResult unitResult = await reviewer.ReviewUnitAsync(unit);
+            report.AppendReviewUnitSection(unitResult);
+            unitResults.Add(unitResult);
+        }
+
+        IReadOnlyList<FileReviewResult> results = ClusteredReviewResultAggregator.Build(files, reviewBuild, unitResults);
+        HashSet<string> buildFailurePaths = reviewBuild.PartFailures.Select(failure => failure.Part.File.Path)
+            .ToHashSet(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+        foreach (FileReviewResult result in results.Where(result => buildFailurePaths.Contains(result.File.Path)))
+        {
+            report.AppendFileSection(result with { Findings = null });
+        }
+
+        int reviewedCount = results.Count(result => result.FullyReviewed);
+        IReadOnlyList<(string Path, string Reason)> skipped =
+        [
+            .. results
+                .Where(result => !result.FullyReviewed)
+                .Select(result => (result.File.Path, result.SkipReason ?? "unknown"))
+        ];
 
         progress.ReportPhase("Writing primary report");
         report.Finalize(reviewedCount, skipped, stopwatch.Elapsed, reviewer.Failures);
@@ -245,7 +267,8 @@ internal static class Program
         var loop = new ToolCallLoop(client, readTool, config.MaxContextCharacters, auditObserver: trace.CreateToolObserver(target.ModelName, target.Name, traceContext));
         var reviewer = new FileReviewer(loop, config.WorkingTreePath, reviewPrompt, config.MaxFileLines, config.MaxContextCharacters, config.PerFileRetryCount, config.MaxFileBytes, git,
             trace.CreateContextSelectionObserver(target.ModelName, target.Name, traceContext));
-        return new PrimaryModelSession(target, client, reviewer, config.MaxContextCharacters);
+        var clusteredReviewer = new ClusteredReviewReviewer(loop, reviewPrompt, config.PerFileRetryCount, trace.CreateContextSelectionObserver(target.ModelName, target.Name, traceContext));
+        return new PrimaryModelSession(target, client, reviewer, clusteredReviewer, config.MaxContextCharacters);
     }
 
     private static void ApplyReportRetention(InformantConfig config)
@@ -266,7 +289,9 @@ internal static class Program
         }
     }
 
-    /// <summary>Prints the run's primary report path, or "none" when no report was produced, on its own stdout line so a parent supervisor such as Marshal records the exact artifact instead of guessing the newest file by timestamp. Emitted only when output is redirected, so an interactive run's console stays clean and relies on the logged path instead</summary>
+    /// <summary>
+    /// Prints the run's primary report path, or "none", on redirected stdout so a supervisor records the exact artifact without changing normal interactive output.
+    /// </summary>
     private static void EmitReportPath(string? reportPath)
     {
         if (Console.IsOutputRedirected)
@@ -285,7 +310,8 @@ internal static class Program
             if (!email.ShouldSend(outcome.MaxSeverity, outcome.SeverityDetermined))
             {
                 Log.Information("Email skipped: max confirmed severity {Severity} is below the '{Threshold}' send threshold", outcome.MaxSeverity, email.SendOn);
-                RecordEmailDelivery(outcome.ValidatedReportPath, new EmailDeliveryRecord("Skipped", DateTimeOffset.Now, provider, email.To, $"max confirmed severity {outcome.MaxSeverity} is below the '{email.SendOn}' send threshold"));
+                RecordEmailDelivery(outcome.ValidatedReportPath,
+                    new EmailDeliveryRecord("Skipped", DateTimeOffset.Now, provider, email.To, $"max confirmed severity {outcome.MaxSeverity} is below the '{email.SendOn}' send threshold"));
                 return;
             }
 
@@ -438,7 +464,8 @@ internal static class Program
 
             writer.Finalize(validated, failed, stopwatch.Elapsed);
             string jsonPath = jsonReport.Write(config.ReportDirectory, runStamp, selection, sourceReportPath);
-            Log.Information("Second opinion complete: {Validated} validated, {Failed} failed, max confirmed severity {Severity}, reports at {Report} and {Json}", validated, failed, jsonReport.MaxSeverity, writer.ReportPath, jsonPath);
+            Log.Information("Second opinion complete: {Validated} validated, {Failed} failed, max confirmed severity {Severity}, reports at {Report} and {Json}", validated, failed,
+                jsonReport.MaxSeverity, writer.ReportPath, jsonPath);
 
             return new SecondOpinionOutcome(writer.ReportPath, jsonPath, jsonReport.MaxSeverity, jsonReport.SeverityDetermined, validated, failed);
         }

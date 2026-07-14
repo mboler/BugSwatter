@@ -335,15 +335,15 @@ Planned commit: `Add code-agnostic repository planning`
 
 ### Phase 4: Clustered exhaustive review
 
-- [ ] Replace isolated file orchestration with bounded sequential review units
-- [ ] Pack related files and hunks into each unit
-- [ ] Preserve deleted, renamed, added, modified, and large-file behavior
-- [ ] Preserve primary failover, progress reporting, partial artifacts, and structured severity
-- [ ] Ensure exhaustive strategy covers every required candidate
-- [ ] Add integration tests with scripted model responses and tool calls
-- [ ] Compare current and clustered exhaustive coverage on representative fixtures
-- [ ] Build the solution and run the complete test suite
-- [ ] Update this document with results
+- [x] Replace isolated file orchestration with bounded sequential review units
+- [x] Pack related files and hunks into each unit
+- [x] Preserve deleted, renamed, added, modified, and large-file behavior
+- [x] Preserve primary failover, progress reporting, partial artifacts, and structured severity
+- [x] Ensure exhaustive strategy covers every required candidate
+- [x] Add integration tests with scripted model responses and tool calls
+- [x] Compare current and clustered exhaustive coverage on representative fixtures
+- [x] Build the solution and run the complete test suite
+- [x] Update this document with results
 
 Planned commit: `Review related files in bounded clusters`
 
@@ -461,3 +461,4 @@ At minimum, automated coverage must include:
 | 2026-07-14 | 1 | Complete | Immutable Git-tree catalog and bounded common file inspection added; no-change integration proves in-memory recalculation without artifacts or a model call; solution build has zero warnings; 556 tests ran, 550 passed, and 6 opt-in live tests skipped | `Add per-run repository manifest` |
 | 2026-07-14 | 2 | Complete | Manifest-gated live reads now verify path, type, size, line count, and SHA-256 content; tool results have explicit line and character bounds; controller selections and model tool activity are written to a metadata-only retained JSONL trace; 571 tests ran, 565 passed, and 6 opt-in live tests skipped | `Audit and bound model file requests` |
 | 2026-07-14 | 3 | Complete | Added safe repository-relative path syntax in Common, validated seed paths, code-agnostic role-ranked briefings, bounded exact-path manifest partitions, deterministic whole-block context packing, and a versioned plan validator with fallback and coverage repair; production orchestration remains unchanged until Phase 4; solution build has zero warnings; 603 tests ran, 597 passed, and 6 opt-in live tests skipped | `Add code-agnostic repository planning` |
+| 2026-07-14 | 4 | Complete | Replaced isolated production file calls with bounded manifest planning and sequential clustered units; invalid planning falls back without reducing exhaustive coverage; whole units restart on primary-model failover; completed units persist immediately and aggregate back to the existing per-file baseline and second-opinion contract; scripted tool-call, response attribution, malformed-severity, coverage, and failover tests were added; solution build has zero warnings; 618 tests ran, 612 passed, and 6 opt-in live tests skipped | `Review related files in bounded clusters` |

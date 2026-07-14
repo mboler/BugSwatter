@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 
@@ -27,6 +28,13 @@ internal sealed class StubHttpMessageHandler : HttpMessageHandler
     });
 
     public void EnqueueContent(HttpStatusCode status, HttpContent content) => _responders.Enqueue(_ => Task.FromResult(new HttpResponseMessage(status) { Content = content }));
+
+    public void EnqueueRateLimited(string body, TimeSpan retryAfter) => _responders.Enqueue(_ =>
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.TooManyRequests) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
+        response.Headers.RetryAfter = new RetryConditionHeaderValue(retryAfter);
+        return Task.FromResult(response);
+    });
 
     public void EnqueueException(Exception exception) => _responders.Enqueue(_ => Task.FromException<HttpResponseMessage>(exception));
 

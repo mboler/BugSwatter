@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -13,6 +14,8 @@ public sealed class ModelClient
 {
     /// <summary>Default model-response limit of 4 MiB</summary>
     public const int DefaultMaxResponseBytes = 4 * 1024 * 1024;
+
+    private const int MaxRateLimitRetries = 3;
 
     private static readonly JsonSerializerOptions JsonOptions = new() { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
 
@@ -89,33 +92,46 @@ public sealed class ModelClient
     {
         // Endpoints reject empty tool arrays, so a tool-free conversation omits both fields entirely
         var request = new ChatRequest { Model = _modelName, Messages = messages, Tools = tools.Count > 0 ? tools : null, ToolChoice = tools.Count > 0 ? "auto" : null };
+        string requestBody = JsonSerializer.Serialize(request, JsonOptions);
 
         using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutSource.CancelAfter(_requestTimeout);
 
-        string body;
+        string body = "";
         try
         {
-            using var content = new StringContent(JsonSerializer.Serialize(request, JsonOptions), Encoding.UTF8, "application/json");
-            using var httpRequest = new HttpRequestMessage(HttpMethod.Post, _chatCompletionsUri);
-            httpRequest.Content = content;
-            if (_apiKey is not null)
+            for (int retry = 0; ; retry++)
             {
-                if (_authentication == ModelAuthentication.ApiKey)
+                using var content = new StringContent(requestBody, Encoding.UTF8, "application/json");
+                using var httpRequest = new HttpRequestMessage(HttpMethod.Post, _chatCompletionsUri) { Content = content };
+                if (_apiKey is not null)
                 {
-                    httpRequest.Headers.Add("api-key", _apiKey);
+                    if (_authentication == ModelAuthentication.ApiKey)
+                    {
+                        httpRequest.Headers.Add("api-key", _apiKey);
+                    }
+                    else
+                    {
+                        httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
+                    }
                 }
-                else
+
+                using var response = await _http.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, timeoutSource.Token);
+
+                body = await ReadResponseBodyAsync(response.Content, timeoutSource.Token);
+                if (response.IsSuccessStatusCode)
                 {
-                    httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
+                    break;
                 }
-            }
 
-            using var response = await _http.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, timeoutSource.Token);
+                if (response.StatusCode == HttpStatusCode.TooManyRequests && retry < MaxRateLimitRetries)
+                {
+                    TimeSpan delay = GetRateLimitDelay(response, retry);
+                    Log.Warning("Model endpoint rate limited the request; retrying in {DelaySeconds:0.###} seconds ({Attempt}/{Maximum})", delay.TotalSeconds, retry + 1, MaxRateLimitRetries);
+                    await Task.Delay(delay, timeoutSource.Token);
+                    continue;
+                }
 
-            body = await ReadResponseBodyAsync(response.Content, timeoutSource.Token);
-            if (!response.IsSuccessStatusCode)
-            {
                 throw new ModelCallException($"Model endpoint returned {(int)response.StatusCode} {response.StatusCode}: {TextSummary.Create(body, 500)}");
             }
         }
@@ -147,6 +163,22 @@ public sealed class ModelClient
         Log.Debug("Model reply: {ToolCallCount} tool calls, {ContentLength} content characters", message.ToolCalls?.Count ?? 0, message.Content?.Length ?? 0);
         ModelTokenUsage? usage = parsed?.Usage is null ? null : new ModelTokenUsage(parsed.Usage.PromptTokens, parsed.Usage.CompletionTokens, parsed.Usage.TotalTokens);
         return (message, usage);
+    }
+
+    private static TimeSpan GetRateLimitDelay(HttpResponseMessage response, int retry)
+    {
+        if (response.Headers.RetryAfter?.Delta is { } delta)
+        {
+            return delta > TimeSpan.Zero ? delta : TimeSpan.Zero;
+        }
+
+        if (response.Headers.RetryAfter?.Date is { } retryAt)
+        {
+            TimeSpan delay = retryAt - DateTimeOffset.UtcNow;
+            return delay > TimeSpan.Zero ? delay : TimeSpan.Zero;
+        }
+
+        return TimeSpan.FromSeconds(1 << retry);
     }
 
     private void ReportProgress(ModelCallProgress progress)

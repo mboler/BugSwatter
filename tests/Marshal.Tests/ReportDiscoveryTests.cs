@@ -51,6 +51,7 @@ public sealed class ReportDiscoveryTests : IDisposable
         Directory.CreateDirectory(overriddenDirectory);
         string report = Path.Combine(overriddenDirectory, "Informant-Report-2026-07-12_10-00-00.md");
         File.WriteAllText(report, "report");
+        string? originalReportDirectory = Environment.GetEnvironmentVariable("INFORMANT_ReportDirectory");
         Environment.SetEnvironmentVariable("INFORMANT_ReportDirectory", overriddenDirectory);
         try
         {
@@ -58,7 +59,7 @@ public sealed class ReportDiscoveryTests : IDisposable
         }
         finally
         {
-            Environment.SetEnvironmentVariable("INFORMANT_ReportDirectory", null);
+            Environment.SetEnvironmentVariable("INFORMANT_ReportDirectory", originalReportDirectory);
         }
     }
 

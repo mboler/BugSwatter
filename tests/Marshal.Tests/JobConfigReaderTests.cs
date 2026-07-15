@@ -45,6 +45,7 @@ public sealed class JobConfigReaderTests : IDisposable
     {
         string path = Path.Combine(_directory.Path, "informant.json");
         File.WriteAllText(path, """{ "modelEndpoint": "http://json.example/v1" }""");
+        string? originalModelEndpoint = Environment.GetEnvironmentVariable("INFORMANT_ModelEndpoint");
         Environment.SetEnvironmentVariable("INFORMANT_ModelEndpoint", "http://environment.example/v1");
         try
         {
@@ -52,7 +53,7 @@ public sealed class JobConfigReaderTests : IDisposable
         }
         finally
         {
-            Environment.SetEnvironmentVariable("INFORMANT_ModelEndpoint", null);
+            Environment.SetEnvironmentVariable("INFORMANT_ModelEndpoint", originalModelEndpoint);
         }
     }
 

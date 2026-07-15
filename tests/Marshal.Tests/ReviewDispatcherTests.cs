@@ -178,11 +178,18 @@ public sealed class ReviewDispatcherTests
         queue.Enqueue(new ReviewJobConfig { Name = "visible", InformantConfigPath = @"C:\jobs\visible\informant.json" }, "manual");
         await dispatcher.StartAsync(CancellationToken.None);
 
-        await runner.Started.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.Equal("Starting Informant", current.Snapshot()!.Phase);
-        runner.Release();
-        await WaitUntilAsync(() => current.Snapshot() is null, TimeSpan.FromSeconds(5));
-        await dispatcher.StopAsync(CancellationToken.None);
+        try
+        {
+            await runner.Started.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal("Starting Informant", current.Snapshot()!.Phase);
+            runner.Release();
+            await WaitUntilAsync(() => current.Snapshot() is null, TimeSpan.FromSeconds(5));
+        }
+        finally
+        {
+            runner.Release();
+            await dispatcher.StopAsync(CancellationToken.None);
+        }
     }
 
     [Fact]

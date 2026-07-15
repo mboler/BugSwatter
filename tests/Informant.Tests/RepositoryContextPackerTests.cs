@@ -37,6 +37,13 @@ public sealed class RepositoryContextPackerTests
         Assert.Equal(0, result.UsedCharacters);
     }
 
+    /// <summary>Verifies null context entries fail with a clear configuration error before sorting</summary>
+    [Fact]
+    public void RejectsNullContextEntry()
+    {
+        Assert.Throws<ArgumentException>(() => RepositoryContextPacker.Pack([null!], 10));
+    }
+
     /// <summary>Verifies duplicate identifiers are rejected because they make deterministic coverage accounting ambiguous</summary>
     [Fact]
     public void RejectsDuplicateIdentifiers()

@@ -77,6 +77,7 @@ public sealed class SecondOpinionConfigTests : IDisposable
     {
         var secondOpinion = new SecondOpinionConfig { Endpoint = "https://api.example.test/v1", ModelName = "frontier-1", ApiKey = "env:INFORMANT_SO_CONFIG_TEST" };
 
+        string? originalApiKey = Environment.GetEnvironmentVariable("INFORMANT_SO_CONFIG_TEST");
         Environment.SetEnvironmentVariable("INFORMANT_SO_CONFIG_TEST", "resolved-value");
         try
         {
@@ -84,7 +85,7 @@ public sealed class SecondOpinionConfigTests : IDisposable
         }
         finally
         {
-            Environment.SetEnvironmentVariable("INFORMANT_SO_CONFIG_TEST", null);
+            Environment.SetEnvironmentVariable("INFORMANT_SO_CONFIG_TEST", originalApiKey);
         }
 
         Assert.Null(secondOpinion.ResolveApiKey());

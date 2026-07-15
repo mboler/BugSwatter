@@ -28,8 +28,8 @@ public sealed class ModelClient
     private readonly ModelAuthentication _authentication;
     private readonly Action<ModelCallProgress>? _progressObserver;
 
-    /// <summary>Creates a client over an injected HttpClient; an optional API key is sent per request as a bearer token
-    /// or api-key header so authenticated cloud endpoints work through the same client as local endpoints</summary>
+    /// <summary>Creates a client over a caller-owned HttpClient; its timeout is not mutated. An optional API key is sent per request as a bearer token
+    /// or api-key header so authenticated cloud endpoints work through the same client as local endpoints. Use an infinite client timeout when the per-request timeout is authoritative</summary>
     public ModelClient(HttpClient httpClient, string endpoint, string modelName, TimeSpan requestTimeout, string? apiKey = null,
         int maxResponseBytes = DefaultMaxResponseBytes, ModelAuthentication authentication = ModelAuthentication.Bearer, Action<ModelCallProgress>? progressObserver = null)
     {
@@ -42,21 +42,6 @@ public sealed class ModelClient
         }
 
         _http = httpClient;
-        try
-        {
-            // The per-request timeout is enforced via a linked token below; HttpClient's own 100 second default must not
-            // preempt slow local models. A second client over the same shared HttpClient skips the redundant set, because
-            // setting Timeout after the first request throws even for an unchanged value
-            if (_http.Timeout != Timeout.InfiniteTimeSpan)
-            {
-                _http.Timeout = Timeout.InfiniteTimeSpan;
-            }
-        }
-        catch (InvalidOperationException)
-        {
-            // the injected client has already sent a request, so its configured timeout stays in force alongside the per-request token
-            Log.Warning("HttpClient was already in use; its existing timeout remains active");
-        }
 
         _chatCompletionsUri = new Uri(endpoint.TrimEnd('/') + "/chat/completions");
         _modelName = modelName;

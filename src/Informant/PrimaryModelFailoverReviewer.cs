@@ -87,6 +87,11 @@ public sealed class PrimaryModelFailoverReviewer
             throw new ArgumentException("At least one primary model session is required.", nameof(sessions));
         }
 
+        if (sessions.Any(session => session is null))
+        {
+            throw new ArgumentException("Primary model sessions must not contain null.", nameof(sessions));
+        }
+
         _sessions = sessions;
         _targetObserver = targetObserver;
     }
@@ -145,6 +150,10 @@ public sealed class PrimaryModelFailoverReviewer
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(systemPrompt);
         ArgumentException.ThrowIfNullOrWhiteSpace(userPrompt);
+        if (_activeSession is null && _nextSessionIndex == 0)
+        {
+            throw new InvalidOperationException("InitializeAsync must complete before repository planning can begin.");
+        }
 
         while (_activeSession is { } session)
         {

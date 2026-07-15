@@ -21,7 +21,7 @@ public sealed class LiveIntegrationTests
     {
         Assert.SkipUnless(Live.Enabled, Live.DisabledReason);
 
-        var client = new ModelClient(new HttpClient(), Live.Endpoint, Live.Model, TimeSpan.FromSeconds(120));
+        var client = new ModelClient(new HttpClient { Timeout = Timeout.InfiniteTimeSpan }, Live.Endpoint, Live.Model, TimeSpan.FromSeconds(120));
         ChatMessage reply = await client.CompleteAsync(
             [new ChatMessage { Role = "system", Content = "You are a terse assistant." }, new ChatMessage { Role = "user", Content = "Reply with the single word: pong" }],
             []);
@@ -34,7 +34,7 @@ public sealed class LiveIntegrationTests
     {
         Assert.SkipUnless(Live.Enabled, Live.DisabledReason);
 
-        var client = new ModelClient(new HttpClient(), Live.Endpoint, Live.Model, TimeSpan.FromSeconds(120));
+        var client = new ModelClient(new HttpClient { Timeout = Timeout.InfiniteTimeSpan }, Live.Endpoint, Live.Model, TimeSpan.FromSeconds(120));
         VerificationResult result = await ToolCallingVerifier.VerifyAsync(client, 24000);
 
         // On failure the detail explains whether the model made no tool call or echoed the wrong token
@@ -50,7 +50,7 @@ public sealed class LiveIntegrationTests
         const string fileName = "ConfigLoader.cs";
         await File.WriteAllTextAsync(Path.Combine(tree.Path, fileName), BuggySource);
 
-        var client = new ModelClient(new HttpClient(), Live.Endpoint, Live.Model, TimeSpan.FromSeconds(300));
+        var client = new ModelClient(new HttpClient { Timeout = Timeout.InfiniteTimeSpan }, Live.Endpoint, Live.Model, TimeSpan.FromSeconds(300));
         var loop = new ToolCallLoop(client, new ReadFileLinesTool(tree.Path), 24000);
         var reviewer = new FileReviewer(loop, tree.Path, DefaultReviewPrompt.Text, 800, 24000, 1);
 
@@ -66,7 +66,7 @@ public sealed class LiveIntegrationTests
         Assert.SkipUnless(Live.Enabled, Live.DisabledReason);
         Assert.SkipUnless(Live.SecondOpinionConfigured, "set INFORMANT_IT_SO_ENDPOINT and INFORMANT_IT_SO_MODEL to cover the second-opinion endpoint");
 
-        var client = new ModelClient(new HttpClient(), Live.SecondOpinionEndpoint, Live.SecondOpinionModel, TimeSpan.FromSeconds(120));
+        var client = new ModelClient(new HttpClient { Timeout = Timeout.InfiniteTimeSpan }, Live.SecondOpinionEndpoint, Live.SecondOpinionModel, TimeSpan.FromSeconds(120));
         ChatMessage reply = await client.CompleteAsync([new ChatMessage { Role = "user", Content = "Reply with the single word: ok" }], []);
 
         Assert.False(string.IsNullOrWhiteSpace(reply.Content), "the second-opinion model returned no content");
@@ -90,7 +90,7 @@ public sealed class LiveIntegrationTests
             }
             """);
 
-        var client = new ModelClient(new HttpClient(), Live.SecondOpinionEndpoint, Live.SecondOpinionModel, TimeSpan.FromMinutes(15));
+        var client = new ModelClient(new HttpClient { Timeout = Timeout.InfiniteTimeSpan }, Live.SecondOpinionEndpoint, Live.SecondOpinionModel, TimeSpan.FromMinutes(15));
         var reviewer = new SecondOpinionReviewer(client, tree.Path, DefaultSecondOpinionPrompt.Text, 24000, 30, false, 0);
         var primaryResult = new FileReviewResult(new ChangedFile(fileName, ChangeKind.Modified, [new LineRange(5, 5)]), FileReviewStatus.Reviewed,
             "Divide does not guard against a zero divisor, so ordinary input can throw DivideByZeroException.", 1, 1, null);

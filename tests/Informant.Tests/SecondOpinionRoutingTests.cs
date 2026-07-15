@@ -55,6 +55,7 @@ public sealed class SecondOpinionRoutingTests : IDisposable
     public void EnvironmentCanOverrideAnAdvancedProfile()
     {
         WriteConfig(CreateAdvancedValues());
+        string? originalPremiumModelName = Environment.GetEnvironmentVariable("INFORMANT_SecondOpinion__Profiles__premium__ModelName");
         Environment.SetEnvironmentVariable("INFORMANT_SecondOpinion__Profiles__premium__ModelName", "overridden-premium");
         try
         {
@@ -66,7 +67,7 @@ public sealed class SecondOpinionRoutingTests : IDisposable
         }
         finally
         {
-            Environment.SetEnvironmentVariable("INFORMANT_SecondOpinion__Profiles__premium__ModelName", null);
+            Environment.SetEnvironmentVariable("INFORMANT_SecondOpinion__Profiles__premium__ModelName", originalPremiumModelName);
         }
     }
 

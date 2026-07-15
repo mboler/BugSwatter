@@ -8,7 +8,7 @@ namespace Informant;
 internal static class Program
 {
     // One process-lifetime client for all model calls; per-call instances would churn sockets and handlers
-    private static readonly HttpClient SharedHttpClient = new();
+    private static readonly HttpClient SharedHttpClient = new() { Timeout = Timeout.InfiniteTimeSpan };
 
     private static bool _loggingReady;
     private static bool _consoleLogging;

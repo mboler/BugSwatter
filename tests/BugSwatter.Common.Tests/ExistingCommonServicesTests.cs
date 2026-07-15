@@ -8,10 +8,11 @@ public sealed class ExistingCommonServicesTests : IDisposable
     private const string EnvironmentPrefix = "BUGSWATTER_COMMON_TEST_";
 
     private readonly TempDirectory _directory = new();
+    private readonly string? _originalName = Environment.GetEnvironmentVariable(EnvironmentPrefix + "Name");
 
     public void Dispose()
     {
-        Environment.SetEnvironmentVariable(EnvironmentPrefix + "Name", null);
+        Environment.SetEnvironmentVariable(EnvironmentPrefix + "Name", _originalName);
         _directory.Dispose();
     }
 

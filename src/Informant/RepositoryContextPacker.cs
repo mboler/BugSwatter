@@ -21,9 +21,13 @@ public static class RepositoryContextPacker
         ArgumentNullException.ThrowIfNull(items);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(characterBudget);
 
+        RepositoryContextItem[] materialized =
+        [
+            .. items.Select(item => item ?? throw new ArgumentException("Context items must not contain null", nameof(items)))
+        ];
         RepositoryContextItem[] ordered =
         [
-            .. items
+            .. materialized
                 .OrderBy(item => item.Priority)
                 .ThenBy(item => item.Id, StringComparer.Ordinal)
         ];

@@ -14,6 +14,7 @@ public sealed class ValidateCommandTests
 
         InformantConfig config = BuildConfig(withSecondOpinion: true, apiKeyVar: "INFORMANT_VALIDATE_KEY");
 
+        string? originalValidateKey = Environment.GetEnvironmentVariable("INFORMANT_VALIDATE_KEY");
         Environment.SetEnvironmentVariable("INFORMANT_VALIDATE_KEY", "present");
         try
         {
@@ -24,7 +25,7 @@ public sealed class ValidateCommandTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("INFORMANT_VALIDATE_KEY", null);
+            Environment.SetEnvironmentVariable("INFORMANT_VALIDATE_KEY", originalValidateKey);
         }
     }
 
@@ -81,13 +82,20 @@ public sealed class ValidateCommandTests
         handler.Enqueue(HttpStatusCode.OK, "{}");
 
         InformantConfig config = BuildConfig(withSecondOpinion: true, apiKeyVar: "INFORMANT_VALIDATE_UNSET");
+        string? originalUnsetKey = Environment.GetEnvironmentVariable("INFORMANT_VALIDATE_UNSET");
         Environment.SetEnvironmentVariable("INFORMANT_VALIDATE_UNSET", null);
+        try
+        {
+            IReadOnlyList<ValidationCheck> checks = await ValidateCommand.GatherChecksAsync(config, new HttpClient(handler));
 
-        IReadOnlyList<ValidationCheck> checks = await ValidateCommand.GatherChecksAsync(config, new HttpClient(handler));
-
-        ValidationCheck key = Assert.Single(checks, check => check.Label == "second-opinion API key");
-        Assert.False(key.Passed);
-        Assert.Contains("is not set", key.Detail);
+            ValidationCheck key = Assert.Single(checks, check => check.Label == "second-opinion API key");
+            Assert.False(key.Passed);
+            Assert.Contains("is not set", key.Detail);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("INFORMANT_VALIDATE_UNSET", originalUnsetKey);
+        }
     }
 
     [Fact]
@@ -142,6 +150,7 @@ public sealed class ValidateCommandTests
             }
         };
 
+        string? originalPremiumKey = Environment.GetEnvironmentVariable("INFORMANT_VALIDATE_PREMIUM");
         Environment.SetEnvironmentVariable("INFORMANT_VALIDATE_PREMIUM", "present");
         try
         {
@@ -154,7 +163,7 @@ public sealed class ValidateCommandTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("INFORMANT_VALIDATE_PREMIUM", null);
+            Environment.SetEnvironmentVariable("INFORMANT_VALIDATE_PREMIUM", originalPremiumKey);
         }
     }
 

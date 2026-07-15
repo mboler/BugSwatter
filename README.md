@@ -8,6 +8,8 @@ BugSwatter is a small app I put together to help find them. One AI model reviews
 
 It's a quick, practical tool I run nightly against my own apps and repos. I'm putting it up publicly in case it's handy for someone else too. No grand promises, just an extra set of eyes while you sleep.
 
+If you want the short case for the design, including why its local-first review can reduce cloud token costs, read [Why BugSwatter?](WHY_BUGSWATTER.md).
+
 Contributions are welcome. Found a bug, smoothed a rough edge, or added something useful? Open a pull request.
 
 ## How it works

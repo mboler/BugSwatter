@@ -68,7 +68,7 @@ Download the Windows archive and `SHA256SUMS.txt` from the same GitHub Release. 
 The Windows executables are not code-signed, so Windows may identify them as coming from an unknown publisher or display a SmartScreen warning. Download releases only from this GitHub repository, and proceed only after the archive's checksum matches `SHA256SUMS.txt`.
 
 ```powershell
-$version = "0.8.1"
+$version = "0.90.0"
 Get-FileHash ".\BugSwatter-$version-win-x64.zip" -Algorithm SHA256
 Expand-Archive ".\BugSwatter-$version-win-x64.zip" -DestinationPath C:\BugSwatter\releases
 Move-Item "C:\BugSwatter\releases\BugSwatter-$version-win-x64" C:\BugSwatter\bin
@@ -84,7 +84,7 @@ Install Git and your distribution's .NET 10 and ASP.NET Core 10 runtime packages
 After comparing the archive's SHA-256 value with `SHA256SUMS.txt`:
 
 ```bash
-VERSION=0.8.1
+VERSION=0.90.0
 sudo mkdir -p /opt/bugswatter
 sudo tar -xzf "BugSwatter-${VERSION}-linux-x64.tar.gz" -C /opt/bugswatter --strip-components=1
 sudo chmod 755 /opt/bugswatter/Informant /opt/bugswatter/Marshal
@@ -711,7 +711,7 @@ Build local framework-dependent release archives with:
 
 The Linux archive should be produced on Linux so executable permission bits are set correctly. The script reads the version from `Directory.Build.props`, refuses to overwrite an existing archive, and can validate an expected `v<version>` tag.
 
-GitHub Actions runs build, test, dependency policy, vulnerability reporting, and package smoke tests on Windows and Linux for pushes and pull requests. Pushing a tag such as `v0.8.1` first runs the same CI, builds both archives, writes `SHA256SUMS.txt`, and creates a GitHub Release. The tag must exactly match the version in `Directory.Build.props`. Release packages remain framework-dependent and do not bundle .NET.
+GitHub Actions runs build, test, dependency policy, vulnerability reporting, and package smoke tests on Windows and Linux for pushes and pull requests. Pushing a tag such as `v0.90.0` first runs the same CI, builds both archives, writes `SHA256SUMS.txt`, and creates a GitHub Release. The tag must exactly match the version in `Directory.Build.props`. Release packages remain framework-dependent and do not bundle .NET.
 
 Opt-in integration tests are skipped in ordinary CI. Live model tests require `INFORMANT_IT=1`, `INFORMANT_IT_ENDPOINT`, and `INFORMANT_IT_MODEL`; optional second-opinion coverage also uses `INFORMANT_IT_SO_ENDPOINT` and `INFORMANT_IT_SO_MODEL`. The ACS email test uses `BUGSWATTER_EMAIL_IT=1`, `BUGSWATTER_EMAIL_IT_ACS_CONNECTION`, `BUGSWATTER_EMAIL_IT_FROM`, and `BUGSWATTER_EMAIL_IT_TO`. Never commit those values.
 

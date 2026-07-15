@@ -8,6 +8,7 @@ public sealed class RepositoryRelativePathTests
     [InlineData("src/Foo.cs", "src/Foo.cs")]
     [InlineData("src\\Foo.cs", "src/Foo.cs")]
     [InlineData("./src//Foo.cs", "src/Foo.cs")]
+    [InlineData(" leading/Foo.cs", " leading/Foo.cs")]
     public void NormalizesSafeRelativePaths(string path, string expected)
     {
         Assert.Equal(expected, RepositoryRelativePath.Normalize(path));
@@ -20,6 +21,8 @@ public sealed class RepositoryRelativePathTests
     [InlineData("/etc/passwd")]
     [InlineData("\\server\\share\\secret.txt")]
     [InlineData("C:\\secret.txt")]
+    [InlineData("src/Foo.cs ")]
+    [InlineData("src/trailing.")]
     public void RejectsUnsafePaths(string path)
     {
         Assert.False(RepositoryRelativePath.TryNormalize(path, out string normalized));

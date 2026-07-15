@@ -146,6 +146,7 @@ public sealed class MarshalConfigTests : IDisposable
         Assert.Null(MarshalConfig.ResolveSecret(null));
         Assert.Null(MarshalConfig.ResolveSecret(""));
 
+        string? originalTestSecret = Environment.GetEnvironmentVariable("MARSHAL_TEST_SECRET");
         Environment.SetEnvironmentVariable("MARSHAL_TEST_SECRET", "from-environment");
         try
         {
@@ -154,7 +155,7 @@ public sealed class MarshalConfigTests : IDisposable
         }
         finally
         {
-            Environment.SetEnvironmentVariable("MARSHAL_TEST_SECRET", null);
+            Environment.SetEnvironmentVariable("MARSHAL_TEST_SECRET", originalTestSecret);
         }
     }
 
@@ -204,6 +205,12 @@ public sealed class MarshalConfigTests : IDisposable
         string alternateConfig = Path.Combine(_directory.Path, "alternate-informant.json");
         File.WriteAllText(alternateConfig, "{}");
         string path = WriteConfig(webhookEnabled: true);
+        string? originalTimeout = Environment.GetEnvironmentVariable("MARSHAL_PerRunTimeoutMinutes");
+        string? originalPort = Environment.GetEnvironmentVariable("MARSHAL_WebServer__Port");
+        string? originalJobName = Environment.GetEnvironmentVariable("MARSHAL_Jobs__0__Name");
+        string? originalConfigPath = Environment.GetEnvironmentVariable("MARSHAL_Jobs__0__InformantConfigPath");
+        string? originalPollEnabled = Environment.GetEnvironmentVariable("MARSHAL_Jobs__0__Poll__Enabled");
+        string? originalPollSchedule = Environment.GetEnvironmentVariable("MARSHAL_Jobs__0__Poll__Schedule");
         Environment.SetEnvironmentVariable("MARSHAL_PerRunTimeoutMinutes", "45");
         Environment.SetEnvironmentVariable("MARSHAL_WebServer__Port", "5055");
         Environment.SetEnvironmentVariable("MARSHAL_Jobs__0__Name", "environment-job");
@@ -223,12 +230,12 @@ public sealed class MarshalConfigTests : IDisposable
         }
         finally
         {
-            Environment.SetEnvironmentVariable("MARSHAL_PerRunTimeoutMinutes", null);
-            Environment.SetEnvironmentVariable("MARSHAL_WebServer__Port", null);
-            Environment.SetEnvironmentVariable("MARSHAL_Jobs__0__Name", null);
-            Environment.SetEnvironmentVariable("MARSHAL_Jobs__0__InformantConfigPath", null);
-            Environment.SetEnvironmentVariable("MARSHAL_Jobs__0__Poll__Enabled", null);
-            Environment.SetEnvironmentVariable("MARSHAL_Jobs__0__Poll__Schedule", null);
+            Environment.SetEnvironmentVariable("MARSHAL_PerRunTimeoutMinutes", originalTimeout);
+            Environment.SetEnvironmentVariable("MARSHAL_WebServer__Port", originalPort);
+            Environment.SetEnvironmentVariable("MARSHAL_Jobs__0__Name", originalJobName);
+            Environment.SetEnvironmentVariable("MARSHAL_Jobs__0__InformantConfigPath", originalConfigPath);
+            Environment.SetEnvironmentVariable("MARSHAL_Jobs__0__Poll__Enabled", originalPollEnabled);
+            Environment.SetEnvironmentVariable("MARSHAL_Jobs__0__Poll__Schedule", originalPollSchedule);
         }
     }
 

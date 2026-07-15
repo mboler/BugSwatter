@@ -1,8 +1,8 @@
 <Project>
 
-  <!-- Shared metadata for every project. Pre-1.0: adaptive repository review is the 0.8 feature wave -->
+  <!-- Shared metadata for every project. Pre-1.0: review hardening is the 0.90 feature wave -->
   <PropertyGroup>
-    <Version>0.8.1</Version>
+    <Version>0.90.0</Version>
     <Product>BugSwatter</Product>
     <Authors>Mark Boler</Authors>
     <Company>Mark Boler</Company>

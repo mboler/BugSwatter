@@ -95,6 +95,7 @@ public sealed class EmailTests : IDisposable
     {
         var config = new EmailConfig { Provider = EmailProvider.AzureCommunicationServices, AcsConnectionString = "env:INFORMANT_ACS_RESOLVE_TEST" };
 
+        string? originalAcsValue = Environment.GetEnvironmentVariable("INFORMANT_ACS_RESOLVE_TEST");
         Environment.SetEnvironmentVariable("INFORMANT_ACS_RESOLVE_TEST", "endpoint=https://x;accesskey=secret");
         try
         {
@@ -102,7 +103,7 @@ public sealed class EmailTests : IDisposable
         }
         finally
         {
-            Environment.SetEnvironmentVariable("INFORMANT_ACS_RESOLVE_TEST", null);
+            Environment.SetEnvironmentVariable("INFORMANT_ACS_RESOLVE_TEST", originalAcsValue);
         }
 
         Assert.Null(config.ResolveAcsConnectionString());
@@ -113,6 +114,7 @@ public sealed class EmailTests : IDisposable
     {
         var config = new EmailConfig { Username = "user", Password = "env:INFORMANT_SMTP_TEST" };
 
+        string? originalSmtpValue = Environment.GetEnvironmentVariable("INFORMANT_SMTP_TEST");
         Environment.SetEnvironmentVariable("INFORMANT_SMTP_TEST", "smtp-secret");
         try
         {
@@ -120,7 +122,7 @@ public sealed class EmailTests : IDisposable
         }
         finally
         {
-            Environment.SetEnvironmentVariable("INFORMANT_SMTP_TEST", null);
+            Environment.SetEnvironmentVariable("INFORMANT_SMTP_TEST", originalSmtpValue);
         }
 
         Assert.Null(config.ResolvePassword());

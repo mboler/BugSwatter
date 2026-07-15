@@ -6,9 +6,10 @@ public sealed class SecretReferenceTests : IDisposable
 
     private readonly TempDirectory _directory = new();
 
+    private readonly string? _originalValue = Environment.GetEnvironmentVariable(EnvironmentVariable);
     public void Dispose()
     {
-        Environment.SetEnvironmentVariable(EnvironmentVariable, null);
+        Environment.SetEnvironmentVariable(EnvironmentVariable, _originalValue);
         _directory.Dispose();
     }
 

@@ -20,6 +20,21 @@ public sealed class ReadFileLinesToolTests : IDisposable
         Assert.DoesNotContain("note:", result);
     }
 
+    /// <summary>Verifies seven-digit line numbers are reported without parsing a fixed-width prefix</summary>
+    [Fact]
+    public void SupportsSevenDigitLineNumbers()
+    {
+        string path = Path.Combine(_root.Path, "million.txt");
+        File.WriteAllText(path, string.Join('\n', Enumerable.Repeat("x", 1_000_000)));
+        var tool = new ReadFileLinesTool(_root.Path, maxFileBytes: 4 * 1024 * 1024);
+
+        string result = tool.Execute("million.txt", 1_000_000, 1_000_000);
+
+        using var document = JsonDocument.Parse(result);
+        Assert.Equal(1_000_000, document.RootElement.GetProperty("returnedStartLine").GetInt32());
+        Assert.Equal(1_000_000, document.RootElement.GetProperty("returnedEndLine").GetInt32());
+    }
+
     /// <summary>Verifies a range beyond the final line is complete and reports end-of-file metadata</summary>
     [Fact]
     public void EndBeyondFileReturnsCompleteResponseWithEndOfFileMetadata()

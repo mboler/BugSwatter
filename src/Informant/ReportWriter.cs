@@ -159,8 +159,6 @@ public sealed class ReportWriter
             }
         }
 
-        File.AppendAllText(_path, builder.ToString());
-
         // Patch only the header segment, so findings text that happened to contain a pending marker is never rewritten.
         // The delimiter is the standalone horizontal rule line; a bare "---" search would hit the table alignment row first
         string report = File.ReadAllText(_path);
@@ -170,7 +168,8 @@ public sealed class ReportWriter
         header = header.Replace(PendingSkipped, skipped.Count.ToString());
         header = header.Replace(PendingDuration, $"{(int)duration.TotalHours:00}:{duration.Minutes:00}:{duration.Seconds:00}");
         header = header.Replace(PendingCompleted, $"{_startedAt + duration:yyyy-MM-dd HH:mm:ss zzz}");
-        File.WriteAllText(_path, headerEnd < 0 ? header : header + report[headerEnd..]);
+        string finalizedReport = headerEnd < 0 ? header : header + report[headerEnd..];
+        ReplaceFinalizedReport(finalizedReport + builder);
 
         Log.Information("Report finalized: {Path}", _path);
     }
@@ -281,6 +280,23 @@ public sealed class ReportWriter
         builder.AppendLine("---");
         builder.AppendLine();
         File.AppendAllText(_path, builder.ToString());
+    }
+
+    private void ReplaceFinalizedReport(string report)
+    {
+        string temporaryPath = $"{_path}.{Guid.NewGuid():N}.tmp";
+        try
+        {
+            File.WriteAllText(temporaryPath, report);
+            File.Move(temporaryPath, _path, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temporaryPath))
+            {
+                File.Delete(temporaryPath);
+            }
+        }
     }
 
     private static string FormatRanges(IReadOnlyList<LineRange> ranges) => ranges.Count == 0 ? "(none)" : string.Join(", ", ranges.Select(range => range.ToString()));

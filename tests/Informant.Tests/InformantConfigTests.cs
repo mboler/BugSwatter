@@ -412,9 +412,30 @@ public sealed class InformantConfigTests : IDisposable
     }
 
     [Fact]
+    public void NullPromptIncludeFilesIsRejectedAtPromptResolution()
+    {
+        var config = new InformantConfig { PromptIncludeFiles = null! };
+
+        InformantFatalException exception = Assert.Throws<InformantFatalException>(() => config.ResolveReviewPrompt(EmptyTree()));
+
+        Assert.Contains("promptIncludeFiles", exception.Message);
+    }
+
+    [Fact]
+    public void JsonNullPromptIncludeFilesBindsToTheSafeDefault()
+    {
+        WriteConfig(values => values["promptIncludeFiles"] = null);
+
+        InformantConfig config = InformantConfig.Load(_directory.Path);
+
+        Assert.Empty(config.PromptIncludeFiles);
+    }
+
+    [Fact]
     public void EnvironmentVariableOverridesAConfigValue()
     {
         WriteConfig();
+        string? originalModelName = Environment.GetEnvironmentVariable("INFORMANT_ModelName");
         Environment.SetEnvironmentVariable("INFORMANT_ModelName", "overridden-model");
         try
         {
@@ -422,7 +443,7 @@ public sealed class InformantConfigTests : IDisposable
         }
         finally
         {
-            Environment.SetEnvironmentVariable("INFORMANT_ModelName", null);
+            Environment.SetEnvironmentVariable("INFORMANT_ModelName", originalModelName);
         }
     }
 
@@ -430,6 +451,7 @@ public sealed class InformantConfigTests : IDisposable
     public void EnvironmentVariableOverridesReportRetention()
     {
         WriteConfig();
+        string? originalReportRetentionDays = Environment.GetEnvironmentVariable("INFORMANT_ReportRetentionDays");
         Environment.SetEnvironmentVariable("INFORMANT_ReportRetentionDays", "45");
         try
         {
@@ -437,7 +459,7 @@ public sealed class InformantConfigTests : IDisposable
         }
         finally
         {
-            Environment.SetEnvironmentVariable("INFORMANT_ReportRetentionDays", null);
+            Environment.SetEnvironmentVariable("INFORMANT_ReportRetentionDays", originalReportRetentionDays);
         }
     }
 
@@ -445,6 +467,7 @@ public sealed class InformantConfigTests : IDisposable
     public void EnvironmentVariableOverridesANestedConfigValue()
     {
         WriteConfig(values => values["secondOpinion"] = new Dictionary<string, object?> { ["endpoint"] = "http://localhost:1234/v1", ["modelName"] = "validator" });
+        string? originalSecondOpinionModelName = Environment.GetEnvironmentVariable("INFORMANT_SecondOpinion__ModelName");
         Environment.SetEnvironmentVariable("INFORMANT_SecondOpinion__ModelName", "env-validator");
         try
         {
@@ -452,7 +475,7 @@ public sealed class InformantConfigTests : IDisposable
         }
         finally
         {
-            Environment.SetEnvironmentVariable("INFORMANT_SecondOpinion__ModelName", null);
+            Environment.SetEnvironmentVariable("INFORMANT_SecondOpinion__ModelName", originalSecondOpinionModelName);
         }
     }
 
@@ -460,6 +483,7 @@ public sealed class InformantConfigTests : IDisposable
     public void EnvironmentVariableOverridesAnArrayValue()
     {
         WriteConfig(values => values["promptIncludeFiles"] = new[] { "AGENTS.md" });
+        string? originalPromptIncludeFile = Environment.GetEnvironmentVariable("INFORMANT_PromptIncludeFiles__0");
         Environment.SetEnvironmentVariable("INFORMANT_PromptIncludeFiles__0", "GUIDANCE.md");
         try
         {
@@ -467,7 +491,7 @@ public sealed class InformantConfigTests : IDisposable
         }
         finally
         {
-            Environment.SetEnvironmentVariable("INFORMANT_PromptIncludeFiles__0", null);
+            Environment.SetEnvironmentVariable("INFORMANT_PromptIncludeFiles__0", originalPromptIncludeFile);
         }
     }
 

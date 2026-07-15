@@ -8,7 +8,7 @@ namespace BugSwatter.Git;
 public static class GitBlobReader
 {
     /// <summary>Reads every line from a bounded text blob at the requested revision and path</summary>
-    public static async Task<string[]> ReadLinesAsync(GitRunner git, string treePath, string revision, string path, int maxFileBytes)
+    public static async Task<string[]> ReadLinesAsync(GitRunner git, string treePath, string revision, string path, int maxFileBytes, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(git);
         ArgumentException.ThrowIfNullOrWhiteSpace(treePath);
@@ -17,10 +17,10 @@ public static class GitBlobReader
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxFileBytes);
 
         string objectName = $"{revision}:{path}";
-        GitResult sizeResult = await git.RunAsync("-C", treePath, "cat-file", "-s", objectName).ConfigureAwait(false);
+        GitResult sizeResult = await git.RunAsync(cancellationToken, "-C", treePath, "cat-file", "-s", objectName).ConfigureAwait(false);
         if (sizeResult.ExitCode != 0 || !long.TryParse(sizeResult.StandardOutput.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out long size))
         {
-            throw new RepositoryFileException(RepositoryFileError.ReadFailed, $"could not read deleted file '{path}' from baseline {revision}");
+            throw new RepositoryFileException(RepositoryFileError.ReadFailed, $"Git could not inspect '{path}' at baseline {revision} (cat-file -s exited {sizeResult.ExitCode})");
         }
 
         if (size > maxFileBytes)
@@ -28,10 +28,10 @@ public static class GitBlobReader
             throw new RepositoryFileException(RepositoryFileError.TooLarge, $"'{path}' exceeds maxFileBytes limit of {maxFileBytes} bytes in baseline {revision}");
         }
 
-        GitResult contentResult = await git.RunAsync("-C", treePath, "cat-file", "blob", objectName).ConfigureAwait(false);
+        GitResult contentResult = await git.RunAsync(cancellationToken, "-C", treePath, "cat-file", "blob", objectName).ConfigureAwait(false);
         if (contentResult.ExitCode != 0)
         {
-            throw new RepositoryFileException(RepositoryFileError.ReadFailed, $"could not read deleted file '{path}' from baseline {revision}");
+            throw new RepositoryFileException(RepositoryFileError.ReadFailed, $"Git could not read '{path}' at baseline {revision} (cat-file blob exited {contentResult.ExitCode})");
         }
 
         if (Encoding.UTF8.GetByteCount(contentResult.StandardOutput) > maxFileBytes)

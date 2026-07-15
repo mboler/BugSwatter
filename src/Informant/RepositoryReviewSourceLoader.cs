@@ -37,7 +37,7 @@ public sealed class RepositoryReviewSourceLoader
         try
         {
             lines = file.Kind == ChangeKind.Deleted
-                ? await ReadDeletedLinesAsync(file)
+                ? await ReadDeletedLinesAsync(file, cancellationToken)
                 : await _fileReader.ReadAllLinesAsync(file.Path, cancellationToken);
         }
         catch (RepositoryFileException ex)
@@ -76,13 +76,13 @@ public sealed class RepositoryReviewSourceLoader
 
     private static bool IsExpectedExclusion(RepositoryFileError error) => error is RepositoryFileError.ReparsePoint or RepositoryFileError.TooLarge or RepositoryFileError.Binary;
 
-    private async Task<string[]> ReadDeletedLinesAsync(ChangedFile file)
+    private async Task<string[]> ReadDeletedLinesAsync(ChangedFile file, CancellationToken cancellationToken)
     {
         if (_git is null || string.IsNullOrWhiteSpace(file.ContentRevision))
         {
             throw new RepositoryFileException(RepositoryFileError.ReadFailed, $"deleted file '{file.Path}' has no baseline Git revision available");
         }
 
-        return await GitBlobReader.ReadLinesAsync(_git, _treeRoot, file.ContentRevision, file.Path, _maxFileBytes);
+        return await GitBlobReader.ReadLinesAsync(_git, _treeRoot, file.ContentRevision, file.Path, _maxFileBytes, cancellationToken);
     }
 }

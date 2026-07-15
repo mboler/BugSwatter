@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using BugSwatter.Common;
 using Serilog;
 
 namespace Informant;
@@ -24,10 +25,20 @@ public sealed partial class ChangeDetector
     /// <summary>Returns true when <paramref name="sha"/> still names a commit in the tree; a rewritten branch can orphan the recorded baseline</summary>
     public async Task<bool> IsCommitReachableAsync(string sha)
     {
-        // The doubled braces are C# escapes: this renders as <sha>^{commit}, git's peel-to-commit revision syntax
-        var result = await _git.RunAsync("-C", _treePath, "cat-file", "-e", $"{sha}^{{commit}}");
-        
-        return result.ExitCode == 0;
+        // --verify --quiet gives a locale-independent exit code: 1 means the object is absent, while operational failures use another code
+        // The doubled braces are C# escapes: this renders as <sha>^{commit}, Git's peel-to-commit revision syntax
+        var result = await _git.RunAsync("-C", _treePath, "rev-parse", "--verify", "--quiet", $"{sha}^{{commit}}");
+        if (result.ExitCode == 0)
+        {
+            return true;
+        }
+
+        if (result.ExitCode == 1)
+        {
+            return false;
+        }
+
+        throw new GitOperationException($"Could not verify baseline commit {sha}: git rev-parse exited {result.ExitCode}: {TextSummary.Create(result.StandardError, 500)}");
     }
 
     /// <summary>Lists reviewable files changed between the two commits, each with its changed line ranges on the new side</summary>

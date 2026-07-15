@@ -24,6 +24,16 @@ public sealed class ModelClientTests
     }
 
     [Fact]
+    public void ConstructionDoesNotMutateTheInjectedHttpClientTimeout()
+    {
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+
+        _ = new ModelClient(http, "http://localhost:9999/v1", "test-model", TimeSpan.FromSeconds(5));
+
+        Assert.Equal(TimeSpan.FromSeconds(15), http.Timeout);
+    }
+
+    [Fact]
     public async Task SendsModelMessagesToolsAndToolChoice()
     {
         var handler = new StubHttpMessageHandler();

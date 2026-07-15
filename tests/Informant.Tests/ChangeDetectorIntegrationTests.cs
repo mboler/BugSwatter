@@ -148,6 +148,18 @@ public sealed class ChangeDetectorIntegrationTests
     }
 
     [Fact]
+    public async Task BaselineVerificationPropagatesUnexpectedGitFailures()
+    {
+        using var repository = await TestRepository.CreateAsync();
+        string sha = await repository.CommitFileAsync("a.txt", "a\n", "a");
+        var detector = new ChangeDetector(new GitRunner(TestGit.ExecutablePath), Path.Combine(repository.Root, "missing-tree"));
+
+        GitOperationException exception = await Assert.ThrowsAsync<GitOperationException>(() => detector.IsCommitReachableAsync(sha));
+
+        Assert.Contains("Could not verify baseline commit", exception.Message);
+    }
+
+    [Fact]
     public async Task ChangeSetFilePersistsInspectableJson()
     {
         using var directory = new TempDirectory();

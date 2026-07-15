@@ -63,7 +63,7 @@ public sealed class SecondOpinionReviewer
 
         try
         {
-            string userPrompt = await BuildUserPromptAsync(localResult);
+            string userPrompt = await BuildUserPromptAsync(localResult, cancellationToken);
 
             string? content;
             if (_toolLoop is not null)
@@ -102,8 +102,10 @@ public sealed class SecondOpinionReviewer
     {
         ArgumentNullException.ThrowIfNull(lines);
         ArgumentNullException.ThrowIfNull(ranges);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxCharacters);
+        ArgumentOutOfRangeException.ThrowIfNegative(contextLines);
 
-        int totalCharacters = lines.Sum(line => line.Length + 10);
+        long totalCharacters = lines.Sum(line => (long)line.Length + 10);
         if (totalCharacters <= maxCharacters || ranges.Count == 0)
         {
             return NumberLines(lines, 1, lines.Length, maxCharacters);
@@ -111,7 +113,7 @@ public sealed class SecondOpinionReviewer
 
         // Widen each changed range by the context margin, then merge overlapping windows so nothing prints twice
         var windows = new List<(int Start, int End)>();
-        foreach (var range in ranges.OrderBy(range => range.Start))
+        foreach (LineRange range in ranges.OrderBy(range => range.Start))
         {
             int start = Math.Max(1, range.Start - contextLines);
             int end = Math.Min(lines.Length, range.End + contextLines);
@@ -129,12 +131,28 @@ public sealed class SecondOpinionReviewer
         var builder = new StringBuilder();
         foreach ((int start, int end) in windows)
         {
+            const string Omitted = "... (lines omitted) ...\n";
             if (builder.Length > 0)
             {
-                builder.AppendLine("... (lines omitted) ...");
+                if (builder.Length + Omitted.Length > maxCharacters)
+                {
+                    break;
+                }
+
+                builder.Append(Omitted);
             }
 
-            builder.AppendLine(NumberLines(lines, start, end, maxCharacters - builder.Length).TrimEnd());
+            string window = NumberLines(lines, start, end, maxCharacters - builder.Length);
+            if (window.Length == 0)
+            {
+                break;
+            }
+
+            builder.Append(window);
+            if (builder.Length == maxCharacters)
+            {
+                break;
+            }
         }
 
         return builder.ToString();
@@ -142,28 +160,45 @@ public sealed class SecondOpinionReviewer
 
     private static string NumberLines(string[] lines, int start, int end, int maxCharacters)
     {
+        if (maxCharacters <= 0)
+        {
+            return "";
+        }
+
         var builder = new StringBuilder();
         for (int line = start; line <= end; line++)
         {
-            if (builder.Length > maxCharacters)
+            string numberedLine = $"{line,6} | {lines[line - 1]}\n";
+            if (builder.Length + numberedLine.Length <= maxCharacters)
             {
-                builder.AppendLine($"... (truncated at the context budget; {end - line + 1} lines not shown) ...");
-                break;
+                builder.Append(numberedLine);
+                continue;
             }
 
-            builder.AppendLine($"{line,6} | {lines[line - 1]}");
+            AppendTruncation(builder, end - line + 1, maxCharacters);
+            break;
         }
 
         return builder.ToString();
     }
 
-    private async Task<string> BuildUserPromptAsync(FileReviewResult localResult)
+    private static void AppendTruncation(StringBuilder builder, int omittedLineCount, int maxCharacters)
+    {
+        string marker = $"... (truncated at the context budget; {omittedLineCount} lines not shown) ...\n";
+        int remaining = maxCharacters - builder.Length;
+        if (remaining > 0)
+        {
+            builder.Append(marker.AsSpan(0, Math.Min(marker.Length, remaining)));
+        }
+    }
+
+    private async Task<string> BuildUserPromptAsync(FileReviewResult localResult, CancellationToken cancellationToken)
     {
         string excerpt;
         try
         {
             string[] lines = localResult.File.Kind == ChangeKind.Deleted
-                ? await ReadDeletedLinesAsync(localResult.File)
+                ? await ReadDeletedLinesAsync(localResult.File, cancellationToken)
                 : _fileReader.ReadAllLines(localResult.File.Path);
             excerpt = BuildCodeExcerpt(lines, localResult.File.ChangedRanges, _maxContentCharacters, _contextLines);
         }
@@ -215,13 +250,13 @@ public sealed class SecondOpinionReviewer
         return builder.ToString();
     }
 
-    private async Task<string[]> ReadDeletedLinesAsync(ChangedFile file)
+    private async Task<string[]> ReadDeletedLinesAsync(ChangedFile file, CancellationToken cancellationToken)
     {
         if (_git is null || string.IsNullOrWhiteSpace(file.ContentRevision))
         {
             throw new RepositoryFileException(RepositoryFileError.ReadFailed, $"deleted file '{file.Path}' has no baseline Git revision available");
         }
 
-        return await GitBlobReader.ReadLinesAsync(_git, _treeRoot, file.ContentRevision, file.Path, _maxFileBytes);
+        return await GitBlobReader.ReadLinesAsync(_git, _treeRoot, file.ContentRevision, file.Path, _maxFileBytes, cancellationToken);
     }
 }

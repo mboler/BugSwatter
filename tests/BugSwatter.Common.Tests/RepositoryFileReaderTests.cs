@@ -127,7 +127,7 @@ public sealed class RepositoryFileReaderTests : IDisposable
 
         Assert.Equal(new FileInfo(path).Length, inspection.SizeBytes);
         Assert.Equal(3, inspection.LineCount);
-        Assert.Equal(64, inspection.ContentHash.Length);
+        Assert.Equal("796C06772295D9604559518DC7FD2E3A2BC14970902A6FDA43D636B29D6B27FC", inspection.ContentHash);
     }
 
     /// <summary>Verifies metadata inspection rejects binary files</summary>

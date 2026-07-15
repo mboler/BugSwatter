@@ -73,6 +73,20 @@ public sealed class PrimaryReviewParserTests
     }
 
     [Fact]
+    public void NullFindingElementFailsSafe()
+    {
+        const string Text = """
+            review
+            ```json
+            { "findings": [null] }
+            ```
+            """;
+
+        Assert.False(PrimaryReviewParser.TryParse(Text, out _, out string prose));
+        Assert.Equal(Text, prose);
+    }
+
+    [Fact]
     public void MissingFindingsPropertyFailsSafe()
     {
         const string Text = """

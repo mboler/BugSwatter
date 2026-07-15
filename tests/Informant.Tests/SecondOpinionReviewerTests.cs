@@ -21,6 +21,15 @@ public sealed class SecondOpinionReviewerTests : IDisposable
     }
 
     [Fact]
+    public void SingleLongLineNeverExceedsTheExcerptBudget()
+    {
+        string excerpt = SecondOpinionReviewer.BuildCodeExcerpt([new string('x', 10000)], [], 64, 0);
+
+        Assert.True(excerpt.Length <= 64);
+        Assert.DoesNotContain(new string('x', 100), excerpt);
+    }
+
+    [Fact]
     public void OversizedFileExcerptCoversRangesWithContextAndElision()
     {
         string[] lines = [.. Enumerable.Range(1, 2000).Select(i => $"line {i} with some padding text to add bulk")];

@@ -212,33 +212,44 @@ public sealed class ReadFileLinesTool : IModelTool
         bool lineLimited = range.EffectiveEndLine < availableEndLine;
         string? naturalReason = lineLimited ? "LineLimit" : requestedEndLine > range.TotalLines ? "EndOfFile" : null;
         int? naturalNextStartLine = lineLimited ? range.EffectiveEndLine + 1 : null;
+        int? firstLineNumber = range.Lines.Count == 0 ? null : range.Lines[0].Number;
+        int? lastLineNumber = range.Lines.Count == 0 ? null : range.Lines[^1].Number;
 
-        BuiltReadResponse complete = SerializeResponse(normalizedPath, requestedStartLine, requestedEndLine, formattedLines, !lineLimited, naturalReason, naturalNextStartLine, range.TotalLines);
+        BuiltReadResponse complete = SerializeResponse(normalizedPath, requestedStartLine, requestedEndLine, formattedLines, firstLineNumber, lastLineNumber, !lineLimited, naturalReason,
+            naturalNextStartLine, range.TotalLines);
         if (complete.Json.Length <= _maxResultCharacters)
         {
             return complete;
         }
 
-        for (int lineCount = formattedLines.Length - 1; lineCount >= 1; lineCount--)
+        int lower = 1;
+        int upper = formattedLines.Length - 1;
+        BuiltReadResponse? bestPartial = null;
+        while (lower <= upper)
         {
+            int lineCount = lower + (upper - lower) / 2;
             string[] boundedLines = formattedLines[..lineCount];
             int nextStartLine = range.Lines[lineCount - 1].Number + 1;
-            BuiltReadResponse partial = SerializeResponse(normalizedPath, requestedStartLine, requestedEndLine, boundedLines, false, "CharacterLimit", nextStartLine, range.TotalLines);
+            BuiltReadResponse partial = SerializeResponse(normalizedPath, requestedStartLine, requestedEndLine, boundedLines, firstLineNumber,
+                range.Lines[lineCount - 1].Number, false, "CharacterLimit", nextStartLine, range.TotalLines);
             if (partial.Json.Length <= _maxResultCharacters)
             {
-                return partial;
+                bestPartial = partial;
+                lower = lineCount + 1;
+            }
+            else
+            {
+                upper = lineCount - 1;
             }
         }
 
-        return null;
+        return bestPartial;
     }
 
-    private static BuiltReadResponse SerializeResponse(string path, int requestedStartLine, int requestedEndLine, IReadOnlyList<string> lines, bool complete, string? truncationReason,
-        int? nextStartLine, int totalLines)
+    private static BuiltReadResponse SerializeResponse(string path, int requestedStartLine, int requestedEndLine, IReadOnlyList<string> lines, int? returnedStartLine,
+        int? returnedEndLine, bool complete, string? truncationReason, int? nextStartLine, int totalLines)
     {
         string content = string.Join('\n', lines);
-        int? returnedStartLine = lines.Count == 0 ? null : ParseLineNumber(lines[0]);
-        int? returnedEndLine = lines.Count == 0 ? null : ParseLineNumber(lines[^1]);
         var document = new ReadResponse(complete ? "complete" : "partial", path, requestedStartLine, requestedEndLine, returnedStartLine, returnedEndLine, totalLines, lines.Count,
             content.Length, complete, truncationReason, nextStartLine, content);
         string json = JsonSerializer.Serialize(document, JsonOptions);
@@ -301,7 +312,6 @@ public sealed class ReadFileLinesTool : IModelTool
 
     private static string? Bound(string? value, int maxCharacters) => value is null || value.Length <= maxCharacters ? value : value[..maxCharacters];
 
-    private static int ParseLineNumber(string formattedLine) => int.Parse(formattedLine.AsSpan(0, 6));
 
     private static long ElapsedMilliseconds(long started) => (long)Stopwatch.GetElapsedTime(started).TotalMilliseconds;
 

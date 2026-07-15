@@ -70,6 +70,14 @@ public sealed class PrimaryModelFailoverReviewerTests
     private static readonly ChangedFile File = new("src/Foo.cs", ChangeKind.Modified, [new LineRange(1, 2)]);
 
     [Fact]
+    public void ConstructorRejectsNullSession()
+    {
+        ArgumentException exception = Assert.Throws<ArgumentException>(() => new PrimaryModelFailoverReviewer([null!]));
+
+        Assert.Contains("must not contain null", exception.Message);
+    }
+
+    [Fact]
     public async Task HealthyPrimaryNeverTouchesFallback()
     {
         var primary = Session("primary", false, Success("primary findings"));
@@ -158,6 +166,16 @@ public sealed class PrimaryModelFailoverReviewerTests
 
         await Assert.ThrowsAsync<OperationCanceledException>(() => reviewer.ReviewAsync(File));
         Assert.Equal(0, fallback.VerificationCount);
+    }
+
+    [Fact]
+    public async Task PlanningBeforeInitializationFailsClearly()
+    {
+        var reviewer = new PrimaryModelFailoverReviewer([Session("primary", false, Success("unused"))]);
+
+        InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(() => reviewer.PlanAsync("system", "user"));
+
+        Assert.Contains("InitializeAsync", exception.Message);
     }
 
     [Fact]

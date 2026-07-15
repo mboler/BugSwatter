@@ -27,6 +27,11 @@ public static class RepositoryRelativePath
                 throw new ArgumentException($"Path must not contain parent traversal: '{path}'", nameof(path));
             }
 
+            if (component.EndsWith(' ') || component.EndsWith('.'))
+            {
+                throw new ArgumentException($"Path contains a Windows-ambiguous trailing dot or space: '{path}'", nameof(path));
+            }
+
             normalized.Add(component);
         }
 

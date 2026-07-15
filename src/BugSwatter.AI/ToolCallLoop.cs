@@ -20,7 +20,10 @@ public enum ModelToolCallOutcome
     CallBudgetRejected,
 
     /// <summary>The conversation character budget was already exhausted</summary>
-    ContextBudgetRejected
+    ContextBudgetRejected,
+
+    /// <summary>The configured tool raised an unexpected exception</summary>
+    ExecutionFailed
 }
 
 /// <summary>Metadata-only observation of one tool call handled by the conversation loop</summary>
@@ -151,9 +154,24 @@ public sealed class ToolCallLoop
             return result;
         }
 
-        string toolResult = tool.Execute(call.Function?.Arguments ?? "");
-        Observe(new ModelToolCallAuditEvent(name, ModelToolCallOutcome.Executed, call.Function?.Arguments?.Length ?? 0, toolResult.Length, ElapsedMilliseconds(started)));
-        return toolResult;
+        try
+        {
+            string toolResult = tool.Execute(call.Function?.Arguments ?? "");
+            Observe(new ModelToolCallAuditEvent(name, ModelToolCallOutcome.Executed, call.Function?.Arguments?.Length ?? 0, toolResult.Length, ElapsedMilliseconds(started)));
+            return toolResult;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // Catch-all: an unexpected tool failure is returned as bounded model-visible data so one read cannot abort an unattended review
+            Log.Warning("Model tool {Tool} failed: {Reason}", name, ex.Message);
+            const string result = """{"error": "tool execution failed; inspect a different valid path or finish with the information already available"}""";
+            Observe(new ModelToolCallAuditEvent(name, ModelToolCallOutcome.ExecutionFailed, call.Function?.Arguments?.Length ?? 0, result.Length, ElapsedMilliseconds(started)));
+            return result;
+        }
     }
 
     private void Observe(ModelToolCallAuditEvent auditEvent)

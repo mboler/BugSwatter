@@ -87,8 +87,13 @@ public static partial class PrimaryReviewParser
 
             var findings = new List<CandidateFinding>(dto.Findings.Count);
             Severity maxSeverity = Severity.None;
-            foreach (CandidateFindingDto item in dto.Findings)
+            foreach (CandidateFindingDto? item in dto.Findings)
             {
+                if (item is null)
+                {
+                    return false;
+                }
+
                 if (!TryParseCandidateSeverity(item.Severity, out Severity severity))
                 {
                     return false;

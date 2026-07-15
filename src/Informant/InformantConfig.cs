@@ -174,6 +174,11 @@ public sealed class InformantConfig
     /// <summary>Assembles the selected base prompt plus every Markdown guidance file matched by <see cref="PromptIncludeFiles"/> in the working tree</summary>
     public string ResolveReviewPrompt(string workingTreePath)
     {
+        if (PromptIncludeFiles is null)
+        {
+            throw new InformantFatalException("promptIncludeFiles must be an array; use an empty array or omit it to disable prompt includes");
+        }
+
         var builder = new StringBuilder(ResolveBasePrompt().TrimEnd());
         var seen = new HashSet<string>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
         var repositoryReader = new RepositoryFileReader(workingTreePath, MaxFileBytes);
@@ -292,6 +297,7 @@ public sealed class InformantConfig
         }
 
         ValidateFallbackModels();
+        ValidatePromptIncludeFiles();
         ValidateSeedPaths();
 
         if (MaxContextCharacters < ReadFileLinesTool.MinimumMaxResultCharacters * 4)
@@ -356,6 +362,22 @@ public sealed class InformantConfig
             if (!targets.Add($"{fallback.Endpoint.TrimEnd('/')}|{fallback.ModelName}"))
             {
                 throw new InformantFatalException($"{fieldName} duplicates an earlier endpoint and model combination");
+            }
+        }
+    }
+
+    private void ValidatePromptIncludeFiles()
+    {
+        if (PromptIncludeFiles is null)
+        {
+            throw new InformantFatalException("promptIncludeFiles must be an array; use an empty array or omit it to disable prompt includes");
+        }
+
+        for (int index = 0; index < PromptIncludeFiles.Count; index++)
+        {
+            if (string.IsNullOrWhiteSpace(PromptIncludeFiles[index]))
+            {
+                throw new InformantFatalException($"promptIncludeFiles[{index}] must be a non-empty path or glob pattern");
             }
         }
     }

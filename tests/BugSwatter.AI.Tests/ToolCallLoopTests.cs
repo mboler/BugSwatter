@@ -94,6 +94,36 @@ public sealed class ToolCallLoopTests
     }
 
     [Fact]
+    public async Task ToolExceptionIsReturnedToTheModelAndTheLoopContinues()
+    {
+        var events = new List<ModelToolCallAuditEvent>();
+        var tool = new ScriptedTool("unreliable_tool", _ => throw new InvalidOperationException("private tool detail"));
+        var handler = new StubHttpMessageHandler();
+        handler.Enqueue(HttpStatusCode.OK, StubHttpMessageHandler.ToolCallResponse(("call_1", tool.Name, "{}")));
+        handler.Enqueue(HttpStatusCode.OK, StubHttpMessageHandler.FinalResponse("recovered"));
+        var loop = new ToolCallLoop(CreateClient(handler), tool, 100000, auditObserver: events.Add);
+
+        LoopResult result = await loop.RunAsync("s", "u");
+
+        Assert.Equal("recovered", result.FinalContent);
+        Assert.Equal(ModelToolCallOutcome.ExecutionFailed, Assert.Single(events).Outcome);
+        using var second = JsonDocument.Parse(handler.RequestBodies[1]);
+        string toolResult = second.RootElement.GetProperty("messages")[second.RootElement.GetProperty("messages").GetArrayLength() - 1].GetProperty("content").GetString()!;
+        Assert.Contains("tool execution failed", toolResult);
+        Assert.DoesNotContain("private tool detail", toolResult);
+    }
+
+    [Fact]
+    public async Task ToolCancellationStillPropagates()
+    {
+        var tool = new ScriptedTool("cancelled_tool", _ => throw new OperationCanceledException());
+        var handler = new StubHttpMessageHandler();
+        handler.Enqueue(HttpStatusCode.OK, StubHttpMessageHandler.ToolCallResponse(("call_1", tool.Name, "{}")));
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() => CreateLoop(handler, tool).RunAsync("s", "u"));
+    }
+
+    [Fact]
     public async Task EmptyFinalAnswerThrows()
     {
         var handler = new StubHttpMessageHandler();

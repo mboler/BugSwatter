@@ -94,7 +94,8 @@ public sealed class ClusteredReviewUnitBuilder
                 }
 
                 string[] lines = prepared.Lines!;
-                IReadOnlyList<SourceChunk> chunks = SelectChunks(file, lines, sourceBudget, plannedUnit.ChangedLinesOnly);
+                IReadOnlyList<SourceChunk> chunks = EnsureChunksFitInitialBudget(plannedUnit, supportingPaths, file, lines,
+                    SelectChunks(file, lines, sourceBudget, plannedUnit.ChangedLinesOnly));
                 for (int index = 0; index < chunks.Count; index++)
                 {
                     SourceChunk chunk = chunks[index];
@@ -251,6 +252,46 @@ public sealed class ClusteredReviewUnitBuilder
         }
 
         return chunks;
+    }
+
+    private IReadOnlyList<SourceChunk> EnsureChunksFitInitialBudget(RepositoryReviewUnit plannedUnit, IReadOnlyList<string> supportingPaths, ChangedFile file, string[] lines,
+        IReadOnlyList<SourceChunk> chunks)
+    {
+        var pending = new Stack<SourceChunk>(chunks.Reverse());
+        var fitted = new List<SourceChunk>();
+
+        while (pending.Count > 0)
+        {
+            SourceChunk chunk = pending.Pop();
+            if (FitsInitialBudget(plannedUnit, supportingPaths, file, lines, chunk))
+            {
+                fitted.Add(chunk);
+                continue;
+            }
+
+            if (chunk.StartLine == chunk.EndLine)
+            {
+                // Keep an intrinsically unfit line so PackPlannedUnit records the deterministic part failure
+                fitted.Add(chunk);
+                continue;
+            }
+
+            int middle = chunk.StartLine + (chunk.EndLine - chunk.StartLine) / 2;
+            pending.Push(new SourceChunk(middle + 1, chunk.EndLine, chunk.HardCut));
+            pending.Push(new SourceChunk(chunk.StartLine, middle, true));
+        }
+
+        return fitted;
+    }
+
+    private bool FitsInitialBudget(RepositoryReviewUnit plannedUnit, IReadOnlyList<string> supportingPaths, ChangedFile file, string[] lines, SourceChunk chunk)
+    {
+        const int ProbePartNumber = int.MaxValue;
+        const string ProbePartId = "part-2147483647";
+        string sourceBlock = BuildSourceBlock(ProbePartId, file, lines, chunk, ProbePartNumber, ProbePartNumber, plannedUnit.ChangedLinesOnly);
+        var part = new ReviewUnitPart(ProbePartId, file, ProbePartNumber, ProbePartNumber, chunk.StartLine, chunk.EndLine, sourceBlock, 0, plannedUnit.ChangedLinesOnly);
+        string prompt = BuildPrompt($"{plannedUnit.Id}-segment-{ProbePartNumber}", plannedUnit.Rationale, supportingPaths, [part]);
+        return _systemPrompt.Length + prompt.Length <= InitialCharacterLimit;
     }
 
     private static string BuildSourceBlock(string partId, ChangedFile file, string[] lines, SourceChunk chunk, int partNumber, int totalParts, bool changedLinesOnly)

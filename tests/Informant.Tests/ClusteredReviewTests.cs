@@ -50,6 +50,37 @@ public sealed class ClusteredReviewTests : IDisposable
         Assert.Empty(build.PartFailures);
     }
 
+    /// <summary>Verifies rendered source labels and numbered-line overhead are included before a source part is scheduled</summary>
+    [Fact]
+    public async Task RenderedSourcePartIsSplitBeforeItExceedsTheInitialPromptBudget()
+    {
+        string[] lines = [new string('x', 1600), new string('y', 1600), new string('z', 1600)];
+        Write("src/RenderedBudget.cs", string.Join('\n', lines));
+        ChangedFile file = File("src/RenderedBudget.cs");
+        var builder = new ClusteredReviewUnitBuilder(new RepositoryReviewSourceLoader(_directory.Path), 100, 10000, "system prompt", "repository summary");
+
+        ClusteredReviewBuild build = await builder.BuildAsync(Plan(new RepositoryReviewUnit("rendered", 1, "rendered source budget", [file.Path], [])), [file]);
+
+        ReviewUnitPart[] parts = [.. build.Parts.OrderBy(part => part.StartLine)];
+        Assert.Equal(2, parts.Length);
+        Assert.Equal(1, parts[0].StartLine);
+        Assert.Equal(lines.Length, parts[^1].EndLine);
+        Assert.All(build.Units, unit => Assert.True("system prompt".Length + unit.UserPrompt.Length <= 10000 * 55 / 100));
+        Assert.Empty(build.PartFailures);
+    }
+
+    /// <summary>Verifies cancellation reaches Git when loading deleted baseline content</summary>
+    [Fact]
+    public async Task DeletedSourceLoadingPropagatesCancellationToGit()
+    {
+        var loader = new RepositoryReviewSourceLoader(_directory.Path, git: new GitRunner(TestGit.ExecutablePath));
+        var file = new ChangedFile("deleted.cs", ChangeKind.Deleted, [], new string('a', 40));
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => loader.LoadAsync(file, cancellation.Token));
+    }
+
     /// <summary>Verifies deterministic exclusions never enter a model execution unit</summary>
     [Fact]
     public async Task OversizedFileBecomesImmediateNotReviewableResult()
@@ -137,7 +168,7 @@ public sealed class ClusteredReviewTests : IDisposable
     {
         ChangedFile file = File("src/Large.cs");
         ReviewUnitPart first = Part("part-000001", file.Path, 1, 2);
-        ReviewUnitPart second = Part("part-000002", file.Path, 2, 2);
+        var second = new ReviewUnitPart("part-000002", file, 2, 2, 3, 3, "source", 6);
         ReviewExecutionUnit firstUnit = Unit(first);
         ReviewExecutionUnit secondUnit = Unit(second);
         var build = new ClusteredReviewBuild([firstUnit, secondUnit], [first, second], [], []);

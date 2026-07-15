@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using BugSwatter.Common;
 using Serilog;
 
 namespace Informant;
@@ -26,8 +27,17 @@ public sealed partial class ChangeDetector
     {
         // The doubled braces are C# escapes: this renders as <sha>^{commit}, git's peel-to-commit revision syntax
         var result = await _git.RunAsync("-C", _treePath, "cat-file", "-e", $"{sha}^{{commit}}");
-        
-        return result.ExitCode == 0;
+        if (result.ExitCode == 0)
+        {
+            return true;
+        }
+
+        if (result.StandardError.Contains("Not a valid object name", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        throw new GitOperationException($"Could not verify baseline commit {sha}: git cat-file exited {result.ExitCode}: {TextSummary.Create(result.StandardError, 500)}");
     }
 
     /// <summary>Lists reviewable files changed between the two commits, each with its changed line ranges on the new side</summary>

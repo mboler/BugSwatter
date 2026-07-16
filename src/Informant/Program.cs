@@ -9,6 +9,7 @@ internal static class Program
 {
     // One process-lifetime client for all model calls; per-call instances would churn sockets and handlers
     private static readonly HttpClient SharedHttpClient = new() { Timeout = Timeout.InfiniteTimeSpan };
+    private static readonly TimeSpan ModelResolutionTimeout = TimeSpan.FromSeconds(8);
 
     private static bool _loggingReady;
     private static bool _consoleLogging;
@@ -144,13 +145,15 @@ internal static class Program
         trace.WriteManifestCreated(manifest);
         var traceContext = new ReviewTraceContext();
 
-        IReadOnlyList<PrimaryModelTarget> modelTargets = config.GetPrimaryModelTargets();
-        var report = new ReportWriter(config.ReportDirectory, runStamp, config.ModelName, config.ModelEndpoint, config.MaxContextCharacters, config.MaxFileLines, modelTargets, trace.TraceFileName);
+        progress.ReportPhase("Resolving primary models");
+        string reviewPrompt = config.ResolveReviewPrompt(config.WorkingTreePath);
+        IPrimaryModelSession[] sessions = await CreatePrimaryModelSessionsAsync(config.GetPrimaryModelTargets(), config, reviewPrompt, git, progress, manifest, trace, traceContext);
+        IReadOnlyList<PrimaryModelTarget> modelTargets = [.. sessions.Select(session => session.Target)];
+        PrimaryModelTarget primaryTarget = modelTargets[0];
+        var report = new ReportWriter(config.ReportDirectory, runStamp, primaryTarget.ModelName, primaryTarget.Endpoint, config.MaxContextCharacters, config.MaxFileLines, modelTargets, trace.TraceFileName);
         report.WriteHeader(config.RepositoryUrl, config.Branch, config.ReviewMode, baselineSha, tipSha, startedAt, config.ReviewStrategy);
 
-        progress.ReportPhase("Verifying primary model", config.ModelName, "primary");
-        string reviewPrompt = config.ResolveReviewPrompt(config.WorkingTreePath);
-        IPrimaryModelSession[] sessions = [.. modelTargets.Select(target => CreatePrimaryModelSession(target, config, reviewPrompt, git, progress, manifest, trace, traceContext))];
+        progress.ReportPhase("Verifying primary model", primaryTarget.ModelName, "primary");
         var reviewer = new PrimaryModelFailoverReviewer(sessions, target => progress.ReportModelTarget(target.ModelName, target.Name));
         await reviewer.InitializeAsync();
 
@@ -271,6 +274,32 @@ internal static class Program
         }
         EmitReportPath(primaryReportPath);
         return baselineAdvanced ? 0 : 1;
+    }
+
+    private static async Task<IPrimaryModelSession[]> CreatePrimaryModelSessionsAsync(IReadOnlyList<PrimaryModelTarget> configuredTargets, InformantConfig config, string reviewPrompt, GitRunner git,
+        ReviewProgressReporter progress, RepositoryManifest manifest, ReviewTraceWriter trace, ReviewTraceContext traceContext)
+    {
+        var sessions = new List<IPrimaryModelSession>(configuredTargets.Count);
+        foreach (PrimaryModelTarget configuredTarget in configuredTargets)
+        {
+            PrimaryModelTargetResolution resolution = await PrimaryModelTargetResolver.ResolveAsync(SharedHttpClient, configuredTarget, ModelResolutionTimeout);
+            if (!resolution.Succeeded)
+            {
+                Log.Warning("Primary model target {Target} could not resolve modelName '*': {Reason}", configuredTarget.Name, resolution.Detail);
+                sessions.Add(new UnavailablePrimaryModelSession(configuredTarget, $"loaded-model selection failed: {resolution.Detail}"));
+                continue;
+            }
+
+            if (string.Equals(configuredTarget.ModelName, PrimaryModelTargetResolver.LoadedModelWildcard, StringComparison.Ordinal))
+            {
+                Log.Information("Primary model target {Target} resolved modelName '*' to {Model} at {Endpoint}. {Detail}", configuredTarget.Name, resolution.Target.ModelName,
+                    resolution.Target.Endpoint, resolution.Detail);
+            }
+
+            sessions.Add(CreatePrimaryModelSession(resolution.Target, config, reviewPrompt, git, progress, manifest, trace, traceContext));
+        }
+
+        return [.. sessions];
     }
 
     private static IPrimaryModelSession CreatePrimaryModelSession(PrimaryModelTarget target, InformantConfig config, string reviewPrompt, GitRunner git, ReviewProgressReporter progress,
@@ -513,10 +542,21 @@ internal static class Program
     private static async Task<int> VerifyToolCallingAsync(InformantConfig config)
     {
         bool allPassed = true;
-        foreach (PrimaryModelTarget target in config.GetPrimaryModelTargets())
+        foreach (PrimaryModelTarget configuredTarget in config.GetPrimaryModelTargets())
         {
-            var client = new ModelClient(SharedHttpClient, target.Endpoint, target.ModelName, TimeSpan.FromSeconds(config.RequestTimeoutSeconds), maxResponseBytes: config.MaxModelResponseBytes);
-            VerificationResult result = await ToolCallingVerifier.VerifyAsync(client, config.MaxContextCharacters);
+            PrimaryModelTargetResolution resolution = await PrimaryModelTargetResolver.ResolveAsync(SharedHttpClient, configuredTarget, ModelResolutionTimeout);
+            PrimaryModelTarget target = resolution.Target;
+            VerificationResult result;
+            if (resolution.Succeeded)
+            {
+                var client = new ModelClient(SharedHttpClient, target.Endpoint, target.ModelName, TimeSpan.FromSeconds(config.RequestTimeoutSeconds), maxResponseBytes: config.MaxModelResponseBytes);
+                result = await ToolCallingVerifier.VerifyAsync(client, config.MaxContextCharacters);
+            }
+            else
+            {
+                result = new VerificationResult(false, $"loaded-model selection failed: {resolution.Detail}");
+            }
+
             allPassed &= result.Success;
             Log.Information("Tool-calling verification for {Target} against {Endpoint} with model {Model}: {Outcome}. {Detail}", target.Name, target.Endpoint, target.ModelName,
                 result.Success ? "PASSED" : "FAILED", result.Detail);

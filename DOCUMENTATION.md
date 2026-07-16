@@ -68,7 +68,7 @@ Download the Windows archive and `SHA256SUMS.txt` from the same GitHub Release. 
 The Windows executables are not code-signed, so Windows may identify them as coming from an unknown publisher or display a SmartScreen warning. Download releases only from this GitHub repository, and proceed only after the archive's checksum matches `SHA256SUMS.txt`.
 
 ```powershell
-$version = "0.90.0"
+$version = "0.91.0"
 Get-FileHash ".\BugSwatter-$version-win-x64.zip" -Algorithm SHA256
 Expand-Archive ".\BugSwatter-$version-win-x64.zip" -DestinationPath C:\BugSwatter\releases
 Move-Item "C:\BugSwatter\releases\BugSwatter-$version-win-x64" C:\BugSwatter\bin
@@ -84,7 +84,7 @@ Install Git and your distribution's .NET 10 and ASP.NET Core 10 runtime packages
 After comparing the archive's SHA-256 value with `SHA256SUMS.txt`:
 
 ```bash
-VERSION=0.90.0
+VERSION=0.91.0
 sudo mkdir -p /opt/bugswatter
 sudo tar -xzf "BugSwatter-${VERSION}-linux-x64.tar.gz" -C /opt/bugswatter --strip-components=1
 sudo chmod 755 /opt/bugswatter/Informant /opt/bugswatter/Marshal
@@ -109,7 +109,7 @@ C:\BugSwatter\bin\Informant.exe
 
 The `workingTreePath` must be an absolute path dedicated to Informant. It is cloned when missing and destructively reset and cleaned on later runs. Never use your development checkout.
 
-`validate` checks configuration, paths, every primary and fallback endpoint, and required secret references. For an LM Studio-style `/v1` endpoint it also queries the native model metadata route and reports loaded and maximum context. That metadata is advisory: missing metadata does not fail validation, and a warning never changes `maxContextCharacters`. `verify` performs the stronger tool-calling probe against every configured primary-review model. Run both as the same operating-system account that will run Informant unattended.
+`validate` checks configuration, paths, every primary and fallback endpoint, and required secret references. For an explicit model name at an LM Studio-style `/v1` endpoint, native context metadata remains advisory: missing metadata does not fail validation, and a warning never changes `maxContextCharacters`. For `modelName` `*`, loaded-model discovery is required and validation fails unless exactly one language model is loaded. `verify` resolves the same wildcard and then performs the stronger tool-calling probe against every configured primary-review model. Run both as the same operating-system account that will run Informant unattended.
 
 ## Safety model
 
@@ -165,8 +165,8 @@ JSON comments and trailing commas are supported.
 | `workingTreePath` | Absolute path of the dedicated tree Informant owns and refreshes | required |
 | `gitExecutablePath` | Git executable path | required |
 | `modelEndpoint` | OpenAI-compatible primary model base URL | required |
-| `modelName` | Model identifier sent to the endpoint | required |
-| `fallbackModels` | Ordered already-running alternatives, each with `name`, `endpoint`, and `modelName` | empty |
+| `modelName` | Model identifier sent to the endpoint, or `*` for one loaded LM Studio model | required |
+| `fallbackModels` | Ordered already-running alternatives, each with `name`, `endpoint`, and a model identifier or `*` | empty |
 | `allowedReadRoot` | Root available to `read_file_lines` | working tree |
 | `reviewMode` | `changed` or `full` | `changed` |
 | `reviewStrategy` | `exhaustive` or `adaptive` | `exhaustive` |
@@ -230,7 +230,11 @@ The preferred `modelEndpoint` and `modelName` remain the first target. `fallback
 ]
 ```
 
-Every configured model must already be loaded and serving its OpenAI-compatible endpoint. Informant never starts a model server, loads or unloads a model, selects a GPU, or changes model-server settings.
+An explicit `modelName` is sent unchanged and must identify a model already serving its OpenAI-compatible endpoint. For an LM Studio `/v1` endpoint, set `modelName` to `*` to select its single loaded language model without editing the configuration when that model changes. Informant resolves each wildcard near the start of the run and uses the actual identifier in verification, progress, traces, and findings.
+
+Loaded-model selection never guesses. Zero loaded language models, multiple loaded language models, or a non-LM Studio endpoint make that target unavailable and allow normal failover to continue. Informant checks LM Studio's native v1 metadata first and uses the legacy v0 loaded-state metadata only when needed for compatibility.
+
+Informant never starts a model server, loads or unloads a model, selects a GPU, or changes model-server settings. Empty model names remain invalid.
 
 Informant first applies `perFileRetryCount` to the selected target. If model requests still fail, or if the target fails the mandatory tool-calling probe, that target is unavailable for the remainder of the run and Informant advances to the next target. A failed planning batch or clustered review unit is restarted from the beginning on the fallback so one unit never combines findings from two models. Units already completed are not repeated, and subsequent work stays on the fallback. A normal response with no findings and an unparseable candidate-severity block do not cause failover; unparseable severity remains `undetermined`.
 
@@ -711,7 +715,7 @@ Build local framework-dependent release archives with:
 
 The Linux archive should be produced on Linux so executable permission bits are set correctly. The script reads the version from `Directory.Build.props`, refuses to overwrite an existing archive, and can validate an expected `v<version>` tag.
 
-GitHub Actions runs build, test, dependency policy, vulnerability reporting, and package smoke tests on Windows and Linux for pushes and pull requests. Pushing a tag such as `v0.90.0` first runs the same CI, builds both archives, writes `SHA256SUMS.txt`, and creates a GitHub Release. The tag must exactly match the version in `Directory.Build.props`. Release packages remain framework-dependent and do not bundle .NET.
+GitHub Actions runs build, test, dependency policy, vulnerability reporting, and package smoke tests on Windows and Linux for pushes and pull requests. Pushing a tag such as `v0.91.0` first runs the same CI, builds both archives, writes `SHA256SUMS.txt`, and creates a GitHub Release. The tag must exactly match the version in `Directory.Build.props`. Release packages remain framework-dependent and do not bundle .NET.
 
 Opt-in integration tests are skipped in ordinary CI. Live model tests require `INFORMANT_IT=1`, `INFORMANT_IT_ENDPOINT`, and `INFORMANT_IT_MODEL`; optional second-opinion coverage also uses `INFORMANT_IT_SO_ENDPOINT` and `INFORMANT_IT_SO_MODEL`. The ACS email test uses `BUGSWATTER_EMAIL_IT=1`, `BUGSWATTER_EMAIL_IT_ACS_CONNECTION`, `BUGSWATTER_EMAIL_IT_FROM`, and `BUGSWATTER_EMAIL_IT_TO`. Never commit those values.
 

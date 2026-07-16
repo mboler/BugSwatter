@@ -46,11 +46,27 @@ public static class ValidateCommand
             string label = target.IsFallback ? $"fallback '{target.Name}' model endpoint" : "model endpoint";
             ValidationCheck endpointCheck = await ProbeHttpAsync(http, target.Endpoint, label);
             checks.Add(endpointCheck);
-            if (endpointCheck.Passed)
+            if (!endpointCheck.Passed)
             {
-                string capacityLabel = target.IsFallback ? $"fallback '{target.Name}' model context capacity" : "model context capacity";
-                checks.Add(await CheckModelCapacityAsync(http, target, config.MaxContextCharacters, capacityLabel));
+                continue;
             }
+
+            PrimaryModelTarget effectiveTarget = target;
+            if (string.Equals(target.ModelName, PrimaryModelTargetResolver.LoadedModelWildcard, StringComparison.Ordinal))
+            {
+                string selectionLabel = target.IsFallback ? $"fallback '{target.Name}' loaded model" : "loaded model";
+                PrimaryModelTargetResolution resolution = await PrimaryModelTargetResolver.ResolveAsync(http, target, ProbeTimeout);
+                checks.Add(new ValidationCheck($"{selectionLabel} resolved", resolution.Succeeded, resolution.Detail));
+                if (!resolution.Succeeded)
+                {
+                    continue;
+                }
+
+                effectiveTarget = resolution.Target;
+            }
+
+            string capacityLabel = target.IsFallback ? $"fallback '{target.Name}' model context capacity" : "model context capacity";
+            checks.Add(await CheckModelCapacityAsync(http, effectiveTarget, config.MaxContextCharacters, capacityLabel));
         }
 
         if (config.SecondOpinion is { } secondOpinion)

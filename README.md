@@ -50,6 +50,7 @@ The first run uses the full tracked tree as its candidate universe. The default 
 - **Honest coverage:** choose exhaustive review or adaptive review with explicit deep-reviewed, changed-content, deferred, excluded, failed, and partial outcomes
 - **Second opinion:** use one validator for every run, or route each complete run to one of as many as three local or cloud model profiles according to its highest primary candidate severity
 - **No agentic harness:** models can request bounded, read-only line ranges through Informant's single application-owned tool, but cannot write files, execute commands, or invoke Git; no MCP server or adapter is involved
+- **Swappable LM Studio models:** use `modelName` `*` to select exactly one already-loaded model without editing job configuration
 - **Multiple triggers:** use daily schedules, outbound repository polling, filesystem watching, GitHub webhooks, or Azure DevOps service hooks
 - **Unattended operation:** run Marshal in the foreground, as a Windows service, or as a systemd service
 - **Live review status:** the dashboard shows the current phase, file, model request state, elapsed time, and provider-reported token usage

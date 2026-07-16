@@ -65,6 +65,23 @@ public sealed class PrimaryModelSession : IPrimaryModelSession
     public Task<ReviewUnitResult> ReviewUnitAsync(ReviewExecutionUnit unit, CancellationToken cancellationToken = default) => _clusteredReviewer.ReviewAsync(unit, cancellationToken);
 }
 
+internal sealed class UnavailablePrimaryModelSession(PrimaryModelTarget target, string reason) : IPrimaryModelSession
+{
+    public PrimaryModelTarget Target { get; } = target;
+
+    public Task<VerificationResult> VerifyAsync(CancellationToken cancellationToken = default) => Task.FromResult(new VerificationResult(false, reason));
+
+    public Task<FileReviewResult> ReviewAsync(ChangedFile file, CancellationToken cancellationToken = default) =>
+        Task.FromException<FileReviewResult>(UnavailableException());
+
+    public Task<string> PlanAsync(string systemPrompt, string userPrompt, CancellationToken cancellationToken = default) => Task.FromException<string>(UnavailableException());
+
+    public Task<ReviewUnitResult> ReviewUnitAsync(ReviewExecutionUnit unit, CancellationToken cancellationToken = default) =>
+        Task.FromException<ReviewUnitResult>(UnavailableException());
+
+    private static InvalidOperationException UnavailableException() => new("An unavailable primary model session cannot perform review work.");
+}
+
 /// <summary>A model target that failed verification or exhausted its retries during a primary review</summary>
 public sealed record PrimaryModelFailure(PrimaryModelTarget Target, string Reason);
 

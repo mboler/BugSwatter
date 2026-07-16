@@ -9,7 +9,7 @@ public sealed record FallbackModelConfig
     /// <summary>OpenAI-compatible base URL of the fallback endpoint</summary>
     public string Endpoint { get; init; } = "";
 
-    /// <summary>Model identifier sent to the fallback endpoint</summary>
+    /// <summary>Model identifier sent to the fallback endpoint, or * to select its single loaded LM Studio model</summary>
     public string ModelName { get; init; } = "";
 
     internal void Validate(string fieldName)

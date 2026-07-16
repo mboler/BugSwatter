@@ -29,6 +29,7 @@ public static class InitCommand
           // OpenAI-compatible endpoint base URL (LM Studio, LiteLLM gateway, llama-server, Ollama, ...)
           "modelEndpoint": "http://localhost:1234/v1",
           "modelName": "your-model-name",
+          // Use "*" only with LM Studio to select its single loaded language model; zero or multiple loaded models fail this target.
 
           // Optional ordered alternatives that must already be loaded and serving requests; Informant never loads models.
           // After retries are exhausted, the failed file is restarted on the next verified target and the run keeps one report.

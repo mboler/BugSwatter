@@ -47,7 +47,7 @@ public sealed class InformantConfig
     /// <summary>Base URL of the OpenAI-compatible model endpoint, for example http://localhost:1234/v1</summary>
     public string ModelEndpoint { get; init; } = "";
 
-    /// <summary>Model name passed to the endpoint</summary>
+    /// <summary>Model name passed to the endpoint, or * to select its single loaded LM Studio model</summary>
     public string ModelName { get; init; } = "";
 
     /// <summary>Ordered already-running models tried after the preferred primary model suffers an unrecoverable model-layer failure</summary>

@@ -7,7 +7,12 @@ public sealed class WebEndpointsTests
     {
         Assert.Contains("<title>BugSwatter Dashboard</title>", DashboardPage.Html);
         Assert.Contains("<h1>BugSwatter Dashboard</h1>", DashboardPage.Html);
-        Assert.Contains("Provider-reported tokens", DashboardPage.Html);
+        Assert.Contains("usageTiles('Run', activity.runUsage)", DashboardPage.Html);
+        Assert.Contains("usageTiles('Current phase/model', activity.currentUsage)", DashboardPage.Html);
+        Assert.Contains("usageTiles('Local', activity.localUsage)", DashboardPage.Html);
+        Assert.Contains("usageTiles('Frontier', activity.frontierUsage)", DashboardPage.Html);
+        Assert.Contains("Estimated frontier cost", DashboardPage.Html);
+        Assert.Contains("Estimated cost</th>", DashboardPage.Html);
         Assert.DoesNotContain("Marshal dashboard", DashboardPage.Html);
     }
 

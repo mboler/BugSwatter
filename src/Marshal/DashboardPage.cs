@@ -13,7 +13,7 @@ public static class DashboardPage
         <title>BugSwatter Dashboard</title>
         <style>
           :root { color-scheme: light dark; }
-          body { font-family: system-ui, sans-serif; margin: 0; padding: 1.5rem; max-width: 1100px; margin: 0 auto; }
+          body { font-family: system-ui, sans-serif; margin: 0; padding: 1.5rem; max-width: 1400px; margin: 0 auto; }
           h1 { font-size: 1.4rem; margin: 0 0 1rem; }
           .status { display: flex; gap: 1.5rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
           .tile { border: 1px solid #8884; border-radius: 8px; padding: 0.75rem 1rem; min-width: 8rem; }
@@ -39,7 +39,7 @@ public static class DashboardPage
         <div class="status" id="status"></div>
         <div class="jobs" id="jobs"></div>
         <table>
-          <thead><tr><th>Started</th><th>Job</th><th>Trigger</th><th>Outcome</th><th>Severity</th><th>Duration</th><th>Report</th></tr></thead>
+          <thead><tr><th>Started</th><th>Job</th><th>Trigger</th><th>Outcome</th><th>Severity</th><th>Duration</th><th>Tokens</th><th>Estimated cost</th><th>Report</th></tr></thead>
           <tbody id="history"></tbody>
         </table>
         <footer id="footer"></footer>
@@ -53,12 +53,21 @@ public static class DashboardPage
             const remainder = value % 60;
             return (hours ? hours + 'h ' : '') + (hours || minutes ? minutes + 'm ' : '') + remainder + 's';
           }
-          function reportedTokens(activity) {
-            if (activity.totalTokens == null && activity.promptTokens == null && activity.completionTokens == null) return 'not reported';
-            const total = activity.totalTokens == null ? '-' : activity.totalTokens.toLocaleString();
-            const prompt = activity.promptTokens == null ? '-' : activity.promptTokens.toLocaleString();
-            const completion = activity.completionTokens == null ? '-' : activity.completionTokens.toLocaleString();
+          function reportedTokens(usage) {
+            if (!usage) return 'not recorded';
+            if (usage.totalTokens == null && usage.promptTokens == null && usage.completionTokens == null) return 'not reported';
+            const total = usage.totalTokens == null ? '-' : usage.totalTokens.toLocaleString();
+            const prompt = usage.promptTokens == null ? '-' : usage.promptTokens.toLocaleString();
+            const completion = usage.completionTokens == null ? '-' : usage.completionTokens.toLocaleString();
             return total + ' total (' + prompt + ' input, ' + completion + ' output)';
+          }
+          function estimatedCost(usage) {
+            if (!usage) return 'not recorded';
+            if (usage.estimatedCost == null) return 'not calculated';
+            return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(usage.estimatedCost);
+          }
+          function usageTiles(label, usage) {
+            return tile(label + ' requests', usage?.requestCount ?? 0) + tile(label + ' tokens', reportedTokens(usage));
           }
           async function refresh() {
             try {
@@ -72,7 +81,8 @@ public static class DashboardPage
                 const request = activity.modelRequestActive ? 'waiting for response' : 'between requests';
                 statusHtml += tile('Job', activity.job) + tile('Trigger', activity.trigger) + tile('Phase', activity.phase) + tile('Started', started.toLocaleString()) +
                   tile('Elapsed', duration((Date.now() - started.getTime()) / 1000)) + tile('Model', model) + tile('Model request', request) +
-                  tile('Requests', activity.modelRequestCount) + tile('Provider-reported tokens', reportedTokens(activity)) + tile('File', file);
+                  usageTiles('Run', activity.runUsage) + usageTiles('Current phase/model', activity.currentUsage) + usageTiles('Local', activity.localUsage) +
+                  usageTiles('Frontier', activity.frontierUsage) + tile('Estimated frontier cost', estimatedCost(activity.frontierUsage)) + tile('File', file);
                 if (activity.modelRequestStartedUtc) {
                   const modelStarted = new Date(activity.modelRequestStartedUtc);
                   statusHtml += tile('Model request started', modelStarted.toLocaleString()) + tile('Model request elapsed', duration((Date.now() - modelStarted.getTime()) / 1000));
@@ -94,7 +104,9 @@ public static class DashboardPage
                 '<tr><td>' + esc((h.startedUtc ?? '').replace('T',' ').slice(0,19)) + '</td><td>' + esc(h.job) +
                 '</td><td>' + esc(h.trigger) + '</td><td class="out-' + esc(h.outcome) + '">' + esc(h.outcome) +
                 '</td><td class="sev-' + esc(h.maxSeverity ?? 'None') + '">' + esc(h.maxSeverity ?? '-') +
-                '</td><td>' + esc(h.durationSeconds) + 's</td><td>' + esc((h.reportPath ?? '').split(/[\\/]/).pop()) + '</td></tr>').join('');
+                '</td><td>' + esc(h.durationSeconds) + 's</td><td>' + esc(reportedTokens(h.runUsage)) +
+                '</td><td>' + esc(estimatedCost(h.frontierUsage)) +
+                '</td><td>' + esc((h.reportPath ?? '').split(/[\\/]/).pop()) + '</td></tr>').join('');
               document.getElementById('footer').textContent = 'Updated ' + new Date().toLocaleTimeString() + ' - ' + history.length + ' recent runs';
             } catch (e) {
               document.getElementById('footer').textContent = 'Could not reach BugSwatter: ' + e;

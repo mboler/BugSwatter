@@ -50,6 +50,12 @@ public sealed class InformantConfig
     /// <summary>Model name passed to the endpoint, or * to select its single loaded LM Studio model</summary>
     public string ModelName { get; init; } = "";
 
+    /// <summary>USD cost per million primary-model input tokens; omit with outputCostPerMillion for a local model</summary>
+    public decimal? InputCostPerMillion { get; init; }
+
+    /// <summary>USD cost per million primary-model output tokens; omit with inputCostPerMillion for a local model</summary>
+    public decimal? OutputCostPerMillion { get; init; }
+
     /// <summary>Ordered already-running models tried after the preferred primary model suffers an unrecoverable model-layer failure</summary>
     public IReadOnlyList<FallbackModelConfig> FallbackModels { get; init; } = [];
 
@@ -139,8 +145,8 @@ public sealed class InformantConfig
     /// <summary>Returns the preferred model followed by the configured fallbacks in attempt order</summary>
     public IReadOnlyList<PrimaryModelTarget> GetPrimaryModelTargets() =>
     [
-        new PrimaryModelTarget("primary", ModelEndpoint, ModelName, false),
-        .. FallbackModels.Select(model => new PrimaryModelTarget(model.Name, model.Endpoint, model.ModelName, true))
+        new PrimaryModelTarget("primary", ModelEndpoint, ModelName, false, InputCostPerMillion, OutputCostPerMillion),
+        .. FallbackModels.Select(model => new PrimaryModelTarget(model.Name, model.Endpoint, model.ModelName, true, model.InputCostPerMillion, model.OutputCostPerMillion))
     ];
 
     /// <summary>Loads and validates the configuration from the default file name inside <paramref name="directory"/></summary>
@@ -297,6 +303,7 @@ public sealed class InformantConfig
         }
 
         ValidateFallbackModels();
+        new ModelUsagePricing(InputCostPerMillion, OutputCostPerMillion).Validate("primaryModel");
         ValidatePromptIncludeFiles();
         ValidateSeedPaths();
 

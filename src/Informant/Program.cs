@@ -153,11 +153,11 @@ internal static class Program
         var report = new ReportWriter(config.ReportDirectory, runStamp, primaryTarget.ModelName, primaryTarget.Endpoint, config.MaxContextCharacters, config.MaxFileLines, modelTargets, trace.TraceFileName);
         report.WriteHeader(config.RepositoryUrl, config.Branch, config.ReviewMode, baselineSha, tipSha, startedAt, config.ReviewStrategy);
 
-        progress.ReportPhase("Verifying primary model", primaryTarget.ModelName, "primary");
-        var reviewer = new PrimaryModelFailoverReviewer(sessions, target => progress.ReportModelTarget(target.ModelName, target.Name));
+        progress.ReportPhase("Verifying primary model", primaryTarget.ModelName, "primary", primaryTarget.Pricing);
+        var reviewer = new PrimaryModelFailoverReviewer(sessions, target => progress.ReportModelTarget(target.ModelName, target.Name, target.Pricing));
         await reviewer.InitializeAsync();
 
-        progress.ReportPhase("Planning repository review", reviewer.ActiveTarget!.ModelName, reviewer.ActiveTarget.Name);
+        progress.ReportPhase("Planning repository review", reviewer.ActiveTarget!.ModelName, reviewer.ActiveTarget.Name, reviewer.ActiveTarget.Pricing);
         int manifestPartitionCharacters = Math.Max(256, config.MaxContextCharacters / 4);
         RepositoryBriefing briefing = new RepositoryBriefingBuilder().Build(manifest, config.SeedPaths, manifestPartitionCharacters);
         RepositoryInitialContext initialContext = new RepositoryInitialContextBuilder(config.MaxFileBytes).Build(manifest, briefing, config.MaxContextCharacters);
@@ -189,7 +189,7 @@ internal static class Program
             traceContext.UnitId = unit.Id;
             Log.Information("Reviewing clustered unit {Unit} ({Position}/{Count}) with {Parts} source parts", unit.Id, index + 1, reviewBuild.Units.Count, unit.Parts.Count);
             PrimaryModelTarget activeTarget = reviewer.ActiveTarget ?? modelTargets[^1];
-            progress.ReportFile("Primary clustered review", activeTarget.ModelName, activeTarget.Name, unit.Id, index + 1, reviewBuild.Units.Count);
+            progress.ReportFile("Primary clustered review", activeTarget.ModelName, activeTarget.Name, unit.Id, index + 1, reviewBuild.Units.Count, activeTarget.Pricing);
             trace.WriteReviewUnitStarted(unit, activeTarget);
 
             var unitStopwatch = Stopwatch.StartNew();
@@ -461,7 +461,7 @@ internal static class Program
             SecondOpinionModelSelection selection = secondOpinion.SelectModel(classification);
             SecondOpinionModelProfile selectedModel = selection.Model;
             Log.Information("Second-opinion routing: {Reason}", selection.SelectionReason);
-            progress.ReportPhase("Verifying second-opinion model", selectedModel.ModelName, selection.ProfileName);
+            progress.ReportPhase("Verifying second-opinion model", selectedModel.ModelName, selection.ProfileName, selectedModel.Pricing);
 
             string? apiKey = selectedModel.ResolveApiKey();
             if (selectedModel.RequiresApiKey && string.IsNullOrEmpty(apiKey))
@@ -500,7 +500,7 @@ internal static class Program
                 var result = toValidate[index];
                 traceContext.UnitId = $"second-opinion:{result.File.Path}";
                 Log.Information("Second opinion for {Path} ({Position}/{Count})", result.File.Path, index + 1, toValidate.Count);
-                progress.ReportFile("Second-opinion review", selectedModel.ModelName, selection.ProfileName, result.File.Path, index + 1, toValidate.Count);
+                progress.ReportFile("Second-opinion review", selectedModel.ModelName, selection.ProfileName, result.File.Path, index + 1, toValidate.Count, selectedModel.Pricing);
 
                 string? validation = await validator.ValidateAsync(result);
                 if (validation is null)

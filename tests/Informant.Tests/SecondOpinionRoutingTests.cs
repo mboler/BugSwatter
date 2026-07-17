@@ -49,6 +49,9 @@ public sealed class SecondOpinionRoutingTests : IDisposable
         Assert.Equal("balanced", selection.ProfileName);
         Assert.Equal(ModelAuthentication.ApiKey, selection.Model.Authentication);
         Assert.Equal("test-key", selection.Model.ResolveApiKey());
+        Assert.Equal(2.5m, selection.Model.Pricing.InputCostPerMillion);
+        Assert.Equal(15m, selection.Model.Pricing.OutputCostPerMillion);
+        Assert.True(selection.Model.Pricing.CanEstimate);
     }
 
     [Fact]
@@ -165,6 +168,8 @@ public sealed class SecondOpinionRoutingTests : IDisposable
             {
                 ["endpoint"] = "https://balanced.example/v1",
                 ["modelName"] = "balanced",
+                ["inputCostPerMillion"] = 2.5m,
+                ["outputCostPerMillion"] = 15m,
                 ["apiKey"] = "file:cloud-key.txt",
                 ["authentication"] = "apiKey"
             },

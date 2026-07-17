@@ -1,3 +1,5 @@
+using BugSwatter.Common;
+
 namespace Marshal.Tests;
 
 public sealed class RunHistoryStoreTests : IDisposable
@@ -11,7 +13,8 @@ public sealed class RunHistoryStoreTests : IDisposable
     {
         var store = new RunHistoryStore(Path.Combine(_directory.Path, "history.jsonl"));
         store.Append(new HistoryEntry { Job = "first", Outcome = "completed" });
-        store.Append(new HistoryEntry { Job = "second", Outcome = "failed", ExitCode = 1 });
+        store.Append(new HistoryEntry { Job = "second", Outcome = "failed", ExitCode = 1, RunUsage = new ReviewUsageSnapshot { RequestCount = 4, TotalTokens = 500 },
+            FrontierUsage = new ReviewUsageSnapshot { RequestCount = 2, TotalTokens = 200, EstimatedCost = 1.25m } });
 
         IReadOnlyList<HistoryEntry> recent = store.ReadRecent(10);
 
@@ -19,6 +22,9 @@ public sealed class RunHistoryStoreTests : IDisposable
         Assert.Equal("second", recent[0].Job);
         Assert.Equal("first", recent[1].Job);
         Assert.Equal(1, recent[0].ExitCode);
+        Assert.Equal(4, recent[0].RunUsage!.RequestCount);
+        Assert.Equal(500, recent[0].RunUsage!.TotalTokens);
+        Assert.Equal(1.25m, recent[0].FrontierUsage!.EstimatedCost);
     }
 
     [Fact]

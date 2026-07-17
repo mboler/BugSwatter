@@ -12,6 +12,12 @@ public sealed record FallbackModelConfig
     /// <summary>Model identifier sent to the fallback endpoint, or * to select its single loaded LM Studio model</summary>
     public string ModelName { get; init; } = "";
 
+    /// <summary>USD cost per million input tokens; omit with outputCostPerMillion for a local model</summary>
+    public decimal? InputCostPerMillion { get; init; }
+
+    /// <summary>USD cost per million output tokens; omit with inputCostPerMillion for a local model</summary>
+    public decimal? OutputCostPerMillion { get; init; }
+
     internal void Validate(string fieldName)
     {
         if (string.IsNullOrWhiteSpace(Name))
@@ -33,8 +39,14 @@ public sealed record FallbackModelConfig
         {
             throw new InformantFatalException($"{fieldName}.modelName is required");
         }
+
+        new ModelUsagePricing(InputCostPerMillion, OutputCostPerMillion).Validate(fieldName);
     }
 }
 
 /// <summary>Effective primary-review target, including the preferred model followed by each configured fallback</summary>
-public sealed record PrimaryModelTarget(string Name, string Endpoint, string ModelName, bool IsFallback);
+public sealed record PrimaryModelTarget(string Name, string Endpoint, string ModelName, bool IsFallback, decimal? InputCostPerMillion = null, decimal? OutputCostPerMillion = null)
+{
+    /// <summary>Cost classification and rates carried with this resolved model target</summary>
+    public ModelUsagePricing Pricing => new(InputCostPerMillion, OutputCostPerMillion);
+}

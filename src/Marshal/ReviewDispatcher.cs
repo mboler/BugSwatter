@@ -145,6 +145,7 @@ public sealed class ReviewDispatcher : BackgroundService
     private void RecordHistory(ReviewRequest request, DateTimeOffset startedUtc, ReviewRunOutcome? outcome, string? abortReason = null)
     {
         string result = outcome is null ? "aborted" : outcome.TimedOut ? "timed-out" : outcome.Succeeded ? "completed" : "failed";
+        CurrentReviewActivity? activity = _current.Snapshot();
 
         _history.Append(new HistoryEntry
         {
@@ -156,7 +157,10 @@ public sealed class ReviewDispatcher : BackgroundService
             TimedOut = outcome?.TimedOut ?? false,
             Outcome = result,
             ReportPath = outcome?.ReportPath,
-            MaxSeverity = RunHistoryStore.TryReadMaxSeverity(outcome?.ReportPath) ?? (abortReason is null ? null : "unknown")
+            MaxSeverity = RunHistoryStore.TryReadMaxSeverity(outcome?.ReportPath) ?? (abortReason is null ? null : "unknown"),
+            RunUsage = activity?.RunUsage,
+            LocalUsage = activity?.LocalUsage,
+            FrontierUsage = activity?.FrontierUsage
         });
     }
 

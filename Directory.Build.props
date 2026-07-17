@@ -1,8 +1,8 @@
 <Project>
 
-  <!-- Shared metadata for every project. Pre-1.0: loaded-model selection is the 0.91 feature wave -->
+  <!-- Shared metadata for every project. Pre-1.0: scoped usage and cost estimates are the 0.92 feature wave -->
   <PropertyGroup>
-    <Version>0.91.0</Version>
+    <Version>0.92.0</Version>
     <Product>BugSwatter</Product>
     <Authors>Mark Boler</Authors>
     <Company>Mark Boler</Company>

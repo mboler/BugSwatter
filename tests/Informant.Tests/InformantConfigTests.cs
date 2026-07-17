@@ -109,6 +109,32 @@ public sealed class InformantConfigTests : IDisposable
     }
 
     [Fact]
+    public void PrimaryPricingRatesAreOptionalPairedAndNonNegative()
+    {
+        WriteConfig(values =>
+        {
+            values["inputCostPerMillion"] = 2.5m;
+            values["outputCostPerMillion"] = 15m;
+        });
+
+        PrimaryModelTarget target = Assert.Single(InformantConfig.Load(_directory.Path).GetPrimaryModelTargets());
+        Assert.False(target.Pricing.IsLocal);
+        Assert.True(target.Pricing.CanEstimate);
+
+        WriteConfig(values => values["inputCostPerMillion"] = 2.5m);
+        InformantFatalException missingRate = Assert.Throws<InformantFatalException>(() => InformantConfig.Load(_directory.Path));
+        Assert.Contains("outputCostPerMillion", missingRate.Message);
+
+        WriteConfig(values =>
+        {
+            values["inputCostPerMillion"] = -1m;
+            values["outputCostPerMillion"] = 15m;
+        });
+        InformantFatalException negativeRate = Assert.Throws<InformantFatalException>(() => InformantConfig.Load(_directory.Path));
+        Assert.Contains("cannot be negative", negativeRate.Message);
+    }
+
+    [Fact]
     public void LoadsOrderedFallbackModels()
     {
         WriteConfig(values => values["fallbackModels"] = new[]
@@ -124,6 +150,38 @@ public sealed class InformantConfigTests : IDisposable
         Assert.Equal(["primary", "backup-one", "backup-two"], targets.Select(target => target.Name));
         Assert.False(targets[0].IsFallback);
         Assert.True(targets[1].IsFallback);
+    }
+
+    [Fact]
+    public void ZeroFallbackRatesMarkFrontierUsageWithoutEnablingCostEstimates()
+    {
+        WriteConfig(values => values["fallbackModels"] = new[]
+        {
+            new Dictionary<string, object?>
+            {
+                ["name"] = "backup",
+                ["endpoint"] = "http://backup.example/v1",
+                ["modelName"] = "backup-model",
+                ["inputCostPerMillion"] = 0m,
+                ["outputCostPerMillion"] = 0m
+            }
+        });
+
+        PrimaryModelTarget fallback = InformantConfig.Load(_directory.Path).GetPrimaryModelTargets()[1];
+
+        Assert.False(fallback.Pricing.IsLocal);
+        Assert.False(fallback.Pricing.CanEstimate);
+    }
+
+    [Fact]
+    public void UnpairedFallbackRatesAreRejected()
+    {
+        WriteConfig(values => values["fallbackModels"] = new[]
+        {
+            new Dictionary<string, object?> { ["name"] = "backup", ["endpoint"] = "http://backup.example/v1", ["modelName"] = "backup-model", ["inputCostPerMillion"] = 1m }
+        });
+
+        Assert.Throws<InformantFatalException>(() => InformantConfig.Load(_directory.Path));
     }
 
     [Theory]

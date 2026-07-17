@@ -19,10 +19,11 @@ public sealed class ReviewProgressReporter
     private int? _fileCount;
     private bool _modelRequestActive;
     private DateTimeOffset? _modelRequestStartedUtc;
-    private int _modelRequestCount;
-    private long? _promptTokens;
-    private long? _completionTokens;
-    private long? _totalTokens;
+    private readonly UsageAccumulator _runUsage = new();
+    private UsageAccumulator _currentUsage = new();
+    private readonly UsageAccumulator _localUsage = new();
+    private readonly UsageAccumulator _frontierUsage = new();
+    private ModelUsagePricing _currentPricing = new(null, null);
 
     /// <summary>Creates a reporter over the selected output mode and destination</summary>
     public ReviewProgressReporter(ProgressOutput outputMode, TextWriter output)
@@ -33,7 +34,7 @@ public sealed class ReviewProgressReporter
     }
 
     /// <summary>Reports a phase transition and clears any previous file position</summary>
-    public void ReportPhase(string phase, string? modelName = null, string? modelProfile = null)
+    public void ReportPhase(string phase, string? modelName = null, string? modelProfile = null, ModelUsagePricing? pricing = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(phase);
         if (!_enabled)
@@ -43,9 +44,7 @@ public sealed class ReviewProgressReporter
 
         lock (_gate)
         {
-            _phase = phase;
-            _modelName = modelName;
-            _modelProfile = modelProfile;
+            SetScope(phase, modelName, modelProfile, pricing ?? new ModelUsagePricing(null, null));
             _currentFile = null;
             _fileIndex = null;
             _fileCount = null;
@@ -56,7 +55,7 @@ public sealed class ReviewProgressReporter
     }
 
     /// <summary>Reports the file position in a primary or second-opinion pass</summary>
-    public void ReportFile(string phase, string modelName, string modelProfile, string currentFile, int fileIndex, int fileCount)
+    public void ReportFile(string phase, string modelName, string modelProfile, string currentFile, int fileIndex, int fileCount, ModelUsagePricing? pricing = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(phase);
         ArgumentException.ThrowIfNullOrWhiteSpace(modelName);
@@ -76,9 +75,7 @@ public sealed class ReviewProgressReporter
 
         lock (_gate)
         {
-            _phase = phase;
-            _modelName = modelName;
-            _modelProfile = modelProfile;
+            SetScope(phase, modelName, modelProfile, pricing ?? new ModelUsagePricing(null, null));
             _currentFile = currentFile;
             _fileIndex = fileIndex;
             _fileCount = fileCount;
@@ -89,7 +86,7 @@ public sealed class ReviewProgressReporter
     }
 
     /// <summary>Updates the active model without clearing the current phase or file when a primary review fails over between targets</summary>
-    public void ReportModelTarget(string modelName, string modelProfile)
+    public void ReportModelTarget(string modelName, string modelProfile, ModelUsagePricing? pricing = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(modelName);
         ArgumentException.ThrowIfNullOrWhiteSpace(modelProfile);
@@ -100,8 +97,7 @@ public sealed class ReviewProgressReporter
 
         lock (_gate)
         {
-            _modelName = modelName;
-            _modelProfile = modelProfile;
+            SetScope(_phase, modelName, modelProfile, pricing ?? new ModelUsagePricing(null, null));
             WriteSnapshot();
         }
     }
@@ -117,22 +113,39 @@ public sealed class ReviewProgressReporter
 
         lock (_gate)
         {
-            _modelName = progress.ModelName;
+            SetScope(_phase, progress.ModelName, _modelProfile, _currentPricing);
+            UsageAccumulator classifiedUsage = _currentPricing.IsLocal ? _localUsage : _frontierUsage;
             if (progress.State == ModelCallState.Started)
             {
                 _modelRequestActive = true;
                 _modelRequestStartedUtc = progress.StartedUtc;
-                _modelRequestCount++;
+                _runUsage.AddRequest();
+                _currentUsage.AddRequest();
+                classifiedUsage.AddRequest();
+
+                if (!_currentPricing.IsLocal && !_currentPricing.CanEstimate)
+                {
+                    _runUsage.MarkCostUnavailable();
+                    _currentUsage.MarkCostUnavailable();
+                    _frontierUsage.MarkCostUnavailable();
+                }
             }
             else
             {
                 _modelRequestActive = false;
                 _modelRequestStartedUtc = null;
-                if (progress.State == ModelCallState.Completed && progress.Usage is not null)
+                if (progress.State == ModelCallState.Completed)
                 {
-                    AddUsage(ref _promptTokens, progress.Usage.PromptTokens);
-                    AddUsage(ref _completionTokens, progress.Usage.CompletionTokens);
-                    AddUsage(ref _totalTokens, progress.Usage.TotalTokens);
+                    bool estimateCost = !_currentPricing.IsLocal;
+                    _runUsage.AddCompleted(progress.Usage, _currentPricing, estimateCost);
+                    _currentUsage.AddCompleted(progress.Usage, _currentPricing, estimateCost);
+                    classifiedUsage.AddCompleted(progress.Usage, _currentPricing, estimateCost);
+                }
+                else if (!_currentPricing.IsLocal)
+                {
+                    _runUsage.MarkCostUnavailable();
+                    _currentUsage.MarkCostUnavailable();
+                    _frontierUsage.MarkCostUnavailable();
                 }
             }
 
@@ -146,13 +159,18 @@ public sealed class ReviewProgressReporter
     /// <summary>Reports that the Informant run is ending because of a fatal error</summary>
     public void ReportFailed() => ReportPhase("Failed");
 
-    private static void AddUsage(ref long? total, long? value)
+    private void SetScope(string phase, string? modelName, string? modelProfile, ModelUsagePricing pricing)
     {
-        if (value is >= 0)
+        if (!string.Equals(_phase, phase, StringComparison.Ordinal) || !string.Equals(_modelName, modelName, StringComparison.Ordinal)
+            || !string.Equals(_modelProfile, modelProfile, StringComparison.Ordinal) || _currentPricing != pricing)
         {
-            long current = total ?? 0;
-            total = value.Value > long.MaxValue - current ? long.MaxValue : current + value.Value;
+            _currentUsage = new UsageAccumulator();
         }
+
+        _phase = phase;
+        _modelName = modelName;
+        _modelProfile = modelProfile;
+        _currentPricing = pricing;
     }
 
     private void WriteSnapshot()
@@ -169,10 +187,10 @@ public sealed class ReviewProgressReporter
                 FileCount = _fileCount,
                 ModelRequestActive = _modelRequestActive,
                 ModelRequestStartedUtc = _modelRequestStartedUtc,
-                ModelRequestCount = _modelRequestCount,
-                PromptTokens = _promptTokens,
-                CompletionTokens = _completionTokens,
-                TotalTokens = _totalTokens
+                RunUsage = _runUsage.Snapshot(),
+                CurrentUsage = _currentUsage.Snapshot(),
+                LocalUsage = _localUsage.Snapshot(),
+                FrontierUsage = _frontierUsage.Snapshot()
             };
             _output.WriteLine(ReviewProgressMarker.Format(snapshot));
             _output.Flush();
@@ -181,6 +199,77 @@ public sealed class ReviewProgressReporter
         {
             // catch-all: progress is optional telemetry and must never alter the review outcome
             Log.Warning("Could not write review progress: {Reason}", ex.Message);
+        }
+    }
+
+    private sealed class UsageAccumulator
+    {
+        private int _requestCount;
+        private long? _promptTokens;
+        private long? _completionTokens;
+        private long? _totalTokens;
+        private decimal _estimatedCost;
+        private bool _hasEstimatedCost;
+        private bool _costUnavailable;
+
+        public void AddRequest()
+        {
+            if (_requestCount < int.MaxValue)
+            {
+                _requestCount++;
+            }
+        }
+
+        public void AddCompleted(ModelTokenUsage? usage, ModelUsagePricing pricing, bool estimateCost)
+        {
+            if (usage is not null)
+            {
+                AddUsage(ref _promptTokens, usage.PromptTokens);
+                AddUsage(ref _completionTokens, usage.CompletionTokens);
+                AddUsage(ref _totalTokens, usage.TotalTokens);
+            }
+
+            if (!estimateCost)
+            {
+                return;
+            }
+
+            decimal? cost = pricing.Estimate(usage);
+            if (cost is null)
+            {
+                _costUnavailable = true;
+                return;
+            }
+
+            try
+            {
+                _estimatedCost = checked(_estimatedCost + cost.Value);
+                _hasEstimatedCost = true;
+            }
+            catch (OverflowException)
+            {
+                _costUnavailable = true;
+            }
+        }
+
+        public void MarkCostUnavailable() => _costUnavailable = true;
+
+        public ReviewUsageSnapshot Snapshot() => new()
+        {
+            RequestCount = _requestCount,
+            PromptTokens = _promptTokens,
+            CompletionTokens = _completionTokens,
+            TotalTokens = _totalTokens,
+            EstimatedCost = _hasEstimatedCost && !_costUnavailable ? _estimatedCost : null
+        };
+
+        private static void AddUsage(ref long? total, long? value)
+        {
+            if (value is >= 0)
+            {
+                long current = total ?? 0;
+                total = value.Value > long.MaxValue - current ? long.MaxValue : current + value.Value;
+            }
         }
     }
 }

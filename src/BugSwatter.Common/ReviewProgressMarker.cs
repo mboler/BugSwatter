@@ -2,6 +2,25 @@ using System.Text.Json;
 
 namespace BugSwatter.Common;
 
+/// <summary>Provider-reported model usage for one review scope, plus an optional estimated USD cost for priced frontier calls</summary>
+public sealed record ReviewUsageSnapshot
+{
+    /// <summary>Number of model requests started in this scope</summary>
+    public int RequestCount { get; init; }
+
+    /// <summary>Provider-reported prompt tokens across completed responses, or null when not reported</summary>
+    public long? PromptTokens { get; init; }
+
+    /// <summary>Provider-reported completion tokens across completed responses, or null when not reported</summary>
+    public long? CompletionTokens { get; init; }
+
+    /// <summary>Provider-reported total tokens across completed responses, or null when not reported</summary>
+    public long? TotalTokens { get; init; }
+
+    /// <summary>Estimated USD cost for priced frontier responses, or null when this scope is local or its cost cannot be calculated completely</summary>
+    public decimal? EstimatedCost { get; init; }
+}
+
 /// <summary>A complete, non-secret snapshot of an Informant review suitable for a supervising process or line-oriented script</summary>
 public sealed record ReviewProgressSnapshot
 {
@@ -32,24 +51,24 @@ public sealed record ReviewProgressSnapshot
     /// <summary>When the active model request began, or null between requests</summary>
     public DateTimeOffset? ModelRequestStartedUtc { get; init; }
 
-    /// <summary>Number of model requests started during this Informant run</summary>
-    public int ModelRequestCount { get; init; }
+    /// <summary>Usage across every model request in this Informant run</summary>
+    public ReviewUsageSnapshot RunUsage { get; init; } = new();
 
-    /// <summary>Provider-reported prompt token total across completed responses, or null when not reported</summary>
-    public long? PromptTokens { get; init; }
+    /// <summary>Usage for the current phase, model and profile; resets when any of those values changes</summary>
+    public ReviewUsageSnapshot CurrentUsage { get; init; } = new();
 
-    /// <summary>Provider-reported completion token total across completed responses, or null when not reported</summary>
-    public long? CompletionTokens { get; init; }
+    /// <summary>Usage from model configurations whose input and output rates are both omitted</summary>
+    public ReviewUsageSnapshot LocalUsage { get; init; } = new();
 
-    /// <summary>Provider-reported total token count across completed responses, or null when not reported</summary>
-    public long? TotalTokens { get; init; }
+    /// <summary>Usage from model configurations that declare input and output rates, including zero rates that disable cost estimation</summary>
+    public ReviewUsageSnapshot FrontierUsage { get; init; } = new();
 }
 
 /// <summary>Versioned stdout marker used to exchange review progress without giving Informant a Marshal dependency</summary>
 public static class ReviewProgressMarker
 {
     /// <summary>Current progress protocol version</summary>
-    public const int CurrentVersion = 1;
+    public const int CurrentVersion = 2;
 
     /// <summary>Prefix placed before one compact JSON snapshot on each progress line</summary>
     public const string Prefix = "INFORMANT-PROGRESS:";
@@ -96,8 +115,11 @@ public static class ReviewProgressMarker
     }
 
     private static bool IsValid(ReviewProgressSnapshot? snapshot) => snapshot is not null && snapshot.Version == CurrentVersion && !string.IsNullOrWhiteSpace(snapshot.Phase)
-        && snapshot.ModelRequestCount >= 0 && HasValidFilePosition(snapshot.FileIndex, snapshot.FileCount) && IsNullableNonNegative(snapshot.PromptTokens)
-        && IsNullableNonNegative(snapshot.CompletionTokens) && IsNullableNonNegative(snapshot.TotalTokens) && (!snapshot.ModelRequestActive || snapshot.ModelRequestStartedUtc is not null);
+        && HasValidFilePosition(snapshot.FileIndex, snapshot.FileCount) && IsValidUsage(snapshot.RunUsage) && IsValidUsage(snapshot.CurrentUsage)
+        && IsValidUsage(snapshot.LocalUsage) && IsValidUsage(snapshot.FrontierUsage) && (!snapshot.ModelRequestActive || snapshot.ModelRequestStartedUtc is not null);
+
+    private static bool IsValidUsage(ReviewUsageSnapshot? usage) => usage is not null && usage.RequestCount >= 0 && IsNullableNonNegative(usage.PromptTokens)
+        && IsNullableNonNegative(usage.CompletionTokens) && IsNullableNonNegative(usage.TotalTokens) && usage.EstimatedCost is null or >= 0;
 
     private static bool HasValidFilePosition(int? fileIndex, int? fileCount) => (fileIndex is null && fileCount is null) || (fileIndex > 0 && fileCount > 0 && fileIndex <= fileCount);
 

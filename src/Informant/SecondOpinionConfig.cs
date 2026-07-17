@@ -13,6 +13,12 @@ public sealed record SecondOpinionModelProfile
     /// <summary>Model or Azure deployment name passed to the endpoint</summary>
     public string ModelName { get; init; } = "";
 
+    /// <summary>USD cost per million input tokens; omit with outputCostPerMillion for a local model</summary>
+    public decimal? InputCostPerMillion { get; init; }
+
+    /// <summary>USD cost per million output tokens; omit with inputCostPerMillion for a local model</summary>
+    public decimal? OutputCostPerMillion { get; init; }
+
     /// <summary>Reference to the API key as env:VARIABLE_NAME or file:PATH; omit for an unauthenticated local endpoint</summary>
     public string? ApiKey { get; init; }
 
@@ -21,6 +27,9 @@ public sealed record SecondOpinionModelProfile
 
     /// <summary>True when this profile declares an API-key reference</summary>
     public bool RequiresApiKey => !string.IsNullOrWhiteSpace(ApiKey);
+
+    /// <summary>Cost classification and rates for this profile</summary>
+    public ModelUsagePricing Pricing => new(InputCostPerMillion, OutputCostPerMillion);
 
     /// <summary>Reads the API key from its configured reference</summary>
     /// <returns>The key value, or null when no reference is configured or its source is unset</returns>
@@ -39,6 +48,8 @@ public sealed record SecondOpinionModelProfile
         {
             throw new InformantFatalException($"{fieldName}.modelName is required");
         }
+
+        Pricing.Validate(fieldName);
 
         if (RequiresApiKey && !SecretReference.IsReference(ApiKey))
         {
@@ -78,6 +89,12 @@ public sealed record SecondOpinionConfig
 
     /// <summary>Model name used by the simple single-model form</summary>
     public string ModelName { get; init; } = "";
+
+    /// <summary>USD cost per million input tokens for the simple form; omit with outputCostPerMillion for a local model</summary>
+    public decimal? InputCostPerMillion { get; init; }
+
+    /// <summary>USD cost per million output tokens for the simple form; omit with inputCostPerMillion for a local model</summary>
+    public decimal? OutputCostPerMillion { get; init; }
 
     /// <summary>API-key reference used by the simple single-model form</summary>
     public string? ApiKey { get; init; }
@@ -225,9 +242,10 @@ public sealed record SecondOpinionConfig
 
     private void ValidateAdvanced()
     {
-        if (!string.IsNullOrWhiteSpace(Endpoint) || !string.IsNullOrWhiteSpace(ModelName) || !string.IsNullOrWhiteSpace(ApiKey) || Authentication != ModelAuthentication.Bearer)
+        if (!string.IsNullOrWhiteSpace(Endpoint) || !string.IsNullOrWhiteSpace(ModelName) || InputCostPerMillion is not null || OutputCostPerMillion is not null
+            || !string.IsNullOrWhiteSpace(ApiKey) || Authentication != ModelAuthentication.Bearer)
         {
-            throw new InformantFatalException("secondOpinion cannot mix the simple endpoint, modelName, apiKey or authentication fields with advanced profiles");
+            throw new InformantFatalException("secondOpinion cannot mix the simple endpoint, modelName, pricing, apiKey or authentication fields with advanced profiles");
         }
 
         if (Profiles is not { Count: >= 1 and <= 3 })
@@ -275,7 +293,8 @@ public sealed record SecondOpinionConfig
 
     private SecondOpinionModelProfile CreateSimpleProfile()
     {
-        var profile = new SecondOpinionModelProfile { Endpoint = Endpoint, ModelName = ModelName, ApiKey = ApiKey, Authentication = Authentication };
+        var profile = new SecondOpinionModelProfile { Endpoint = Endpoint, ModelName = ModelName, InputCostPerMillion = InputCostPerMillion, OutputCostPerMillion = OutputCostPerMillion,
+            ApiKey = ApiKey, Authentication = Authentication };
         profile.SetConfigDirectory(_configDirectory);
         return profile;
     }

@@ -38,17 +38,17 @@ public sealed record CurrentReviewActivity
     /// <summary>When the active model request began, or null between requests</summary>
     public DateTimeOffset? ModelRequestStartedUtc { get; init; }
 
-    /// <summary>Number of model requests started during the review</summary>
-    public int ModelRequestCount { get; init; }
+    /// <summary>Usage across the complete Informant run</summary>
+    public ReviewUsageSnapshot RunUsage { get; init; } = new();
 
-    /// <summary>Provider-reported prompt tokens across completed responses</summary>
-    public long? PromptTokens { get; init; }
+    /// <summary>Usage for the currently selected phase, model and profile</summary>
+    public ReviewUsageSnapshot CurrentUsage { get; init; } = new();
 
-    /// <summary>Provider-reported completion tokens across completed responses</summary>
-    public long? CompletionTokens { get; init; }
+    /// <summary>Usage from configurations whose cost rates are omitted</summary>
+    public ReviewUsageSnapshot LocalUsage { get; init; } = new();
 
-    /// <summary>Provider-reported total tokens across completed responses</summary>
-    public long? TotalTokens { get; init; }
+    /// <summary>Usage and estimated cost from configurations whose cost rates are present</summary>
+    public ReviewUsageSnapshot FrontierUsage { get; init; } = new();
 }
 
 /// <summary>Thread-safe current-review store updated by the dispatcher and validated Informant progress lines</summary>
@@ -90,10 +90,10 @@ public sealed class CurrentReviewStatusStore
                 FileCount = progress.FileCount,
                 ModelRequestActive = progress.ModelRequestActive,
                 ModelRequestStartedUtc = progress.ModelRequestStartedUtc,
-                ModelRequestCount = progress.ModelRequestCount,
-                PromptTokens = progress.PromptTokens,
-                CompletionTokens = progress.CompletionTokens,
-                TotalTokens = progress.TotalTokens
+                RunUsage = progress.RunUsage,
+                CurrentUsage = progress.CurrentUsage,
+                LocalUsage = progress.LocalUsage,
+                FrontierUsage = progress.FrontierUsage
             };
         }
     }

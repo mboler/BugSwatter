@@ -40,6 +40,51 @@ public sealed class SecondOpinionConfigTests : IDisposable
     }
 
     [Fact]
+    public void PositiveRatesEnableSecondOpinionCostEstimates()
+    {
+        WriteConfig(secondOpinion: new Dictionary<string, object?>
+        {
+            ["endpoint"] = "https://api.example.test/v1",
+            ["modelName"] = "frontier-1",
+            ["inputCostPerMillion"] = 2.5m,
+            ["outputCostPerMillion"] = 15m
+        });
+
+        SecondOpinionConfig secondOpinion = InformantConfig.Load(_directory.Path).SecondOpinion!;
+        SecondOpinionModelSelection selection = secondOpinion.SelectModel(new PrimaryReviewClassification(Severity.Medium, true));
+
+        Assert.Equal(2.5m, secondOpinion.InputCostPerMillion);
+        Assert.Equal(15m, secondOpinion.OutputCostPerMillion);
+        Assert.Equal(2.5m, selection.Model.Pricing.InputCostPerMillion);
+        Assert.Equal(15m, selection.Model.Pricing.OutputCostPerMillion);
+    }
+
+    [Fact]
+    public void ZeroSecondOpinionRatesAreAccepted()
+    {
+        WriteConfig(secondOpinion: new Dictionary<string, object?>
+        {
+            ["endpoint"] = "https://api.example.test/v1",
+            ["modelName"] = "frontier-1",
+            ["inputCostPerMillion"] = 0m,
+            ["outputCostPerMillion"] = 0m
+        });
+
+        Assert.NotNull(InformantConfig.Load(_directory.Path).SecondOpinion);
+    }
+
+    [Fact]
+    public void UnpairedOrNegativeSecondOpinionRatesAreRejected()
+    {
+        WriteConfig(secondOpinion: new Dictionary<string, object?> { ["endpoint"] = "https://api.example.test/v1", ["modelName"] = "frontier-1", ["inputCostPerMillion"] = 2.5m });
+        Assert.Throws<InformantFatalException>(() => InformantConfig.Load(_directory.Path));
+
+        WriteConfig(secondOpinion: new Dictionary<string, object?> { ["endpoint"] = "https://api.example.test/v1", ["modelName"] = "frontier-1", ["inputCostPerMillion"] = -1m,
+            ["outputCostPerMillion"] = 15m });
+        Assert.Throws<InformantFatalException>(() => InformantConfig.Load(_directory.Path));
+    }
+
+    [Fact]
     public void ContextLinesIsConfigurableAndValidated()
     {
         WriteConfig(secondOpinion: new Dictionary<string, object?> { ["endpoint"] = "http://validator.example.test:1234/v1", ["modelName"] = "local-validator", ["contextLines"] = 12 });

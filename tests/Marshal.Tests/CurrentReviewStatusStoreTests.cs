@@ -13,6 +13,7 @@ public sealed class CurrentReviewStatusStoreTests
         DateTimeOffset startedUtc = DateTimeOffset.Parse("2026-07-13T07:00:00Z");
 
         store.Begin(request, startedUtc);
+        var runUsage = new ReviewUsageSnapshot { RequestCount = 8, PromptTokens = 3500, CompletionTokens = 700, TotalTokens = 4200, EstimatedCost = 0.25m };
         store.Apply(job.Name, new ReviewProgressSnapshot
         {
             Phase = "Primary review",
@@ -23,8 +24,10 @@ public sealed class CurrentReviewStatusStoreTests
             FileCount = 10,
             ModelRequestActive = true,
             ModelRequestStartedUtc = startedUtc.AddMinutes(1),
-            ModelRequestCount = 8,
-            TotalTokens = 4200
+            RunUsage = runUsage,
+            CurrentUsage = new ReviewUsageSnapshot { RequestCount = 2, TotalTokens = 800, EstimatedCost = 0.05m },
+            LocalUsage = new ReviewUsageSnapshot { RequestCount = 6, TotalTokens = 3400 },
+            FrontierUsage = new ReviewUsageSnapshot { RequestCount = 2, TotalTokens = 800, EstimatedCost = 0.25m }
         });
 
         CurrentReviewActivity activity = Assert.IsType<CurrentReviewActivity>(store.Snapshot());
@@ -36,7 +39,10 @@ public sealed class CurrentReviewStatusStoreTests
         Assert.Equal("src/Worker.cs", activity.CurrentFile);
         Assert.True(activity.ModelRequestActive);
         Assert.Equal(startedUtc.AddMinutes(1), activity.ModelRequestStartedUtc);
-        Assert.Equal(4200, activity.TotalTokens);
+        Assert.Equal(runUsage, activity.RunUsage);
+        Assert.Equal(800, activity.CurrentUsage.TotalTokens);
+        Assert.Equal(3400, activity.LocalUsage.TotalTokens);
+        Assert.Equal(0.25m, activity.FrontierUsage.EstimatedCost);
 
         store.Clear(job.Name);
         Assert.Null(store.Snapshot());

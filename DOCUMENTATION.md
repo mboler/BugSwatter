@@ -68,7 +68,7 @@ Download the Windows archive and `SHA256SUMS.txt` from the same GitHub Release. 
 The Windows executables are not code-signed, so Windows may identify them as coming from an unknown publisher or display a SmartScreen warning. Download releases only from this GitHub repository, and proceed only after the archive's checksum matches `SHA256SUMS.txt`.
 
 ```powershell
-$version = "0.91.0"
+$version = "0.92.0"
 Get-FileHash ".\BugSwatter-$version-win-x64.zip" -Algorithm SHA256
 Expand-Archive ".\BugSwatter-$version-win-x64.zip" -DestinationPath C:\BugSwatter\releases
 Move-Item "C:\BugSwatter\releases\BugSwatter-$version-win-x64" C:\BugSwatter\bin
@@ -84,7 +84,7 @@ Install Git and your distribution's .NET 10 and ASP.NET Core 10 runtime packages
 After comparing the archive's SHA-256 value with `SHA256SUMS.txt`:
 
 ```bash
-VERSION=0.91.0
+VERSION=0.92.0
 sudo mkdir -p /opt/bugswatter
 sudo tar -xzf "BugSwatter-${VERSION}-linux-x64.tar.gz" -C /opt/bugswatter --strip-components=1
 sudo chmod 755 /opt/bugswatter/Informant /opt/bugswatter/Marshal
@@ -150,7 +150,9 @@ Informant.exe --config "C:\BugSwatter Jobs\sample\informant.json"
 
 Relative paths inside a configuration file resolve from that file's directory, not from the process working directory. `workingTreePath` is the exception and must be absolute.
 
-Standalone Informant keeps its normal human-readable console and log behavior. Passing `--progress json` additionally writes complete, versioned `INFORMANT-PROGRESS:` JSON snapshots, one per line, for Marshal or a line-oriented script. Snapshots report the current phase, file position, selected model profile, whether a non-streaming model request is waiting for a response, the number of requests started, and cumulative token usage returned by the provider. Providers may omit usage, so token fields remain unavailable until a completed response reports them. BugSwatter does not estimate tokens in a response that is still being generated.
+Standalone Informant keeps its normal human-readable console and log behavior. Passing `--progress json` additionally writes complete, versioned `INFORMANT-PROGRESS:` JSON snapshots, one per line, for Marshal or a line-oriented script. Protocol version 2 snapshots report the current phase, file position, selected model profile, whether a non-streaming model request is waiting for a response, and separate usage scopes for the complete run, current phase and model, local models, and frontier models.
+
+Each usage scope includes requests started and cumulative provider-reported input, output, and total tokens. Providers may omit usage, so token fields remain unavailable until a completed response reports them. BugSwatter does not estimate tokens in a response that is still being generated. Configured frontier pricing can also produce a cumulative estimated cost. Older protocol versions are rejected so a consumer cannot silently mistake flat counters for scoped usage.
 
 Exit code `0` means the command completed successfully. Exit code `1` means a fatal condition was written to standard error and the configured log.
 
@@ -166,6 +168,8 @@ JSON comments and trailing commas are supported.
 | `gitExecutablePath` | Git executable path | required |
 | `modelEndpoint` | OpenAI-compatible primary model base URL | required |
 | `modelName` | Model identifier sent to the endpoint, or `*` for one loaded LM Studio model | required |
+| `inputCostPerMillion` | USD cost per million input tokens for the preferred primary model | null |
+| `outputCostPerMillion` | USD cost per million output tokens for the preferred primary model | null |
 | `fallbackModels` | Ordered already-running alternatives, each with `name`, `endpoint`, and a model identifier or `*` | empty |
 | `allowedReadRoot` | Root available to `read_file_lines` | working tree |
 | `reviewMode` | `changed` or `full` | `changed` |
@@ -188,6 +192,8 @@ JSON comments and trailing commas are supported.
 | `consoleLogging` | Force console logging on or off; null auto-detects | null |
 | `secondOpinion` | Optional validation model settings | null |
 | `email` | Optional report email settings; requires a second opinion | null |
+
+Pricing fields are configured as a pair on each model target. Leave both null or omit them for a local model. Supply both fields to classify that target as frontier usage. Set either supplied rate to `0` to count frontier tokens without calculating cost, or set both to positive USD rates per million tokens to show an estimate. Negative or unpaired rates are invalid. Estimates use provider-reported usage and the rates in effect for that request; they are not invoices and may differ from provider billing.
 
 `reviewPrompt` takes precedence over `reviewPromptFile`; the built-in prompt is used when neither supplies content. Relative `promptIncludeFiles` patterns match only at the reviewed repository root. The included Markdown is repository-supplied model guidance, so review those files as part of your prompt policy.
 
@@ -221,11 +227,15 @@ The preferred `modelEndpoint` and `modelName` remain the first target. `fallback
 ```jsonc
 "modelEndpoint": "http://primary-model-host:1234/v1",
 "modelName": "primary-review-model",
+"inputCostPerMillion": null,
+"outputCostPerMillion": null,
 "fallbackModels": [
   {
     "name": "backup-server",
     "endpoint": "http://backup-model-host:1234/v1",
-    "modelName": "backup-review-model"
+    "modelName": "backup-review-model",
+    "inputCostPerMillion": 0,
+    "outputCostPerMillion": 0
   }
 ]
 ```
@@ -311,6 +321,8 @@ The optional second opinion sends the primary findings and relevant code excerpt
   "modelName": "validator-model",
   "apiKey": "env:INFORMANT_SECOND_OPINION_KEY",
   "authentication": "bearer",
+  "inputCostPerMillion": 2.5,
+  "outputCostPerMillion": 15,
   "prompt": null,
   "promptFile": null,
   "requestTimeoutSeconds": 1800,
@@ -326,6 +338,8 @@ The optional second opinion sends the primary findings and relevant code excerpt
 | `modelName` | Validator model identifier | required |
 | `apiKey` | `env:` or `file:` reference; omit for an unauthenticated local endpoint | null |
 | `authentication` | `bearer` for an Authorization bearer credential, or `apiKey` for the Azure `api-key` header | `bearer` |
+| `inputCostPerMillion` | USD cost per million validator input tokens | null |
+| `outputCostPerMillion` | USD cost per million validator output tokens | null |
 | `prompt` | Inline validation prompt | null |
 | `promptFile` | Validation prompt file used when inline text is absent | built-in prompt |
 | `requestTimeoutSeconds` | Timeout for each validation request | `1800` |
@@ -349,11 +363,15 @@ Advanced configuration can declare one to three OpenAI-compatible model profiles
     "balanced": {
       "endpoint": "https://provider.example/v1",
       "modelName": "balanced-model",
+      "inputCostPerMillion": 2.5,
+      "outputCostPerMillion": 15,
       "apiKey": "env:INFORMANT_BALANCED_KEY"
     },
     "premium": {
       "endpoint": "https://your-resource.openai.azure.com/openai/v1",
       "modelName": "premium-deployment",
+      "inputCostPerMillion": 10,
+      "outputCostPerMillion": 30,
       "apiKey": "env:INFORMANT_PREMIUM_KEY",
       "authentication": "apiKey"
     }
@@ -373,7 +391,9 @@ Advanced configuration can declare one to three OpenAI-compatible model profiles
 }
 ```
 
-The simple `endpoint`, `modelName`, `apiKey`, and `authentication` fields cannot be mixed with `profiles`. Profile names are local labels. Each profile has its own endpoint, model name, optional secret reference, and authentication mode. The shared prompt, timeout, context, tool-read, and skipped-file settings remain at the `secondOpinion` level.
+The simple `endpoint`, `modelName`, `apiKey`, `authentication`, and pricing fields cannot be mixed with `profiles`. Profile names are local labels. Each profile has its own endpoint, model name, optional secret reference, authentication mode, and optional pricing pair. The shared prompt, timeout, context, tool-read, and skipped-file settings remain at the `secondOpinion` level.
+
+Omit both pricing fields on a local profile. Supply both on a frontier profile, using `0` for either rate when usage should be separated and counted but no dollar estimate should be calculated.
 
 All six `routeBySeverity` entries are required: `none`, `low`, `medium`, `high`, `critical`, and `undetermined`. Each entry must name one configured profile. The primary model supplies structured candidate severity for each reviewed file. Informant takes the highest candidate severity across the complete run and selects exactly one validator for that run. It does not run several second opinions, rotate by day, or choose a different model for each file.
 
@@ -592,13 +612,15 @@ When `webServer.enabled` is true, Marshal serves HTTP only. HTTPS and certificat
 | `/webhook/github` | POST | GitHub push webhook when enabled |
 | `/webhook/azuredevops` | POST | Azure DevOps push webhook when enabled |
 
-The page title is **BugSwatter Dashboard**. While a review runs, it shows the dispatched job and trigger state, review start and elapsed time, phase, file position, selected model and profile, whether a model request is waiting for a response, that request's start and elapsed time, request count, and cumulative provider-reported tokens. Informant uses non-streaming requests, so the token count changes only after a response completes. A provider that does not return OpenAI-compatible usage fields is shown as `not reported`. Marshal ignores malformed, missing, and unsupported progress lines; they never fail the child review, and the basic starting state remains available when no valid progress has arrived.
+The page title is **BugSwatter Dashboard**. While a review runs, it shows the dispatched job and trigger state, review start and elapsed time, phase, file position, selected model and profile, whether a model request is waiting for a response, and that request's start and elapsed time. Usage tiles separate the complete run, current phase and model, local models, and frontier models. Each scope shows requests and cumulative provider-reported tokens. The frontier scope also shows estimated cost when both configured rates are positive.
+
+Informant uses non-streaming requests, so token and cost counters change only after a response completes. A provider that does not return OpenAI-compatible usage fields is shown as `not reported`. Missing usage, failed frontier requests, disabled pricing, or arithmetic overflow makes the cost unavailable rather than displaying a partial estimate. Completed-run history retains run, local, and frontier usage; history written by older versions is shown as `not recorded`. Marshal ignores malformed, missing, and unsupported progress lines; they never fail the child review, and the basic starting state remains available when no valid progress has arrived.
 
 There is no dashboard or API authentication, authorization, CSRF protection, TLS, or rate limiting. Any client that can reach the listener can inspect operational details, trigger model usage, or cancel waiting work. HTTP traffic can be read or modified by any party able to observe the network path. Azure DevOps Basic credentials are not confidential without a protected transport such as a trusted VPN.
 
 The intended deployment is `localhost` or a trusted internal network with firewall or VPN controls. Do not expose the listener directly to the public internet. For remote access on a trusted LAN, bind an internal address or `0.0.0.0` and add a narrowly scoped host-firewall rule. Omit `webServer` entirely when the dashboard and webhooks are not needed. Outbound polling works without an open inbound port.
 
-The history API includes report paths, the jobs API includes configured watch paths and repository identifiers, and live status includes current file names, model names, and usage counts. The dashboard does not serve report file contents, but the metadata can still be sensitive.
+The history API includes report paths and scoped token and cost estimates, the jobs API includes configured watch paths and repository identifiers, and live status includes current file names, model names, and usage counts. The dashboard does not serve report file contents, provider credentials, or model responses, but the metadata can still be sensitive.
 
 ## Windows service deployment
 
@@ -676,6 +698,8 @@ Polling every five or ten minutes is normally inexpensive because `ls-remote` re
 
 The first review of a repository uses the full tracked tree as its candidate universe. Start with a small repository or temporary branch to estimate model speed and cost. `exhaustive` provides the strongest candidate-coverage guarantee; `adaptive` can shorten a large first pass but may miss defects in explicitly deferred files.
 
+For frontier models, set `inputCostPerMillion` and `outputCostPerMillion` on each primary target or second-opinion profile whose usage should be costed. Rates are USD per million tokens. The dashboard estimate is an operational guide based only on provider-reported usage; it does not include taxes, cached-token discounts, batch discounts, tiering, retries not reported by the provider, or provider-side adjustments. Use the provider's billing and budgets as the authoritative cost source.
+
 Useful controls include:
 
 - Keep `reviewMode` as `changed`; `full` reviews the complete tree every run
@@ -688,7 +712,7 @@ Useful controls include:
 - Set `reviewSkippedFiles` to false if second-model coverage is less important than cost
 - Use `sendOn` to reduce email volume
 - Use `reportRetentionDays` to cap report storage, or `-1` only when indefinite retention is intentional
-- Monitor local accelerator utilization and cloud-provider usage alerts independently of BugSwatter
+- Configure frontier pricing for dashboard estimates, and monitor local accelerator utilization, provider billing, and cloud-provider usage alerts independently of BugSwatter
 
 The manifest, coverage ledger, and metadata trace also consume disk space. Retention handles them with the same age setting as reports. Marshal's queue is bounded and serial, so a trigger burst does not create simultaneous model calls. A trigger arriving during a run may still schedule one rerun. Repository changes during an incomplete review remain behind the old baseline and will be reconsidered later.
 
@@ -715,7 +739,7 @@ Build local framework-dependent release archives with:
 
 The Linux archive should be produced on Linux so executable permission bits are set correctly. The script reads the version from `Directory.Build.props`, refuses to overwrite an existing archive, and can validate an expected `v<version>` tag.
 
-GitHub Actions runs build, test, dependency policy, vulnerability reporting, and package smoke tests on Windows and Linux for pushes and pull requests. Pushing a tag such as `v0.91.0` first runs the same CI, builds both archives, writes `SHA256SUMS.txt`, and creates a GitHub Release. The tag must exactly match the version in `Directory.Build.props`. Release packages remain framework-dependent and do not bundle .NET.
+GitHub Actions runs build, test, dependency policy, vulnerability reporting, and package smoke tests on Windows and Linux for pushes and pull requests. Pushing a tag such as `v0.92.0` first runs the same CI, builds both archives, writes `SHA256SUMS.txt`, and creates a GitHub Release. The tag must exactly match the version in `Directory.Build.props`. Release packages remain framework-dependent and do not bundle .NET.
 
 Opt-in integration tests are skipped in ordinary CI. Live model tests require `INFORMANT_IT=1`, `INFORMANT_IT_ENDPOINT`, and `INFORMANT_IT_MODEL`; optional second-opinion coverage also uses `INFORMANT_IT_SO_ENDPOINT` and `INFORMANT_IT_SO_MODEL`. The ACS email test uses `BUGSWATTER_EMAIL_IT=1`, `BUGSWATTER_EMAIL_IT_ACS_CONNECTION`, `BUGSWATTER_EMAIL_IT_FROM`, and `BUGSWATTER_EMAIL_IT_TO`. Never commit those values.
 

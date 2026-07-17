@@ -1,4 +1,5 @@
 using System.Text.Json;
+using BugSwatter.Common;
 using Serilog;
 
 namespace Marshal;
@@ -32,6 +33,15 @@ public sealed record HistoryEntry
 
     /// <summary>Highest confirmed severity from the second opinion when available, otherwise null</summary>
     public string? MaxSeverity { get; init; }
+
+    /// <summary>Final usage across every model request in the run, or null for history written before scoped usage was available</summary>
+    public ReviewUsageSnapshot? RunUsage { get; init; }
+
+    /// <summary>Final local-model usage, or null for history written before scoped usage was available</summary>
+    public ReviewUsageSnapshot? LocalUsage { get; init; }
+
+    /// <summary>Final frontier-model usage and estimated cost, or null for history written before scoped usage was available</summary>
+    public ReviewUsageSnapshot? FrontierUsage { get; init; }
 }
 
 /// <summary>Append-only JSON-lines history of completed runs. Writes are best-effort: a failure to record history must never disturb a finished run. Reads power the dashboard and status views</summary>

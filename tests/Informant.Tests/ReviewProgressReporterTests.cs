@@ -38,13 +38,19 @@ public sealed class ReviewProgressReporterTests
         Assert.Equal(6, snapshots.Length);
         Assert.True(snapshots[1].ModelRequestActive);
         Assert.Equal(firstStartedUtc, snapshots[1].ModelRequestStartedUtc);
-        Assert.Equal(1, snapshots[1].ModelRequestCount);
+        Assert.Equal(1, snapshots[1].RunUsage.RequestCount);
         Assert.False(snapshots[^1].ModelRequestActive);
         Assert.Null(snapshots[^1].ModelRequestStartedUtc);
-        Assert.Equal(2, snapshots[^1].ModelRequestCount);
-        Assert.Equal(300, snapshots[^1].PromptTokens);
-        Assert.Equal(60, snapshots[^1].CompletionTokens);
-        Assert.Equal(360, snapshots[^1].TotalTokens);
+        Assert.Equal(2, snapshots[^1].RunUsage.RequestCount);
+        Assert.Equal(300, snapshots[^1].RunUsage.PromptTokens);
+        Assert.Equal(60, snapshots[^1].RunUsage.CompletionTokens);
+        Assert.Equal(360, snapshots[^1].RunUsage.TotalTokens);
+        Assert.Equal(snapshots[^1].RunUsage, snapshots[^1].LocalUsage);
+        Assert.Equal(1, snapshots[^1].CurrentUsage.RequestCount);
+        Assert.Equal(200, snapshots[^1].CurrentUsage.PromptTokens);
+        Assert.Equal(240, snapshots[^1].CurrentUsage.TotalTokens);
+        Assert.Equal(0, snapshots[^1].FrontierUsage.RequestCount);
+        Assert.Null(snapshots[^1].RunUsage.EstimatedCost);
         Assert.Equal("src/Worker.cs", snapshots[^1].CurrentFile);
         Assert.Equal(2, snapshots[^1].FileIndex);
         Assert.Equal(5, snapshots[^1].FileCount);
@@ -56,6 +62,9 @@ public sealed class ReviewProgressReporterTests
         var output = new StringWriter();
         var reporter = new ReviewProgressReporter(ProgressOutput.Json, output);
         reporter.ReportFile("Primary review", "primary-model", "primary", "src/Worker.cs", 2, 5);
+        DateTimeOffset startedUtc = DateTimeOffset.Parse("2026-07-13T08:00:00Z");
+        reporter.ObserveModelCall(new ModelCallProgress(ModelCallState.Started, "primary-model", startedUtc, TimeSpan.Zero, null));
+        reporter.ObserveModelCall(new ModelCallProgress(ModelCallState.Completed, "primary-model", startedUtc, TimeSpan.FromSeconds(1), new ModelTokenUsage(100, 20, 120)));
 
         reporter.ReportModelTarget("backup-model", "backup-server");
 
@@ -68,6 +77,84 @@ public sealed class ReviewProgressReporterTests
         Assert.Equal("src/Worker.cs", snapshot.CurrentFile);
         Assert.Equal(2, snapshot.FileIndex);
         Assert.Equal(5, snapshot.FileCount);
+        Assert.Equal(1, snapshot.RunUsage.RequestCount);
+        Assert.Equal(1, snapshot.LocalUsage.RequestCount);
+        Assert.Equal(0, snapshot.CurrentUsage.RequestCount);
+    }
+
+    [Fact]
+    public void PricedFrontierPhaseHasSeparateUsageAndCost()
+    {
+        var output = new StringWriter();
+        var reporter = new ReviewProgressReporter(ProgressOutput.Json, output);
+        DateTimeOffset startedUtc = DateTimeOffset.Parse("2026-07-13T08:00:00Z");
+
+        reporter.ReportPhase("Primary review", "local-model", "primary");
+        reporter.ObserveModelCall(new ModelCallProgress(ModelCallState.Started, "local-model", startedUtc, TimeSpan.Zero, null));
+        reporter.ObserveModelCall(new ModelCallProgress(ModelCallState.Completed, "local-model", startedUtc, TimeSpan.FromSeconds(1), new ModelTokenUsage(100, 20, 120)));
+
+        var pricing = new ModelUsagePricing(2.5m, 15m);
+        reporter.ReportPhase("Second-opinion review", "frontier-model", "terra", pricing);
+        reporter.ObserveModelCall(new ModelCallProgress(ModelCallState.Started, "frontier-model", startedUtc.AddMinutes(1), TimeSpan.Zero, null));
+        reporter.ObserveModelCall(new ModelCallProgress(ModelCallState.Completed, "frontier-model", startedUtc.AddMinutes(1), TimeSpan.FromSeconds(1), new ModelTokenUsage(200, 40, 240)));
+
+        ReviewProgressSnapshot snapshot = output.ToString()
+            .Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries)
+            .Select(Parse)
+            .Last();
+
+        Assert.Equal(2, snapshot.RunUsage.RequestCount);
+        Assert.Equal(360, snapshot.RunUsage.TotalTokens);
+        Assert.Equal(0.0011m, snapshot.RunUsage.EstimatedCost);
+        Assert.Equal(120, snapshot.LocalUsage.TotalTokens);
+        Assert.Equal(240, snapshot.FrontierUsage.TotalTokens);
+        Assert.Equal(0.0011m, snapshot.FrontierUsage.EstimatedCost);
+        Assert.Equal(snapshot.FrontierUsage, snapshot.CurrentUsage);
+    }
+
+    [Fact]
+    public void PartialProviderUsageLeavesFrontierCostUnavailable()
+    {
+        var output = new StringWriter();
+        var reporter = new ReviewProgressReporter(ProgressOutput.Json, output);
+        DateTimeOffset startedUtc = DateTimeOffset.Parse("2026-07-13T08:00:00Z");
+        var pricing = new ModelUsagePricing(2.5m, 15m);
+
+        reporter.ReportPhase("Second-opinion review", "frontier-model", "terra", pricing);
+        reporter.ObserveModelCall(new ModelCallProgress(ModelCallState.Started, "frontier-model", startedUtc, TimeSpan.Zero, null));
+        reporter.ObserveModelCall(new ModelCallProgress(ModelCallState.Completed, "frontier-model", startedUtc, TimeSpan.FromSeconds(1), new ModelTokenUsage(200, null, null)));
+
+        ReviewProgressSnapshot snapshot = output.ToString()
+            .Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries)
+            .Select(Parse)
+            .Last();
+
+        Assert.Equal(200, snapshot.FrontierUsage.PromptTokens);
+        Assert.Null(snapshot.FrontierUsage.EstimatedCost);
+        Assert.Null(snapshot.RunUsage.EstimatedCost);
+    }
+
+    [Fact]
+    public void ZeroRatesCountFrontierUsageWithoutCalculatingCost()
+    {
+        var output = new StringWriter();
+        var reporter = new ReviewProgressReporter(ProgressOutput.Json, output);
+        DateTimeOffset startedUtc = DateTimeOffset.Parse("2026-07-13T08:00:00Z");
+        var pricing = new ModelUsagePricing(0, 0);
+
+        reporter.ReportPhase("Second-opinion review", "frontier-model", "terra", pricing);
+        reporter.ObserveModelCall(new ModelCallProgress(ModelCallState.Started, "frontier-model", startedUtc, TimeSpan.Zero, null));
+        reporter.ObserveModelCall(new ModelCallProgress(ModelCallState.Completed, "frontier-model", startedUtc, TimeSpan.FromSeconds(1), new ModelTokenUsage(200, 40, 240)));
+
+        ReviewProgressSnapshot snapshot = output.ToString()
+            .Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries)
+            .Select(Parse)
+            .Last();
+
+        Assert.Equal(1, snapshot.FrontierUsage.RequestCount);
+        Assert.Equal(240, snapshot.FrontierUsage.TotalTokens);
+        Assert.Null(snapshot.FrontierUsage.EstimatedCost);
+        Assert.Equal(0, snapshot.LocalUsage.RequestCount);
     }
 
     private static ReviewProgressSnapshot Parse(string line)

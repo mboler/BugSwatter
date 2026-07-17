@@ -31,8 +31,14 @@ public static class InitCommand
           "modelName": "your-model-name",
           // Use "*" only with LM Studio to select its single loaded language model; zero or multiple loaded models fail this target.
 
+          // Leave both rates null for a local model. Set both to its current USD price per million tokens to estimate cost.
+          // Supplying zero marks the model as frontier but disables its cost estimate.
+          "inputCostPerMillion": null,
+          "outputCostPerMillion": null,
+
           // Optional ordered alternatives that must already be loaded and serving requests; Informant never loads models.
           // After retries are exhausted, the failed file is restarted on the next verified target and the run keeps one report.
+          // Each fallback accepts the same optional inputCostPerMillion and outputCostPerMillion fields.
           // Example: [{ "name": "backup-server", "endpoint": "http://backup-host:1234/v1", "modelName": "backup-model" }]
           "fallbackModels": [],
 
@@ -83,7 +89,8 @@ public static class InitCommand
           // apiKey must be an env:VARIABLE_NAME or file:PATH reference when the endpoint needs auth; omit it for local endpoints.
           // authentication is "bearer" by default; use "apiKey" for an Azure endpoint that expects the api-key header.
           // maxFileReads caps the validator's extra reads per file (default 5); reviewSkippedFiles also reviews files the local pass skipped (default true).
-          // Example: { "endpoint": "https://api.openai.com/v1", "modelName": "gpt-5", "apiKey": "env:INFORMANT_SECOND_OPINION_KEY", "contextLines": 30, "maxFileReads": 5, "reviewSkippedFiles": true }
+          // Example: { "endpoint": "https://api.openai.com/v1", "modelName": "gpt-5", "inputCostPerMillion": 1.25,
+          //            "outputCostPerMillion": 10.0, "apiKey": "env:INFORMANT_SECOND_OPINION_KEY", "contextLines": 30, "maxFileReads": 5, "reviewSkippedFiles": true }
           // DOCUMENTATION.md describes the advanced one-to-three-profile severity router.
           "secondOpinion": null,
 

@@ -1,3 +1,5 @@
+using BugSwatter.Common;
+
 namespace Marshal.Tests;
 
 /// <summary>Stub runner: records concurrency and run counts without launching anything</summary>
@@ -94,6 +96,29 @@ internal sealed class ThrowingRunner : IInformantRunner
     }
 }
 
+/// <summary>Runner that publishes one final scoped-usage snapshot before returning successfully</summary>
+internal sealed class ProgressRunner(CurrentReviewStatusStore current) : IInformantRunner
+{
+    private int _calls;
+
+    /// <summary>Number of completed runs</summary>
+    public int Calls => Volatile.Read(ref _calls);
+
+    /// <inheritdoc />
+    public Task<ReviewRunOutcome> RunAsync(ReviewJobConfig job, CancellationToken cancellationToken)
+    {
+        current.Apply(job.Name, new ReviewProgressSnapshot
+        {
+            Phase = "Completed",
+            RunUsage = new ReviewUsageSnapshot { RequestCount = 5, TotalTokens = 1000, EstimatedCost = 0.75m },
+            LocalUsage = new ReviewUsageSnapshot { RequestCount = 3, TotalTokens = 600 },
+            FrontierUsage = new ReviewUsageSnapshot { RequestCount = 2, TotalTokens = 400, EstimatedCost = 0.75m }
+        });
+        Interlocked.Increment(ref _calls);
+        return Task.FromResult(new ReviewRunOutcome(0, TimeSpan.FromSeconds(1), false, null, null));
+    }
+}
+
 public sealed class ReviewDispatcherTests
 {
     [Fact]
@@ -151,12 +176,13 @@ public sealed class ReviewDispatcherTests
         var history = new RunHistoryStore(historyPath);
 
         var queue = new ReviewQueue();
-        var runner = new StubRunner();
-        var dispatcher = new ReviewDispatcher(queue, runner, new StubHealthChecker(), new BackoffTracker(TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(15)), history, new CurrentReviewStatusStore());
+        var current = new CurrentReviewStatusStore();
+        var runner = new ProgressRunner(current);
+        var dispatcher = new ReviewDispatcher(queue, runner, new StubHealthChecker(), new BackoffTracker(TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(15)), history, current);
 
         queue.Enqueue(new ReviewJobConfig { Name = "recorded", InformantConfigPath = @"C:\jobs\recorded\informant.json" }, "test-trigger");
         await dispatcher.StartAsync(CancellationToken.None);
-        await WaitUntilAsync(() => runner.TotalRuns == 1, TimeSpan.FromSeconds(10));
+        await WaitUntilAsync(() => runner.Calls == 1, TimeSpan.FromSeconds(10));
         await dispatcher.StopAsync(CancellationToken.None);
 
         IReadOnlyList<HistoryEntry> recent = history.ReadRecent(10);
@@ -165,6 +191,9 @@ public sealed class ReviewDispatcherTests
         Assert.Equal("test-trigger", entry.Trigger);
         Assert.Equal("completed", entry.Outcome);
         Assert.Equal(0, entry.ExitCode);
+        Assert.Equal(1000, entry.RunUsage!.TotalTokens);
+        Assert.Equal(600, entry.LocalUsage!.TotalTokens);
+        Assert.Equal(0.75m, entry.FrontierUsage!.EstimatedCost);
     }
 
     [Fact]

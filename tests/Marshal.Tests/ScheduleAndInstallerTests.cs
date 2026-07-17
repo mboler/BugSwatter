@@ -31,6 +31,13 @@ public sealed class ScheduleAndInstallerTests
     }
 
     [Fact]
+    public void WindowsServiceMetadataUsesBugSwatterNameAndReviewDescription()
+    {
+        Assert.Equal("BugSwatter Marshal Service", ServiceInstaller.WindowsServiceDisplayName);
+        Assert.Equal("Watches repositories and dispatches Informant code reviews", ServiceInstaller.WindowsServiceDescription);
+    }
+
+    [Fact]
     public void SystemdUnitCarriesExecStartRestartAndInstallTarget()
     {
         string unit = ServiceInstaller.BuildSystemdUnit("/opt/marshal/Marshal", "/opt/marshal/marshal.json");

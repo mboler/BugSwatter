@@ -1,6 +1,6 @@
 # Contributing to BugSwatter
 
-Bug reports, focused improvements, tests, and documentation corrections are welcome. BugSwatter is a small pre-1.0 utility, so contributions should favor clear behavior and minimal dependencies over broad frameworks or speculative abstractions.
+Bug reports, focused improvements, tests, and documentation corrections are welcome. BugSwatter is a small utility, so contributions should favor clear behavior and minimal dependencies over broad frameworks or speculative abstractions.
 
 ## Before opening an issue
 

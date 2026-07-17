@@ -66,7 +66,7 @@ Informant supplies controller-selected source from the current manifest and expo
 
 Marshal's optional dashboard is HTTP-only and has no authentication or authorization. Anyone who can reach it can see operational details, including current file and model names, enqueue reviews, and remove waiting jobs. Bind it to `localhost` unless you deliberately place it on a trusted internal or VPN network. Never expose it directly to the public internet.
 
-AI output can be incomplete or wrong. Treat reports as leads for human review, not as proof that code is safe. BugSwatter is pre-1.0, so test it against a noncritical repository before relying on unattended operation.
+AI output can be incomplete or wrong. Treat reports as leads for human review, not as proof that code is safe. Test BugSwatter against a noncritical repository before relying on unattended operation.
 
 ## Documentation
 

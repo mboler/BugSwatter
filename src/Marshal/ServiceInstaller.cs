@@ -16,8 +16,12 @@ public static class ServiceInstaller
     /// <summary>Service name used for both the Windows service and the systemd unit</summary>
     public const string ServiceName = "Marshal";
 
-    private const string DisplayName = "Marshal review dispatcher";
-    private const string Description = "Watches repositories and dispatches Informant code reviews";
+    /// <summary>Display name shown for the service in Windows management tools</summary>
+    public const string WindowsServiceDisplayName = "BugSwatter Marshal Service";
+
+    /// <summary>Description shown for the service in Windows management tools</summary>
+    public const string WindowsServiceDescription = "Watches repositories and dispatches Informant code reviews";
+
     private const string SystemdUnitPath = "/etc/systemd/system/marshal.service";
 
     /// <summary>Registers Marshal to start automatically, launching it with the given config path and optional service account</summary>
@@ -89,7 +93,7 @@ public static class ServiceInstaller
 
         try
         {
-            nint service = WindowsServiceApi.CreateService(scManager, ServiceName, DisplayName, WindowsServiceApi.ServiceChangeConfig, WindowsServiceApi.ServiceWin32OwnProcess,
+            nint service = WindowsServiceApi.CreateService(scManager, ServiceName, WindowsServiceDisplayName, WindowsServiceApi.ServiceChangeConfig, WindowsServiceApi.ServiceWin32OwnProcess,
                 WindowsServiceApi.ServiceAutoStart, WindowsServiceApi.ServiceErrorNormal, BuildWindowsBinPath(executable, configPath), null, 0, null, serviceUser, servicePassword);
             if (service == 0)
             {
@@ -157,7 +161,7 @@ public static class ServiceInstaller
     private static void SetServiceDescription(nint service)
     {
         // SERVICE_DESCRIPTION is a struct holding one string pointer, so the address of this pointer is the struct pointer
-        nint descriptionText = InteropMarshal.StringToHGlobalUni(Description);
+        nint descriptionText = InteropMarshal.StringToHGlobalUni(WindowsServiceDescription);
         try
         {
             WindowsServiceApi.ChangeServiceConfig2(service, WindowsServiceApi.ServiceConfigDescription, ref descriptionText);
@@ -185,14 +189,14 @@ public static class ServiceInstaller
 
     private static int InstallWindowsWithScExe(string executable, string configPath)
     {
-        int created = RunTool("sc.exe", ["create", ServiceName, "binPath=", BuildWindowsBinPath(executable, configPath), "start=", "auto", "DisplayName=", DisplayName]);
+        int created = RunTool("sc.exe", ["create", ServiceName, "binPath=", BuildWindowsBinPath(executable, configPath), "start=", "auto", "DisplayName=", WindowsServiceDisplayName]);
         if (created != 0)
         {
             Console.Error.WriteLine("Service creation failed; run from an elevated prompt");
             return created;
         }
 
-        RunTool("sc.exe", ["description", ServiceName, Description]);
+        RunTool("sc.exe", ["description", ServiceName, WindowsServiceDescription]);
         Console.WriteLine($"Service '{ServiceName}' installed via sc.exe. Start it with: sc.exe start {ServiceName}");
         return 0;
     }

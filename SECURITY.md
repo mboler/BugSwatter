@@ -2,11 +2,11 @@
 
 ## Supported versions
 
-BugSwatter is pre-1.0. Security fixes are made only on the latest development line and latest published release. Older pre-1.0 versions are not maintained after a replacement is released.
+Security fixes are made only on the latest development line and latest published release. Older versions are not maintained after a replacement is released.
 
 | Version | Supported |
 | --- | --- |
-| Latest 0.x release | Yes |
+| Latest 1.x release | Yes |
 | Earlier versions | No |
 
 ## Report a vulnerability privately

@@ -71,6 +71,7 @@ public sealed class ModelClientTests
         ModelCallException ex = await Assert.ThrowsAsync<ModelCallException>(() => CreateClient(handler).CompleteAsync([new ChatMessage { Role = "user", Content = "go" }], []));
         Assert.Contains("500", ex.Message);
         Assert.Contains("model exploded", ex.Message);
+        Assert.Equal(HttpStatusCode.InternalServerError, ex.StatusCode);
     }
 
     [Fact]

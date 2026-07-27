@@ -56,24 +56,32 @@ public sealed class SecondOpinionReportWriter
         File.WriteAllText(_path, builder.ToString());
     }
 
-    /// <summary>Appends one file's validation, or a failure note when the call did not produce one</summary>
-    public void AppendFileSection(string filePath, IReadOnlyList<LineRange> ranges, string? validationText)
+    /// <summary>Appends one file's completed validation</summary>
+    public void AppendFileSection(string filePath, IReadOnlyList<LineRange> ranges, string validationText)
     {
-        var builder = new StringBuilder();
-        builder.AppendLine($"## {filePath}");
-        builder.AppendLine();
-        builder.AppendLine($"Changed line ranges: {(ranges.Count == 0 ? "(entire file)" : string.Join(", ", ranges.Select(range => range.ToString())))}");
-        builder.AppendLine();
+        ArgumentException.ThrowIfNullOrWhiteSpace(validationText);
+        AppendSection(filePath, ranges, validationText.Trim());
+    }
 
-        builder.AppendLine(validationText is null
-            ? "VALIDATION FAILED: the second-opinion call for this file did not succeed; see the log. The local findings for this file stand unvalidated"
-            : validationText.Trim());
+    /// <summary>Appends one file's explicit incomplete-validation status, reason and optional model response</summary>
+    public void AppendFailureSection(string filePath, IReadOnlyList<LineRange> ranges, SecondOpinionValidationStatus status, string reason, string? responseText = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+        if (!Enum.IsDefined(status) || status == SecondOpinionValidationStatus.Validated)
+        {
+            throw new ArgumentOutOfRangeException(nameof(status), status, "A failure section must use a failure status");
+        }
 
-        builder.AppendLine();
-        builder.AppendLine("---");
-        builder.AppendLine();
+        var content = new StringBuilder();
+        content.AppendLine($"VALIDATION INCOMPLETE ({status}): {reason}");
+        if (!string.IsNullOrWhiteSpace(responseText))
+        {
+            content.AppendLine();
+            content.AppendLine("Model response:");
+            content.Append(responseText.Trim());
+        }
 
-        File.AppendAllText(_path, builder.ToString());
+        AppendSection(filePath, ranges, content.ToString());
     }
 
     /// <summary>Patches the header counts and duration; the delimiter is the standalone horizontal rule, not the table alignment row</summary>
@@ -89,5 +97,20 @@ public sealed class SecondOpinionReportWriter
         File.WriteAllText(_path, headerEnd < 0 ? header : header + report[headerEnd..]);
 
         Log.Information("Validated report finalized: {Path}", _path);
+    }
+
+    private void AppendSection(string filePath, IReadOnlyList<LineRange> ranges, string content)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine($"## {filePath}");
+        builder.AppendLine();
+        builder.AppendLine($"Changed line ranges: {(ranges.Count == 0 ? "(entire file)" : string.Join(", ", ranges.Select(range => range.ToString())))}");
+        builder.AppendLine();
+        builder.AppendLine(content);
+        builder.AppendLine();
+        builder.AppendLine("---");
+        builder.AppendLine();
+
+        File.AppendAllText(_path, builder.ToString());
     }
 }

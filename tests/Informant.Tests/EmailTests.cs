@@ -139,25 +139,29 @@ public sealed class EmailTests : IDisposable
     [Fact]
     public void BuildSubjectCarriesRepoBranchAndSeverity()
     {
-        var outcome = new SecondOpinionOutcome("v.md", "v.json", Severity.High, true, 3, 0);
-        EmailMessage message = EmailReportBuilder.Build("sender@example.test", ["recipient@example.test"], "https://example.test/repo.git", "main", "local.md", outcome,
-            severityUndetermined: false, attachReports: true);
+        var outcome = new SecondOpinionOutcome("v.md", "v.json", Severity.High, 3, 0, 0, 0);
+        EmailMessage message = EmailReportBuilder.Build("sender@example.test", ["recipient@example.test"], "https://example.test/repo.git", "main", "local.md", outcome, attachReports: true);
 
         Assert.Contains("https://example.test/repo.git", message.Subject);
         Assert.Contains("main", message.Subject);
         Assert.Contains("High", message.Subject);
+        Assert.DoesNotContain("incomplete", message.Subject);
         Assert.Equal(["local.md", "v.md"], message.Attachments.Select(attachment => attachment.Path));
         Assert.Contains("Files validated by the second opinion: 3", message.Body);
     }
 
     [Fact]
-    public void BuildFlagsUndeterminedSeverityAndCanOmitAttachments()
+    public void BuildPreservesConfirmedSeverityAndExplainsIncompleteValidation()
     {
-        var outcome = new SecondOpinionOutcome("v.md", "v.json", Severity.None, false, 2, 0);
-        EmailMessage message = EmailReportBuilder.Build("sender@example.test", ["recipient@example.test"], "repo", "dev", "local.md", outcome, severityUndetermined: true, attachReports: false);
+        var outcome = new SecondOpinionOutcome("v.md", "v.json", Severity.High, 2, 1, 0, 1);
+        EmailMessage message = EmailReportBuilder.Build("sender@example.test", ["recipient@example.test"], "repo", "dev", "local.md", outcome, attachReports: false);
 
-        Assert.Contains("undetermined", message.Subject);
-        Assert.Contains("could not be determined", message.Body);
+        Assert.Contains("max confirmed severity High", message.Subject);
+        Assert.Contains("validation incomplete", message.Subject);
+        Assert.DoesNotContain("undetermined", message.Subject);
+        Assert.Contains("Model request failures: 1", message.Body);
+        Assert.Contains("Unparseable structured responses: 1", message.Body);
+        Assert.Contains("successfully parsed files only", message.Body);
         Assert.Empty(message.Attachments);
     }
 

@@ -34,27 +34,27 @@ public static class EmailReportBuilder
     /// <param name="branch">Branch under review</param>
     /// <param name="localReportPath">The raw local-review report, attached</param>
     /// <param name="outcome">The completed second-opinion result driving the subject severity and attachments</param>
-    /// <param name="severityUndetermined">True when the JSON did not parse, so the body flags that severity could not be read</param>
     /// <param name="attachReports">Whether to attach the Markdown reports</param>
-    public static EmailMessage Build(string from, IReadOnlyList<string> recipients, string repositoryUrl, string branch, string localReportPath, SecondOpinionOutcome outcome, bool severityUndetermined,
-        bool attachReports)
+    public static EmailMessage Build(string from, IReadOnlyList<string> recipients, string repositoryUrl, string branch, string localReportPath, SecondOpinionOutcome outcome, bool attachReports)
     {
         ArgumentNullException.ThrowIfNull(outcome);
 
-        string severityLabel = severityUndetermined ? "undetermined" : outcome.MaxSeverity.ToString();
-        string subject = $"Informant review: {repositoryUrl} ({branch}) - max severity {severityLabel}";
+        string completenessLabel = outcome.SeverityDetermined ? "" : " (validation incomplete)";
+        string subject = $"Informant review: {repositoryUrl} ({branch}) - max confirmed severity {outcome.MaxSeverity}{completenessLabel}";
 
         var body = new System.Text.StringBuilder();
         body.AppendLine($"Informant reviewed {repositoryUrl} on branch {branch}.");
         body.AppendLine();
         body.AppendLine($"Files validated by the second opinion: {outcome.ValidatedCount}");
-        body.AppendLine($"Files whose validation failed: {outcome.FailedCount}");
-        body.AppendLine($"Highest confirmed severity: {severityLabel}");
-        if (severityUndetermined)
+        body.AppendLine($"Model request failures: {outcome.RequestFailureCount}");
+        body.AppendLine($"Empty model responses: {outcome.EmptyResponseCount}");
+        body.AppendLine($"Unparseable structured responses: {outcome.ParseFailureCount}");
+        body.AppendLine($"Highest confirmed severity: {outcome.MaxSeverity}");
+        if (!outcome.SeverityDetermined)
         {
             body.AppendLine();
-            body.Append("Note: the second-opinion model did not return parseable structured findings, so severity could not be determined. ");
-            body.AppendLine("This notification is attempted anyway; read the attached validated report for the details.");
+            body.Append("Note: second-opinion validation was incomplete for one or more files. ");
+            body.AppendLine("The highest confirmed severity covers successfully parsed files only; read the validated report for the failure details.");
         }
 
         body.AppendLine();

@@ -116,7 +116,7 @@ public sealed class ModelClient
                     continue;
                 }
 
-                throw new ModelCallException($"Model endpoint returned {(int)response.StatusCode} {response.StatusCode}: {TextSummary.Create(body, 500)}");
+                throw new ModelCallException($"Model endpoint returned {(int)response.StatusCode} {response.StatusCode}: {TextSummary.Create(body, 500)}", response.StatusCode);
             }
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)

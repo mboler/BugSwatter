@@ -1,3 +1,5 @@
+using System.Net;
+
 namespace BugSwatter.AI;
 
 /// <summary>Recoverable model-layer failure such as an unreachable endpoint, timeout, bad status, or malformed reply</summary>
@@ -7,7 +9,16 @@ public sealed class ModelCallException : Exception
     public ModelCallException(string message) : base(message)
     { }
 
+    /// <summary>Creates the exception with the failure description and HTTP status returned by the endpoint</summary>
+    public ModelCallException(string message, HttpStatusCode statusCode) : base(message)
+    {
+        StatusCode = statusCode;
+    }
+
     /// <summary>Creates the exception with the failure description and the underlying cause</summary>
     public ModelCallException(string message, Exception innerException) : base(message, innerException)
     { }
+
+    /// <summary>HTTP status returned by the endpoint, or null when the failure occurred before an HTTP response</summary>
+    public HttpStatusCode? StatusCode { get; }
 }

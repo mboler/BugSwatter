@@ -88,16 +88,37 @@ public sealed class SecondOpinionReviewerTests : IDisposable
     }
 
     [Fact]
-    public async Task FailedCallReturnsNullInsteadOfThrowing()
+    public async Task FailedCallThrowsAfterBoundedRetry()
     {
         File.WriteAllLines(Path.Combine(_tree.Path, "Foo.cs"), ["class Foo { }"]);
         var handler = new StubHttpMessageHandler();
+        handler.Enqueue(HttpStatusCode.InternalServerError, "boom");
         handler.Enqueue(HttpStatusCode.InternalServerError, "boom");
 
         SecondOpinionReviewer reviewer = CreateReviewer(handler);
         var localResult = new FileReviewResult(new ChangedFile("Foo.cs", ChangeKind.Modified, [new LineRange(1, 1)]), FileReviewStatus.Reviewed, "findings", 1, 1, null);
 
-        Assert.Null(await reviewer.ValidateAsync(localResult));
+        ModelCallException exception = await Assert.ThrowsAsync<ModelCallException>(() => reviewer.ValidateAsync(localResult));
+
+        Assert.Contains("500", exception.Message);
+        Assert.Equal(2, handler.RequestBodies.Count);
+    }
+
+    [Fact]
+    public async Task TransientServerFailureRetriesAndReturnsRecoveredResponse()
+    {
+        File.WriteAllLines(Path.Combine(_tree.Path, "Foo.cs"), ["class Foo { }"]);
+        var handler = new StubHttpMessageHandler();
+        handler.Enqueue(HttpStatusCode.BadGateway, "temporarily unavailable");
+        handler.Enqueue(HttpStatusCode.OK, StubHttpMessageHandler.FinalResponse("VERDICT recovered"));
+
+        SecondOpinionReviewer reviewer = CreateReviewer(handler);
+        var localResult = new FileReviewResult(new ChangedFile("Foo.cs", ChangeKind.Modified, [new LineRange(1, 1)]), FileReviewStatus.Reviewed, "findings", 1, 1, null);
+
+        string? response = await reviewer.ValidateAsync(localResult);
+
+        Assert.Equal("VERDICT recovered", response);
+        Assert.Equal(2, handler.RequestBodies.Count);
     }
 
     [Fact]

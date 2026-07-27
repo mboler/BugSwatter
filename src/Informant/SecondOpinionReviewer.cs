@@ -7,6 +7,8 @@ namespace Informant;
 /// <summary>Runs the second-opinion validation for one reviewed file: the local model's findings are sent to the validating model together with the referenced code read fresh from the working tree, so every claim is checked against ground truth rather than rubber-stamped. When the endpoint supports tool-calling the model is also offered the read-only read_file_lines tool, confined to the working tree, so it can pull more of the file on demand; when it does not, validation runs from the code excerpt alone. With the tool enabled a cloud endpoint can read further lines of the working tree on its own initiative</summary>
 public sealed class SecondOpinionReviewer
 {
+    private const int MaxTransientServerRetries = 1;
+
     private readonly ModelClient _client;
     private readonly RepositoryFileReader _fileReader;
     private readonly GitRunner? _git;
@@ -56,40 +58,43 @@ public sealed class SecondOpinionReviewer
         }
     }
 
-    /// <summary>Validates one file's local findings against its code; returns the validation text, or null when the call failed (logged, never thrown)</summary>
+    /// <summary>Validates one file's local findings against its code; returns null only when the endpoint returned an empty answer and propagates model-call failures to the caller</summary>
     public async Task<string?> ValidateAsync(FileReviewResult localResult, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(localResult);
 
-        try
+        string userPrompt = await BuildUserPromptAsync(localResult, cancellationToken);
+        string? content;
+        for (int attempt = 0; ; attempt++)
         {
-            string userPrompt = await BuildUserPromptAsync(localResult, cancellationToken);
-
-            string? content;
-            if (_toolLoop is not null)
+            try
             {
-                LoopResult result = await _toolLoop.RunAsync(_systemPrompt, userPrompt, cancellationToken);
-                content = result.FinalContent;
-            }
-            else
-            {
-                var reply = await _client.CompleteAsync([new ChatMessage { Role = "system", Content = _systemPrompt }, new ChatMessage { Role = "user", Content = userPrompt }], [], cancellationToken);
-                content = reply.Content;
-            }
+                if (_toolLoop is not null)
+                {
+                    LoopResult result = await _toolLoop.RunAsync(_systemPrompt, userPrompt, cancellationToken);
+                    content = result.FinalContent;
+                }
+                else
+                {
+                    var reply = await _client.CompleteAsync([new ChatMessage { Role = "system", Content = _systemPrompt }, new ChatMessage { Role = "user", Content = userPrompt }], [], cancellationToken);
+                    content = reply.Content;
+                }
 
-            if (string.IsNullOrWhiteSpace(content))
-            {
-                Log.Warning("Second opinion for {Path} returned an empty answer", localResult.File.Path);
-                return null;
+                break;
             }
-
-            return content;
+            catch (ModelCallException ex) when (IsTransientServerFailure(ex) && attempt < MaxTransientServerRetries)
+            {
+                Log.Warning("Second opinion for {Path} received HTTP {StatusCode}; retrying once", localResult.File.Path, (int)ex.StatusCode!.Value);
+            }
         }
-        catch (ModelCallException ex)
+
+        if (string.IsNullOrWhiteSpace(content))
         {
-            Log.Warning("Second opinion for {Path} failed: {Reason}", localResult.File.Path, ex.Message);
+            Log.Warning("Second opinion for {Path} returned an empty answer", localResult.File.Path);
             return null;
         }
+
+        return content;
     }
 
     /// <summary>Builds the numbered code excerpt: the whole file when it fits the budget, otherwise the changed ranges widened by <paramref name="contextLines"/> with elision markers between windows</summary>
@@ -191,6 +196,8 @@ public sealed class SecondOpinionReviewer
             builder.Append(marker.AsSpan(0, Math.Min(marker.Length, remaining)));
         }
     }
+
+    private static bool IsTransientServerFailure(ModelCallException exception) => exception.StatusCode is { } statusCode && (int)statusCode >= 500;
 
     private async Task<string> BuildUserPromptAsync(FileReviewResult localResult, CancellationToken cancellationToken)
     {

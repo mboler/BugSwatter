@@ -361,8 +361,6 @@ internal static class Program
         string provider = email.Provider.ToString();
         try
         {
-            // Fail open: when the second opinion produced no parseable severity, send anyway rather than risk dropping a real finding
-            bool severityUndetermined = !outcome.SeverityDetermined;
             if (!email.ShouldSend(outcome.MaxSeverity, outcome.SeverityDetermined))
             {
                 Log.Information("Email skipped: max confirmed severity {Severity} is below the '{Threshold}' send threshold", outcome.MaxSeverity, email.SendOn);
@@ -378,7 +376,7 @@ internal static class Program
                 return;
             }
 
-            EmailMessage message = EmailReportBuilder.Build(email.From, email.To, config.RepositoryUrl, config.Branch, localReportPath, outcome, severityUndetermined, email.AttachReports);
+            EmailMessage message = EmailReportBuilder.Build(email.From, email.To, config.RepositoryUrl, config.Branch, localReportPath, outcome, email.AttachReports);
             EmailSendReceipt receipt = await sender.SendAsync(message);
             string messageId = string.IsNullOrWhiteSpace(receipt.MessageId) ? "" : $"; operation/message ID: {receipt.MessageId}";
 
@@ -502,21 +500,42 @@ internal static class Program
                 Log.Information("Second opinion for {Path} ({Position}/{Count})", result.File.Path, index + 1, toValidate.Count);
                 progress.ReportFile("Second-opinion review", selectedModel.ModelName, selection.ProfileName, result.File.Path, index + 1, toValidate.Count, selectedModel.Pricing);
 
-                string? validation = await validator.ValidateAsync(result);
-                if (validation is null)
+                string? validation;
+                try
+                {
+                    validation = await validator.ValidateAsync(result);
+                }
+                catch (ModelCallException ex)
                 {
                     failed++;
-                    writer.AppendFileSection(result.File.Path, result.File.ChangedRanges, null);
-                    jsonReport.Add(result.File.Path, result.File.ChangedRanges, null);
+                    Log.Warning("Second opinion for {Path} failed after the bounded retry: {Reason}", result.File.Path, ex.Message);
+                    writer.AppendFailureSection(result.File.Path, result.File.ChangedRanges, SecondOpinionValidationStatus.RequestFailed, ex.Message);
+                    jsonReport.AddFailure(result.File.Path, result.File.ChangedRanges, SecondOpinionValidationStatus.RequestFailed, ex.Message);
                     continue;
                 }
 
-                validated++;
+                if (validation is null)
+                {
+                    failed++;
+                    const string reason = "The model returned an empty response";
+                    writer.AppendFailureSection(result.File.Path, result.File.ChangedRanges, SecondOpinionValidationStatus.EmptyResponse, reason);
+                    jsonReport.AddFailure(result.File.Path, result.File.ChangedRanges, SecondOpinionValidationStatus.EmptyResponse, reason);
+                    continue;
+                }
 
-                // Pull the structured verdict for the companion json and the email gate; on failure the prose is kept intact
                 bool parseOk = SecondOpinionParser.TryParse(validation, out ParsedValidation? parsed, out string prose);
-                writer.AppendFileSection(result.File.Path, result.File.ChangedRanges, prose);
-                jsonReport.Add(result.File.Path, result.File.ChangedRanges, parseOk ? parsed : null);
+                if (parseOk)
+                {
+                    validated++;
+                    writer.AppendFileSection(result.File.Path, result.File.ChangedRanges, prose);
+                    jsonReport.AddValidated(result.File.Path, result.File.ChangedRanges, parsed!);
+                    continue;
+                }
+
+                failed++;
+                const string parseReason = "The model response did not contain parseable structured findings";
+                writer.AppendFailureSection(result.File.Path, result.File.ChangedRanges, SecondOpinionValidationStatus.ParseFailed, parseReason, prose);
+                jsonReport.AddFailure(result.File.Path, result.File.ChangedRanges, SecondOpinionValidationStatus.ParseFailed, parseReason);
             }
 
             writer.Finalize(validated, failed, stopwatch.Elapsed);
@@ -524,7 +543,8 @@ internal static class Program
             Log.Information("Second opinion complete: {Validated} validated, {Failed} failed, max confirmed severity {Severity}, reports at {Report} and {Json}", validated, failed,
                 jsonReport.MaxSeverity, writer.ReportPath, jsonPath);
 
-            return new SecondOpinionOutcome(writer.ReportPath, jsonPath, jsonReport.MaxSeverity, jsonReport.SeverityDetermined, validated, failed);
+            return new SecondOpinionOutcome(writer.ReportPath, jsonPath, jsonReport.MaxSeverity, jsonReport.ValidatedCount, jsonReport.RequestFailureCount, jsonReport.EmptyResponseCount,
+                jsonReport.ParseFailureCount);
         }
         catch (ModelCallException ex)
         {

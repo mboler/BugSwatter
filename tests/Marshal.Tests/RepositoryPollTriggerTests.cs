@@ -176,12 +176,13 @@ public sealed class RepositoryPollTriggerTests : IDisposable
         await WaitForAsync(() => clock.TimerCount == 1);
 
         clock.Advance(TimeSpan.FromMinutes(4));
-        await Task.Yield();
+        await WaitForAsync(() => clock.TimerCount >= 2);
         Assert.Equal(1, reader.CallCount);
 
+        int timerCountBeforeOccurrence = clock.TimerCount;
         clock.Advance(TimeSpan.FromMinutes(1));
         await WaitForAsync(() => reader.CallCount == 2);
-        await WaitForAsync(() => clock.TimerCount >= 3);
+        await WaitForAsync(() => clock.TimerCount > timerCountBeforeOccurrence);
 
         int timerCountBeforeRollback = clock.TimerCount;
         clock.AdjustTime(new DateTimeOffset(2026, 7, 12, 12, 4, 0, TimeSpan.Zero));

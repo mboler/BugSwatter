@@ -31,6 +31,13 @@ internal static class Program
                     return InitCommand.Run(Directory.GetCurrentDirectory());
             }
 
+            using MachineWideProcessLock? reviewLock = AcquireReviewLock(arguments.Command);
+            if (RequiresReviewLock(arguments.Command) && reviewLock is null)
+            {
+                await Console.Error.WriteLineAsync("Informant cannot start because another BugSwatter review or model verification is already running on this machine. Wait for the active operation to finish before starting another.");
+                return BugSwatterProcessCoordination.AlreadyRunningExitCode;
+            }
+
             if (arguments.Command == "run")
             {
                 progress = new ReviewProgressReporter(arguments.ProgressOutput, Console.Out);
@@ -88,6 +95,12 @@ internal static class Program
             }
         }
     }
+
+    private static MachineWideProcessLock? AcquireReviewLock(string command) => RequiresReviewLock(command)
+        ? MachineWideProcessLock.TryAcquire(BugSwatterProcessCoordination.InformantReviewLockName)
+        : null;
+
+    private static bool RequiresReviewLock(string command) => command is "run" or "verify";
 
     private static (InformantConfig Config, string ConfigPath) LoadConfig(CommandLineArguments arguments)
     {

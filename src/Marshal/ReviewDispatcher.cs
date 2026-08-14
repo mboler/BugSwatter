@@ -63,8 +63,16 @@ public sealed class ReviewDispatcher : BackgroundService
             try
             {
                 var outcome = await _runner.RunAsync(request.Job, stoppingToken);
-                LogOutcome(request, outcome);
-                RecordHistory(request, startedUtc, outcome);
+                if (outcome.AlreadyRunning)
+                {
+                    DeferForActiveReview(request, stoppingToken);
+                }
+                else
+                {
+                    _backoff.Reset(ReviewBusyKey(request.Job));
+                    LogOutcome(request, outcome);
+                    RecordHistory(request, startedUtc, outcome);
+                }
             }
             catch (OperationCanceledException)
             {
@@ -119,12 +127,21 @@ public sealed class ReviewDispatcher : BackgroundService
         TimeSpan delay = _backoff.NextDelay(key);
         Log.Warning("All model endpoints for {Job} are unreachable ({Endpoints}); re-queueing in {Delay} (attempt {Attempt})", request.Job.Name, string.Join(", ", endpoints), delay,
             _backoff.AttemptCount(key));
-        ScheduleRetry(request.Job, delay, stoppingToken);
+        ScheduleRetry(request.Job, delay, "endpoint back-off retry", stoppingToken);
 
         return false;
     }
 
-    private void ScheduleRetry(ReviewJobConfig job, TimeSpan delay, CancellationToken stoppingToken)
+    private void DeferForActiveReview(ReviewRequest request, CancellationToken stoppingToken)
+    {
+        string key = ReviewBusyKey(request.Job);
+        TimeSpan delay = _backoff.NextDelay(key);
+        Log.Warning("Review start deferred for {Job}: another machine-wide review operation is active; re-queueing in {Delay} (attempt {Attempt})", request.Job.Name, delay,
+            _backoff.AttemptCount(key));
+        ScheduleRetry(request.Job, delay, "active-review back-off retry", stoppingToken);
+    }
+
+    private void ScheduleRetry(ReviewJobConfig job, TimeSpan delay, string reason, CancellationToken stoppingToken)
     {
         // Non-blocking re-enqueue: the dispatcher stays free to service other repositories during one endpoint's outage,
         // and queue coalescing means a burst of retries for the same repository collapses to one
@@ -133,7 +150,7 @@ public sealed class ReviewDispatcher : BackgroundService
             try
             {
                 await Task.Delay(delay, stoppingToken);
-                _queue.Enqueue(job, "endpoint back-off retry");
+                _queue.Enqueue(job, reason);
             }
             catch (OperationCanceledException)
             {
@@ -141,6 +158,8 @@ public sealed class ReviewDispatcher : BackgroundService
             }
         }, CancellationToken.None);
     }
+
+    private static string ReviewBusyKey(ReviewJobConfig job) => $"review-busy:{ReviewQueue.RepositoryKey(job)}";
 
     private void RecordHistory(ReviewRequest request, DateTimeOffset startedUtc, ReviewRunOutcome? outcome, string? abortReason = null)
     {

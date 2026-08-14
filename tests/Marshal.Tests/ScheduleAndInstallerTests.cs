@@ -43,6 +43,7 @@ public sealed class ScheduleAndInstallerTests
         string unit = ServiceInstaller.BuildSystemdUnit("/opt/marshal/Marshal", "/opt/marshal/marshal.json");
         Assert.Contains("ExecStart=\"/opt/marshal/Marshal\" run --config \"/opt/marshal/marshal.json\"", unit);
         Assert.Contains("Restart=on-failure", unit);
+        Assert.Contains($"RestartPreventExitStatus={BugSwatter.Common.BugSwatterProcessCoordination.AlreadyRunningExitCode}", unit);
         Assert.Contains("WantedBy=multi-user.target", unit);
         Assert.Contains("Type=notify", unit);
         Assert.DoesNotContain("User=", unit);

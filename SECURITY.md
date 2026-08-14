@@ -45,6 +45,7 @@ BugSwatter reduces model privileges, but it is not a security boundary for an un
 - Azure DevOps webhook Basic credentials are exposed to anyone who can observe an unprotected HTTP path
 - Repository polling uses outbound Git and avoids opening an inbound port, but still relies on the service account's Git credentials
 - LocalSystem on Windows and root on Linux give Marshal extensive machine privileges. A dedicated least-privilege account limits impact
+- Machine-wide process locks prevent accidental overlapping Marshal and Informant operations but are not protection from a hostile local administrator. Named mutexes on Unix also assume trusted local users.
 - Manifest, coverage, trace, report, and log artifacts can reveal repository URLs, local paths, file names, hashes, model names, and timing even when a particular artifact contains no source bodies
 
 The first public release intentionally does not provide dashboard authentication, authorization, TLS termination, certificate management, or internet-facing hardening. Do not expose Marshal directly to the public internet. If confidentiality is required across network segments, keep Marshal behind a trusted VPN or use a separately managed authenticated TLS reverse proxy.

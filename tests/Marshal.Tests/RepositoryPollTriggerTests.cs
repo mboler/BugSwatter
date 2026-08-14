@@ -160,8 +160,9 @@ public sealed class RepositoryPollTriggerTests : IDisposable
         Assert.Equal(0, reader.CallCount);
     }
 
+    /// <summary>Verifies startup polling and protects an occurrence from a backward clock adjustment</summary>
     [Fact]
-    public async Task FakeClockFiresStartupAndFiveMinuteOccurrencesOnly()
+    public async Task FakeClockFiresStartupAndDoesNotRepeatAnOccurrenceAfterClockRollback()
     {
         ReviewJobConfig job = CreateJob(BaselineSha, "0 */5 * * * *");
         var queue = new ReviewQueue();
@@ -180,9 +181,15 @@ public sealed class RepositoryPollTriggerTests : IDisposable
 
         clock.Advance(TimeSpan.FromMinutes(1));
         await WaitForAsync(() => reader.CallCount == 2);
-        await WaitForAsync(() => clock.TimerCount == 2);
+        await WaitForAsync(() => clock.TimerCount >= 3);
 
-        clock.Advance(TimeSpan.FromMinutes(10));
+        int timerCountBeforeRollback = clock.TimerCount;
+        clock.AdjustTime(new DateTimeOffset(2026, 7, 12, 12, 4, 0, TimeSpan.Zero));
+        clock.Advance(TimeSpan.FromMinutes(1));
+        await WaitForAsync(() => clock.TimerCount > timerCountBeforeRollback);
+        Assert.Equal(2, reader.CallCount);
+
+        clock.Advance(TimeSpan.FromMinutes(5));
         await WaitForAsync(() => reader.CallCount == 3);
 
         await trigger.StopAsync(CancellationToken.None);

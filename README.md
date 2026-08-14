@@ -53,6 +53,7 @@ The first run uses the full tracked tree as its candidate universe. The default 
 - **Swappable LM Studio models:** use `modelName` `*` to select exactly one already-loaded model without editing job configuration
 - **Multiple triggers:** use daily schedules, outbound repository polling, filesystem watching, GitHub webhooks, or Azure DevOps service hooks
 - **Unattended operation:** run Marshal in the foreground, as a Windows service, or as a systemd service
+- **Machine-wide exclusivity:** allow one Marshal host and one Informant review or verification operation per machine, including across service accounts and interactive sessions
 - **Live review status and cost:** the dashboard separates whole-run, current phase/model, local, and frontier usage, and estimates frontier cost when you configure current per-million-token rates
 - **No installer or bundled runtime:** GitHub Releases provide framework-dependent Windows and Linux archives for machines with .NET 10 installed
 

@@ -138,12 +138,19 @@ public sealed class RepositoryPollTrigger : BackgroundService
         Log.Information("Repository polling enabled for {Job} on UTC schedule {Schedule}; checking once at startup", job.Name, schedule.Expression);
         await PollOnceAsync(job, stoppingToken);
 
+        DateTimeOffset? lastOccurrence = null;
         while (!stoppingToken.IsCancellationRequested)
         {
             DateTimeOffset now = _timeProvider.GetUtcNow();
             DateTimeOffset next = schedule.GetNextOccurrence(now);
-            await Task.Delay(next - now, _timeProvider, stoppingToken);
+            if (lastOccurrence is { } previous && next <= previous)
+            {
+                next = schedule.GetNextOccurrence(previous);
+            }
+
+            await ClockAwareDelay.UntilUtcAsync(_timeProvider, next, stoppingToken);
             await PollOnceAsync(job, stoppingToken);
+            lastOccurrence = next;
         }
     }
 

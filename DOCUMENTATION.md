@@ -461,6 +461,10 @@ Marshal is an optional long-running dispatcher. It reviews no code itself. Trigg
 
 All jobs share one bounded in-memory queue with a single consumer. Duplicate work for the same Informant configuration coalesces. A trigger received while that repository is running creates at most one rerun. The queue holds up to 128 entries and is not persisted across restarts.
 
+`Marshal run` holds a machine-wide lock across operating-system users and login sessions. A second Marshal process exits with code `75` without opening the dashboard, starting triggers, or launching Informant. Stop the existing Marshal process before starting another.
+
+`Informant run` and `Informant verify` hold a separate machine-wide review lock. This prevents a manual Informant invocation, a surviving child process, or another installation from overlapping model work with the active review. A direct conflicting invocation exits with code `75`. When a supervised Informant reports this contention, Marshal does not record a failed review. It requeues the job with exponential backoff.
+
 Each Informant child has a configurable timeout. Timeout or Marshal shutdown kills the complete Informant process tree where the operating system permits it. Before starting a job, Marshal probes the preferred and fallback model endpoints. It launches Informant when any one answers and lets Informant make the final verified selection. When none answer, the job uses per-repository exponential backoff from 30 seconds to 15 minutes.
 
 ## Marshal configuration
@@ -533,6 +537,8 @@ Triggers can be combined on one job. Queue coalescing prevents simultaneous dupl
 
 `schedule` contains local wall-clock times. The example `"schedule": ["03:00", "15:30"]` runs daily at 3:00 a.m. and 3:30 p.m. in the machine's local time zone. Daylight-saving transitions therefore affect these triggers as ordinary local times.
 
+Marshal rechecks wall time before firing. A backward clock adjustment cannot repeat a daily occurrence during the same Marshal process lifetime. If the machine sleeps past the configured time, or a forward clock adjustment or daylight-saving transition passes it, Marshal fires that occurrence once after it resumes and skips older missed daily occurrences. Duplicate entries for the same Informant configuration and local time are ignored. This occurrence state is in memory and is not preserved across a Marshal restart.
+
 ### Repository polling
 
 Polling is the simplest choice when Marshal cannot accept inbound internet connections. Marshal runs `git ls-remote` against the exact configured branch and compares its remote tip with Informant's last completed-review baseline. It does not fetch or modify the working tree during the poll. A difference enqueues Informant, which performs the normal protected refresh and review.
@@ -557,6 +563,8 @@ No schedule may run more often than once per minute. In a six-field expression, 
 | `7.00:00:00` | Every seven days measured from startup |
 
 NCRONTAB day-of-week values use `0` for Sunday through `6` for Saturday. Prefer NCRONTAB for wall-clock UTC schedules and `TimeSpan` for elapsed intervals.
+
+Polling also rechecks UTC wall time after each timer wakeup and remembers the last occurrence during the process lifetime. A backward clock adjustment does not repeat the same polling occurrence.
 
 Polling uses the Git credentials of the Marshal service account. A public repository normally needs no secret. Private GitHub and Azure DevOps repositories require credentials that work non-interactively for that same account.
 
@@ -634,6 +642,8 @@ sc.exe start Marshal
 
 Windows registers the internal service name as `Marshal`, displays it as **BugSwatter Marshal Service**, and describes it as **Watches repositories and dispatches Informant code reviews**.
 
+If another Marshal instance already owns the machine-wide lock, the new service process exits with code `75` and leaves the existing instance unchanged.
+
 Without `--service-user`, the installed service runs as LocalSystem. LocalSystem has extensive local privileges. A defect, malicious repository input, compromised dependency, or exposed dashboard would therefore have a larger impact. It also uses the machine account for network access and does not inherit your interactive Git credentials. Use LocalSystem only after accepting those risks and restricting the machine, configuration, and network listener.
 
 For a normal custom account, supply its password through an environment or file reference:
@@ -670,7 +680,7 @@ sudo systemctl start marshal
 sudo systemctl status marshal
 ```
 
-The installer writes `/etc/systemd/system/marshal.service`, runs `systemctl daemon-reload`, and enables the unit for startup. It quotes executable and configuration paths, including spaces. `--service-user` writes `User=`. Linux installation does not accept `--service-password`; configure account access and Git credentials through normal Linux mechanisms.
+The installer writes `/etc/systemd/system/marshal.service`, runs `systemctl daemon-reload`, and enables the unit for startup. It quotes executable and configuration paths, including spaces. `--service-user` writes `User=`. The unit does not restart after duplicate-instance exit code `75`, which avoids a ten-second restart loop while another Marshal process owns the lock. Linux installation does not accept `--service-password`; configure account access and Git credentials through normal Linux mechanisms.
 
 Omitting `--service-user` leaves systemd's root default. Root has the same broad-impact concerns as LocalSystem and is not the recommended default for an exposed or multi-purpose host.
 

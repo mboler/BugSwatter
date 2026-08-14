@@ -14,6 +14,9 @@ public sealed record ReviewRunOutcome(int? ExitCode, TimeSpan Duration, bool Tim
 {
     /// <summary>True when the child ran to completion and reported success</summary>
     public bool Succeeded => !TimedOut && Error is null && ExitCode == 0;
+
+    /// <summary>True when Informant declined to start because another machine-wide review operation was active</summary>
+    public bool AlreadyRunning => !TimedOut && Error is null && ExitCode == BugSwatterProcessCoordination.AlreadyRunningExitCode;
 }
 
 /// <summary>Launches and supervises one review; stubbed in tests so no real review runs</summary>
@@ -28,6 +31,7 @@ public sealed class InformantProcessRunner : IInformantRunner
 {
     private readonly MarshalConfig _config;
     private readonly CurrentReviewStatusStore _current;
+    private int _activeRun;
 
     /// <summary>Creates a runner bound to the Marshal config</summary>
     public InformantProcessRunner(MarshalConfig config, CurrentReviewStatusStore current)
@@ -45,11 +49,17 @@ public sealed class InformantProcessRunner : IInformantRunner
         var stopwatch = Stopwatch.StartNew();
         DateTime startedUtc = DateTime.UtcNow;
 
+        if (Interlocked.CompareExchange(ref _activeRun, 1, 0) != 0)
+        {
+            Log.Warning("Informant child launch deferred for {Job}: another child review is already active in this Marshal instance", job.Name);
+            return new ReviewRunOutcome(BugSwatterProcessCoordination.AlreadyRunningExitCode, stopwatch.Elapsed, false, null, null);
+        }
+
         try
         {
             ProcessRunResult result = await RunProcessAsync(_config.InformantExecutable, ["--config", job.InformantConfigPath, "--progress", "json"],
                 TimeSpan.FromMinutes(_config.PerRunTimeoutMinutes), cancellationToken, line => ApplyProgressLine(job.Name, line));
-            string? reportPath = result.TimedOut ? null : ResolveReportPath(result.StandardOutput, job.InformantConfigPath, startedUtc);
+            string? reportPath = result.ExitCode == 0 && !result.TimedOut ? ResolveReportPath(result.StandardOutput, job.InformantConfigPath, startedUtc) : null;
             
             return new ReviewRunOutcome(result.ExitCode, stopwatch.Elapsed, result.TimedOut, reportPath, null);
         }
@@ -62,6 +72,10 @@ public sealed class InformantProcessRunner : IInformantRunner
             // catch-all: supervision must survive any child launch failure and report it as a failed run, never kill the dispatcher
             Log.Error(ex, "Failed to launch Informant for job {Job}", job.Name);
             return new ReviewRunOutcome(null, stopwatch.Elapsed, false, null, ex.Message);
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _activeRun, 0);
         }
     }
 
@@ -104,7 +118,7 @@ public sealed class InformantProcessRunner : IInformantRunner
 
         string standardError = (await stderrTask).Trim();
         string standardOutput = await stdoutTask;
-        if (process.ExitCode != 0 && standardError.Length > 0)
+        if (process.ExitCode != 0 && process.ExitCode != BugSwatterProcessCoordination.AlreadyRunningExitCode && standardError.Length > 0)
         {
             Log.Warning("Child {FileName} exited {ExitCode} with stderr: {StdErr}", fileName, process.ExitCode, TextSummary.Create(standardError, 1000));
         }

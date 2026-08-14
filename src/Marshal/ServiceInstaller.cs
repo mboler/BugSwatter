@@ -77,6 +77,7 @@ public static class ServiceInstaller
         lines.Add($"ExecStart={QuoteSystemdArgument(executable)} run --config {QuoteSystemdArgument(configPath)}");
         lines.Add("Restart=on-failure");
         lines.Add("RestartSec=10");
+        lines.Add($"RestartPreventExitStatus={BugSwatterProcessCoordination.AlreadyRunningExitCode}");
         lines.Add("");
         lines.Add("[Install]");
         lines.Add("WantedBy=multi-user.target");

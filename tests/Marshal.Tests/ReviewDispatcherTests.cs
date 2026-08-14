@@ -119,6 +119,23 @@ internal sealed class ProgressRunner(CurrentReviewStatusStore current) : IInform
     }
 }
 
+/// <summary>Runner that reports one active-review collision before succeeding</summary>
+internal sealed class BusyThenSuccessfulRunner : IInformantRunner
+{
+    private int _calls;
+
+    /// <summary>Number of attempted runs</summary>
+    public int Calls => Volatile.Read(ref _calls);
+
+    /// <inheritdoc />
+    public Task<ReviewRunOutcome> RunAsync(ReviewJobConfig job, CancellationToken cancellationToken)
+    {
+        int call = Interlocked.Increment(ref _calls);
+        int exitCode = call == 1 ? BugSwatterProcessCoordination.AlreadyRunningExitCode : 0;
+        return Task.FromResult(new ReviewRunOutcome(exitCode, TimeSpan.FromMilliseconds(1), false, null, null));
+    }
+}
+
 public sealed class ReviewDispatcherTests
 {
     [Fact]
@@ -285,6 +302,28 @@ public sealed class ReviewDispatcherTests
 
         Assert.Equal(1, runner.TotalRuns);
         Assert.Equal(2, checker.Calls);
+    }
+
+    /// <summary>Verifies that machine-wide contention is retried without creating a failed history entry</summary>
+    [Fact]
+    public async Task ActiveMachineWideReviewDefersWithoutRecordingAFailure()
+    {
+        using var directory = new TempDirectory();
+        var queue = new ReviewQueue();
+        var runner = new BusyThenSuccessfulRunner();
+        var history = new RunHistoryStore(Path.Combine(directory.Path, "history.jsonl"));
+        var dispatcher = new ReviewDispatcher(queue, runner, new StubHealthChecker(), new BackoffTracker(TimeSpan.FromMilliseconds(40), TimeSpan.FromMilliseconds(200)), history,
+            new CurrentReviewStatusStore());
+        var job = new ReviewJobConfig { Name = "busy", InformantConfigPath = Path.Combine(directory.Path, "informant.json") };
+
+        queue.Enqueue(job, "initial");
+        await dispatcher.StartAsync(CancellationToken.None);
+        await WaitUntilAsync(() => runner.Calls == 2, TimeSpan.FromSeconds(10));
+        await dispatcher.StopAsync(CancellationToken.None);
+
+        HistoryEntry entry = Assert.Single(history.ReadRecent(10));
+        Assert.Equal("completed", entry.Outcome);
+        Assert.Equal(0, entry.ExitCode);
     }
 
     private static ReviewDispatcher CreateDispatcher(ReviewQueue queue, IInformantRunner runner, IEndpointHealthChecker checker, BackoffTracker? backoff = null, CurrentReviewStatusStore? current = null) =>

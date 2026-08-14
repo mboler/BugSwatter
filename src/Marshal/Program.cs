@@ -55,6 +55,13 @@ internal static class Program
 
         try
         {
+            using MachineWideProcessLock? instanceLock = MachineWideProcessLock.TryAcquire(BugSwatterProcessCoordination.MarshalInstanceLockName);
+            if (instanceLock is null)
+            {
+                await Console.Error.WriteLineAsync("Marshal cannot start because another BugSwatter Marshal instance is already running on this machine. Stop the existing instance before starting another.");
+                return BugSwatterProcessCoordination.AlreadyRunningExitCode;
+            }
+
             string configPath = Path.GetFullPath(commandLine.RequireConfigPath());
             var config = MarshalConfig.Load(configPath);
             _consoleLogging = LoggingSetup.Initialize(config.LogLevel, config.LogFilePath, config.ConsoleLogging);

@@ -44,7 +44,9 @@ Informant does use controlled Git commands to maintain its dedicated review clon
 
 Informant can run by itself for one review. Marshal adds schedules, outbound repository polling, filesystem triggers, webhooks, a trusted-network dashboard, report retention, and email delivery. Primary endpoints can have ordered fallbacks, provided the models are already running. BugSwatter does not load models or manage GPU placement.
 
-A changed-review baseline advances only after the primary review completes successfully. Reports preserve coverage and failure information, and the dashboard can show the current phase, file, elapsed time, model request state, and provider-reported token use. The intent is straightforward: make unattended operation understandable when it works and diagnosable when it does not.
+A changed-review baseline advances only after the primary review completes successfully. Stable structural finding fingerprints let a maintainer accept current findings as known or suppress a specific source location with a required justification. Later reports separate new, known, and suppressed findings instead of turning an unchanged concern into nightly noise.
+
+Reports preserve coverage and failure information, and the dashboard can show the current phase, file, elapsed time, model request state, and provider-reported token use. The intent is straightforward: make unattended operation understandable when it works and diagnosable when it does not.
 
 ## The tradeoffs are real
 

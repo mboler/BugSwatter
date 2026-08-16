@@ -70,7 +70,7 @@ Download the Windows archive and `SHA256SUMS.txt` from the same GitHub Release. 
 The Windows executables are not code-signed, so Windows may identify them as coming from an unknown publisher or display a SmartScreen warning. Download releases only from this GitHub repository, and proceed only after the archive's checksum matches `SHA256SUMS.txt`.
 
 ```powershell
-$version = "1.0.0"
+$version = "1.2.0"
 Get-FileHash ".\BugSwatter-$version-win-x64.zip" -Algorithm SHA256
 Expand-Archive ".\BugSwatter-$version-win-x64.zip" -DestinationPath C:\BugSwatter\releases
 Move-Item "C:\BugSwatter\releases\BugSwatter-$version-win-x64" C:\BugSwatter\bin
@@ -86,7 +86,7 @@ Install Git and your distribution's .NET 10 and ASP.NET Core 10 runtime packages
 After comparing the archive's SHA-256 value with `SHA256SUMS.txt`:
 
 ```bash
-VERSION=1.0.0
+VERSION=1.2.0
 sudo mkdir -p /opt/bugswatter
 sudo tar -xzf "BugSwatter-${VERSION}-linux-x64.tar.gz" -C /opt/bugswatter --strip-components=1
 sudo chmod 755 /opt/bugswatter/Informant /opt/bugswatter/Marshal
@@ -227,7 +227,7 @@ Each validated unit becomes one or more bounded sequential model conversations c
 
 Adaptive reports never claim that every file was reviewed. They name deferred paths and distinguish deep review from mandatory changed-content coverage. Use `adaptive` for very large first runs or repositories where bounded sampling is acceptable. Use `exhaustive` when complete required-candidate coverage matters more than time or model cost.
 
-`primaryReviewBudgetMinutes` limits model planning and clustered primary review after the primary endpoint has passed verification. When the deadline is reached, Informant stops starting deep-review units, records the remaining paths as budget deferrals, writes the coverage artifacts, and finishes the run normally. Mandatory changed-content work must still complete before an adaptive changed-review baseline advances. Exhaustive review never advances its baseline after a budget deferral.
+`primaryReviewBudgetMinutes` limits model planning and clustered primary review after the primary endpoint has passed verification. When the deadline is reached, Informant stops starting deep-review units, records the remaining paths as budget deferrals, writes the coverage artifacts, and finishes the run normally. Mandatory changed-content work must still complete before an adaptive changed-review baseline advances. Exhaustive review never advances its baseline after a budget deferral. The starter configuration uses 180 minutes; an existing configuration that omits the field has no primary-pass limit.
 
 Adaptive deferrals are stored as metadata-only coverage debt. `adaptiveCarryoverCount` adds the oldest still-current paths to later runs without replacing current changed work. An entry is discarded when its tracked path disappears or its Git object changes, and completed deep review removes it. Set the count to `0` to record debt without scheduling carryover. The starter configuration uses `25`.
 
@@ -411,7 +411,7 @@ The optional second opinion sends the primary findings and relevant code excerpt
 
 This simple form preserves the original behavior: every run uses the one configured validator. `reviewSkippedFiles` can include failed or deterministically excluded primary work, but it does not turn completely deferred adaptive paths into an unbounded second-model sweep. A deferred path is sent only when its mandatory changed-content review produced findings that need validation.
 
-`allReviewed` preserves pre-1.2 behavior. `candidateOnly` sends only primary results with parseable candidate findings. `candidatePlusSample` adds as many as `maxCleanFiles` clean primary results, selected deterministically by change risk and path, so the validator can challenge a bounded sample of apparent negatives. Candidate results are processed before the clean sample and ordered by severity.
+`allReviewed` preserves pre-1.2 behavior. `candidateOnly` sends only primary results with parseable candidate findings. `candidatePlusSample` adds as many as `maxCleanFiles` clean primary results, selected deterministically by change risk and path, so the validator can challenge a bounded sample of apparent negatives. Candidate results are processed before the clean sample and ordered by severity. The starter example uses `candidatePlusSample`, 10 clean files, and a 60-minute second-opinion budget.
 
 When `reviewBudgetMinutes` expires, Informant stops starting validator requests and records every remaining selected result as budget-deferred in both validation reports. The validated severity is then incomplete, email says validation was incomplete, and the primary report and baseline remain intact. A scope that selects no files writes a completed zero-call validation report, which keeps always-send email behavior deterministic.
 
@@ -819,7 +819,7 @@ Build local framework-dependent release archives with:
 
 The Linux archive should be produced on Linux so executable permission bits are set correctly. The script reads the version from `Directory.Build.props`, refuses to overwrite an existing archive, and can validate an expected `v<version>` tag.
 
-GitHub Actions runs build, test, dependency policy, vulnerability reporting, and package smoke tests on Windows and Linux for pushes and pull requests. Pushing a tag such as `v1.0.0` first runs the same CI, builds both archives, writes `SHA256SUMS.txt`, and creates a GitHub Release. The tag must exactly match the version in `Directory.Build.props`. Release packages remain framework-dependent and do not bundle .NET.
+GitHub Actions runs build, test, dependency policy, vulnerability reporting, and package smoke tests on Windows and Linux for pushes and pull requests. Pushing a tag such as `v1.2.0` first runs the same CI, builds both archives, writes `SHA256SUMS.txt`, and creates a GitHub Release. The tag must exactly match the version in `Directory.Build.props`. Release packages remain framework-dependent and do not bundle .NET.
 
 Opt-in integration tests are skipped in ordinary CI. Live model tests require `INFORMANT_IT=1`, `INFORMANT_IT_ENDPOINT`, and `INFORMANT_IT_MODEL`; optional second-opinion coverage also uses `INFORMANT_IT_SO_ENDPOINT` and `INFORMANT_IT_SO_MODEL`. The ACS email test uses `BUGSWATTER_EMAIL_IT=1`, `BUGSWATTER_EMAIL_IT_ACS_CONNECTION`, `BUGSWATTER_EMAIL_IT_FROM`, and `BUGSWATTER_EMAIL_IT_TO`. Never commit those values.
 

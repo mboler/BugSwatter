@@ -52,6 +52,7 @@ The first run uses the full tracked tree as its candidate universe. The default 
 - **Repository-aware clusters:** group related files and unchanged supporting context without assuming a language or framework
 - **Honest coverage:** choose exhaustive review or adaptive review with explicit deep-reviewed, changed-content, deferred, excluded, failed, and partial outcomes
 - **Bounded unattended work:** cap primary and second-opinion pass time without losing completed report sections, and carry selected adaptive coverage debt into later runs
+- **Finding memory:** assign structural fingerprints, separate new findings from accepted ones, and honor justified inline suppressions without trusting model wording as identity
 - **Second opinion:** use one validator for every run, or route each complete run to one of as many as three local or cloud model profiles according to its highest primary candidate severity
 - **No agentic harness:** models can request bounded, read-only line ranges through Informant's single application-owned tool, but cannot write files, execute commands, or invoke Git; no MCP server or adapter is involved
 - **Swappable LM Studio models:** use `modelName` `*` to select exactly one already-loaded model without editing job configuration

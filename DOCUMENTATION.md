@@ -179,6 +179,7 @@ JSON comments and trailing commas are supported.
 | `reportRetentionDays` | Days to keep managed report artifacts; `-1` keeps them forever | `31` |
 | `stateFilePath` | Completed-review baseline state | `informant.state.json` |
 | `coverageStateFilePath` | Persistent adaptive deep-review debt | `informant.coverage-state.json` |
+| `findingStateFilePath` | Persistent accepted-finding and suppression ledger | `informant.findings.json` |
 | `reviewPrompt` | Inline primary review prompt | null |
 | `reviewPromptFile` | Prompt file used when inline text is absent | built-in prompt, or `review-prompt.txt` from `init` |
 | `promptIncludeFiles` | Root-level Markdown globs or absolute guidance-file paths appended to the prompt | empty; starter config uses `AGENTS.md` |
@@ -301,6 +302,7 @@ A review with work to do writes:
 - `Informant-Changes-<timestamp>.json`
 - `Informant-Manifest-<timestamp>.json`
 - `Informant-Coverage-<timestamp>.json`
+- `Informant-Findings-<timestamp>.json`
 - `Informant-Trace-<timestamp>.jsonl`
 - `Informant-Report-<timestamp>-validated.md` when the second opinion completes
 - `Informant-Report-<timestamp>-validated.json` when the second opinion completes
@@ -317,7 +319,7 @@ In `changed` mode, the first run uses the full tracked tree as its candidate uni
 
 When the tip already equals the baseline, Informant writes no report artifacts. If rewritten history makes the baseline unreachable, Informant performs a full review instead of remaining stuck.
 
-At the beginning of each run, retention deletes top-level managed artifacts whose last-write time is older than `reportRetentionDays`. The default is 31 days. Set `-1` to keep reports forever. Retention recognizes only exact Informant report, change-list, manifest, coverage, and trace filename patterns, does not recurse into subdirectories, does not delete logs or state, and refuses symbolic-link or reparse-point artifacts and directories. Cleanup failures are logged but do not prevent the review.
+At the beginning of each run, retention deletes top-level managed artifacts whose last-write time is older than `reportRetentionDays`. The default is 31 days. Set `-1` to keep reports forever. Retention recognizes only exact Informant report, change-list, manifest, coverage, finding, and trace filename patterns, does not recurse into subdirectories, does not delete logs or state, and refuses symbolic-link or reparse-point artifacts and directories. Cleanup failures are logged but do not prevent the review.
 
 ## Finding identity, acceptance, and suppression
 
@@ -333,7 +335,7 @@ Two failure modes are unavoidable. A false merge treats distinct defects as one 
 
 The accepted-finding ledger is application state, separate from the disposable review clone. Its default location is `informant.findings.json` beside the Informant configuration, and `findingStateFilePath` can select another path. `Informant accept-findings` copies every new finding from the latest managed finding artifact into that ledger with its fingerprint, acceptance time, source location, category, and summary. A later run reports matching entries as known instead of new. Acceptance does not change source and does not advance the Git review baseline.
 
-An inline comment containing `bugswatter-ignore: <justification>` suppresses a finding anchored on the same line or the next significant source line. The syntax is language-agnostic because Informant searches comment text rather than parsing one programming language. The justification is required. An empty marker does not suppress a finding and appears in suppression health as invalid.
+A comment line containing `bugswatter-ignore: <justification>` suppresses a finding anchored on that line or the next significant source line. Informant recognizes common comment prefixes including `//`, `#`, `--`, `;`, `/*`, `*`, `<!--`, `<#`, `'`, and `REM`; it does not treat an unprefixed string literal as an operator instruction. The justification is required. An empty marker does not suppress a finding and appears in suppression health as invalid.
 
 Each completed run writes `Informant-Findings-<timestamp>.json` with the stable fingerprint, structural inputs, validator status, and final `New`, `Known`, or `Suppressed` disposition for every finding. The report includes counts for new, known, and suppressed findings; accepted ledger entries; invalid markers; and suppressions first observed at least 90 days earlier. Suppression observation dates live in the same application state file so age survives report retention.
 

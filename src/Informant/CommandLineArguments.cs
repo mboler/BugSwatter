@@ -55,7 +55,7 @@ public sealed record CommandLineArguments(string Command, string? ConfigPath, Pr
             }
             else
             {
-                throw new InformantFatalException($"Unexpected argument '{argument}'. Usage: Informant [run|verify|init|help] [--config <path>] [--progress json]");
+                throw new InformantFatalException($"Unexpected argument '{argument}'. Usage: Informant [run|verify|validate|accept-findings|init|help] [--config <path>] [--progress json]");
             }
         }
 

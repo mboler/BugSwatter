@@ -24,10 +24,10 @@ public enum Severity
 }
 
 /// <summary>One confirmed finding from the second-opinion model</summary>
-public sealed record ConfirmedFinding(string? File, int? Line, string Severity, string Summary);
+public sealed record ConfirmedFinding(string? File, int? Line, string Severity, string Summary, string Category = "general");
 
 /// <summary>One finding the second-opinion model discarded as not real</summary>
-public sealed record DiscardedFinding(string Summary, string Reason);
+public sealed record DiscardedFinding(string Summary, string Reason, string? File = null, int? Line = null, string Category = "general");
 
 /// <summary>The structured verdict parsed from one file's second-opinion answer</summary>
 public sealed record ParsedValidation(IReadOnlyList<ConfirmedFinding> Confirmed, IReadOnlyList<DiscardedFinding> Discarded, string? Verdict);
@@ -105,8 +105,8 @@ public static partial class SecondOpinionParser
                 return false;
             }
 
-            IReadOnlyList<ConfirmedFinding> confirmed = [.. (dto.Confirmed ?? []).Select(item => new ConfirmedFinding(item.File, item.Line, item.Severity ?? "", item.Summary ?? ""))];
-            IReadOnlyList<DiscardedFinding> discarded = [.. (dto.Discarded ?? []).Select(item => new DiscardedFinding(item.Summary ?? "", item.Reason ?? ""))];
+            IReadOnlyList<ConfirmedFinding> confirmed = [.. (dto.Confirmed ?? []).Select(item => new ConfirmedFinding(item.File, item.Line, item.Severity ?? "", item.Summary ?? "", NormalizeCategory(item.Category)))];
+            IReadOnlyList<DiscardedFinding> discarded = [.. (dto.Discarded ?? []).Select(item => new DiscardedFinding(item.Summary ?? "", item.Reason ?? "", item.File, item.Line, NormalizeCategory(item.Category)))];
             parsed = new ParsedValidation(confirmed, discarded, dto.Verdict);
             return true;
         }
@@ -115,6 +115,8 @@ public static partial class SecondOpinionParser
             return false;
         }
     }
+
+    private static string NormalizeCategory(string? category) => string.IsNullOrWhiteSpace(category) ? "general" : category.Trim().ToLowerInvariant();
 
     [GeneratedRegex(@"```(?:json)?\s*(?<body>\{.*?\})\s*```", RegexOptions.Singleline)]
     private static partial Regex FencedJsonRegex();
@@ -144,6 +146,9 @@ public static partial class SecondOpinionParser
 
         [JsonPropertyName("summary")]
         public string? Summary { get; init; }
+
+        [JsonPropertyName("category")]
+        public string? Category { get; init; }
     }
 
     private sealed class DiscardedDto
@@ -153,5 +158,14 @@ public static partial class SecondOpinionParser
 
         [JsonPropertyName("reason")]
         public string? Reason { get; init; }
+
+        [JsonPropertyName("file")]
+        public string? File { get; init; }
+
+        [JsonPropertyName("line")]
+        public int? Line { get; init; }
+
+        [JsonPropertyName("category")]
+        public string? Category { get; init; }
     }
 }

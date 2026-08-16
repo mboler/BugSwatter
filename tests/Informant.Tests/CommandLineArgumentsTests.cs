@@ -35,6 +35,16 @@ public sealed class CommandLineArgumentsTests
         Assert.Equal("cfg.json", arguments.ConfigPath);
     }
 
+    /// <summary>Verifies the finding acceptance command uses the ordinary explicit configuration path</summary>
+    [Fact]
+    public void AcceptFindingsCommandParses()
+    {
+        CommandLineArguments arguments = CommandLineArguments.Parse(["accept-findings", "--config", "cfg.json"]);
+
+        Assert.Equal("accept-findings", arguments.Command);
+        Assert.Equal("cfg.json", arguments.ConfigPath);
+    }
+
     [Fact]
     public void JsonProgressOutputParsesWithoutChangingTheCommand()
     {

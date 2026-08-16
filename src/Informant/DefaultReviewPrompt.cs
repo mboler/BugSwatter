@@ -12,7 +12,7 @@ public static class DefaultReviewPrompt
         After the prose, and only after it, output a single fenced code block tagged json containing the candidate findings in exactly this shape:
         ```json
         {
-          "findings": [ { "file": "path/to/file", "line": 12, "severity": "critical|high|medium|low", "summary": "one line" } ]
+          "findings": [ { "file": "path/to/file", "line": 12, "severity": "critical|high|medium|low", "category": "correctness|security|validation|resource|concurrency|error-handling|logging|performance|maintainability|testability|other", "summary": "one line" } ]
         }
         ```
         Use an empty findings array when the prose says there is nothing of concern. Every prose finding must appear in the JSON and every JSON finding must appear in the prose.

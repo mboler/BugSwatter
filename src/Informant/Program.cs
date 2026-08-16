@@ -34,7 +34,7 @@ internal static class Program
             using MachineWideProcessLock? reviewLock = AcquireReviewLock(arguments.Command);
             if (RequiresReviewLock(arguments.Command) && reviewLock is null)
             {
-                await Console.Error.WriteLineAsync("Informant cannot start because another BugSwatter review or model verification is already running on this machine. Wait for the active operation to finish before starting another.");
+                await Console.Error.WriteLineAsync("Informant cannot start because another BugSwatter operation is already running on this machine. Wait for the active operation to finish before starting another.");
                 return BugSwatterProcessCoordination.AlreadyRunningExitCode;
             }
 
@@ -61,6 +61,9 @@ internal static class Program
 
                 case "validate":
                     return await ValidateCommand.RunAsync(config, SharedHttpClient);
+
+                case "accept-findings":
+                    return AcceptFindingsCommand.Run(config);
 
                 default:
                     await Console.Error.WriteLineAsync($"Unknown command '{arguments.Command}'");
@@ -100,7 +103,7 @@ internal static class Program
         ? MachineWideProcessLock.TryAcquire(BugSwatterProcessCoordination.InformantReviewLockName)
         : null;
 
-    private static bool RequiresReviewLock(string command) => command is "run" or "verify";
+    private static bool RequiresReviewLock(string command) => command is "run" or "verify" or "accept-findings";
 
     private static (InformantConfig Config, string ConfigPath) LoadConfig(CommandLineArguments arguments)
     {
@@ -267,6 +270,9 @@ internal static class Program
         }
 
         IReadOnlyList<FileReviewResult> results = ClusteredReviewResultAggregator.Build(files, reviewBuild, unitResults, reviewPlan.Deferred);
+        FindingRunTracker findingTracker = await FindingRunTracker.CreateAsync(config.RepositoryUrl, config.Branch, tipSha, results, manifest, config.WorkingTreePath, config.MaxFileBytes, git,
+            config.FindingStateFilePath);
+        results = findingTracker.FilterSuppressedCandidates(results);
         HashSet<string> buildFailurePaths = reviewBuild.PartFailures.Select(failure => failure.Part.File.Path)
             .ToHashSet(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
         foreach (FileReviewResult result in results.Where(result => buildFailurePaths.Contains(result.File.Path) || result.Status == FileReviewStatus.Deferred))
@@ -303,6 +309,7 @@ internal static class Program
         ];
 
         progress.ReportPhase("Writing primary report");
+        findingTracker.WriteArtifact(config.ReportDirectory, runStamp);
         report.Finalize(reviewedCount, skipped, stopwatch.Elapsed, reviewer.Failures);
         bool baselineAdvanced = ReviewCompletion.CanAdvanceBaseline(coverage);
         if (baselineAdvanced)
@@ -320,25 +327,30 @@ internal static class Program
         // The second pass is strictly additive: the local review, its report and the baseline are already settled above
         string primaryReportPath = report.ReportPath;
         bool traceSummaryWritten = false;
+        SecondOpinionOutcome? secondOpinionOutcome = null;
         if (config.SecondOpinion is { } secondOpinion)
         {
             progress.ReportPhase("Selecting second opinion");
-            SecondOpinionOutcome? outcome = await RunSecondOpinionAsync(secondOpinion, config, git, results, runStamp, report.ReportPath, progress, manifest, trace, traceContext);
+            secondOpinionOutcome = await RunSecondOpinionAsync(secondOpinion, config, git, results, runStamp, report.ReportPath, progress, manifest, trace, traceContext);
 
-            if (outcome is not null)
+            if (secondOpinionOutcome is not null)
             {
                 // The validated report supersedes the local one as the run's primary artifact
-                primaryReportPath = outcome.ValidatedReportPath;
-
-                // Email is gated on a completed second opinion, so it only fires when there is a validated report to send
-                if (config.Email is { } email)
-                {
-                    report.AppendTraceSummary(trace.Summary);
-                    traceSummaryWritten = true;
-                    progress.ReportPhase("Sending email");
-                    await SendReportEmailAsync(email, config, outcome, report.ReportPath);
-                }
+                primaryReportPath = secondOpinionOutcome.ValidatedReportPath;
             }
+        }
+
+        await findingTracker.ApplySecondOpinionAsync(config.SecondOpinion is not null, secondOpinionOutcome?.Validations);
+        FindingRunSummary findingSummary = findingTracker.WriteArtifact(config.ReportDirectory, runStamp);
+        report.AppendFindingSummary(findingSummary);
+
+        // Email is gated on a completed second opinion, so it only fires when there is a validated report to send
+        if (secondOpinionOutcome is not null && config.Email is { } email)
+        {
+            report.AppendTraceSummary(trace.Summary);
+            traceSummaryWritten = true;
+            progress.ReportPhase("Sending email");
+            await SendReportEmailAsync(email, config, secondOpinionOutcome, report.ReportPath);
         }
 
         traceContext.UnitId = null;
@@ -679,7 +691,7 @@ internal static class Program
             jsonReport.ValidatedCount, jsonReport.FailedCount, jsonReport.BudgetDeferredCount, jsonReport.MaxSeverity, writer.ReportPath, jsonPath);
 
         return new SecondOpinionOutcome(writer.ReportPath, jsonPath, jsonReport.MaxSeverity, jsonReport.ValidatedCount, jsonReport.RequestFailureCount, jsonReport.EmptyResponseCount,
-            jsonReport.ParseFailureCount, jsonReport.BudgetDeferredCount);
+            jsonReport.ParseFailureCount, jsonReport.BudgetDeferredCount, jsonReport.Files);
     }
 
     private static ReviewBudgetProgressSnapshot CreateBudgetSnapshot(ReviewTimeBudget budget, string? stopReason = null, int deferredCount = 0) => new()
@@ -821,6 +833,7 @@ internal static class Program
         Console.WriteLine("  Informant init                        write a starter informant.json and review-prompt.txt");
         Console.WriteLine("  Informant verify [--config <path>]    prove all configured primary models perform tool-calling, then exit");
         Console.WriteLine("  Informant validate [--config <path>]  check config, endpoint reachability and secrets, then exit");
+        Console.WriteLine("  Informant accept-findings [--config <path>]  accept every new finding in the latest matching artifact");
         Console.WriteLine("  Informant help                        show this help");
         Console.WriteLine();
         Console.WriteLine("--config names the config file explicitly; relative paths inside the config resolve against that file's directory. Without it, informant.json is read from the current directory");

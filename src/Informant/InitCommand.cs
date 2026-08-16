@@ -54,6 +54,7 @@ public static class InitCommand
           "reportRetentionDays": 31,
           "stateFilePath": "informant.state.json",
           "coverageStateFilePath": "informant.coverage-state.json",
+          "findingStateFilePath": "informant.findings.json",
 
           // Inline prompt text wins over the prompt file; when both are null the built-in default is used
           "reviewPrompt": null,

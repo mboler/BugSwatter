@@ -18,6 +18,7 @@ public sealed class InitCommandTests : IDisposable
         Assert.Contains("\"outputCostPerMillion\": null", config);
         Assert.Contains("\"reviewStrategy\": \"exhaustive\"", config);
         Assert.Contains("\"coverageStateFilePath\": \"informant.coverage-state.json\"", config);
+        Assert.Contains("\"findingStateFilePath\": \"informant.findings.json\"", config);
         Assert.Contains("\"primaryReviewBudgetMinutes\": 180", config);
         Assert.Contains("\"adaptiveCarryoverCount\": 25", config);
         Assert.Contains("\"scope\": \"candidatePlusSample\"", config);

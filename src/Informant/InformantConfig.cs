@@ -16,6 +16,7 @@ public sealed class InformantConfig
     private string _reportDirectory = "reports";
     private string _stateFilePath = "informant.state.json";
     private string _coverageStateFilePath = "informant.coverage-state.json";
+    private string _findingStateFilePath = "informant.findings.json";
     private string? _reviewPromptFile;
     private string _logFilePath = "logs/informant-.log";
 
@@ -90,6 +91,13 @@ public sealed class InformantConfig
     {
         get => ResolvePath(_coverageStateFilePath);
         init => _coverageStateFilePath = value;
+    }
+
+    /// <summary>Path of the persistent accepted-finding and suppression ledger, resolved from the configuration directory when relative</summary>
+    public string FindingStateFilePath
+    {
+        get => ResolvePath(_findingStateFilePath);
+        init => _findingStateFilePath = value;
     }
 
     /// <summary>Inline review prompt text; when null or empty the prompt file is used instead</summary>

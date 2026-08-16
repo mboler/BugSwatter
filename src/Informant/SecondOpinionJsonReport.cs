@@ -22,9 +22,13 @@ public enum SecondOpinionValidationStatus
     BudgetDeferred
 }
 
+/// <summary>Structured second-opinion result or explicit failure for one selected primary file</summary>
+public sealed record SecondOpinionFileValidation(string File, string ChangedRanges, SecondOpinionValidationStatus Status, bool ParseOk, IReadOnlyList<ConfirmedFinding> Confirmed,
+    IReadOnlyList<DiscardedFinding> Discarded, string? Verdict, string? FailureReason);
+
 /// <summary>Result of a completed second-opinion pass, carried to the email step</summary>
 public sealed record SecondOpinionOutcome(string ValidatedReportPath, string ValidatedJsonPath, Severity MaxSeverity, int ValidatedCount, int RequestFailureCount, int EmptyResponseCount,
-    int ParseFailureCount, int BudgetDeferredCount = 0)
+    int ParseFailureCount, int BudgetDeferredCount = 0, IReadOnlyList<SecondOpinionFileValidation>? Validations = null)
 {
     /// <summary>Total files whose second-opinion validation did not complete</summary>
     public int FailedCount => RequestFailureCount + EmptyResponseCount + ParseFailureCount + BudgetDeferredCount;
@@ -38,7 +42,7 @@ public sealed class SecondOpinionJsonReport
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull, Converters = { new JsonStringEnumConverter() } };
 
-    private readonly List<FileValidation> _files = [];
+    private readonly List<SecondOpinionFileValidation> _files = [];
 
     /// <summary>Highest confirmed severity seen across every parsed file, for the email gate</summary>
     public Severity MaxSeverity { get; private set; } = Severity.None;
@@ -64,12 +68,15 @@ public sealed class SecondOpinionJsonReport
     /// <summary>Total files whose second-opinion validation did not complete</summary>
     public int FailedCount => RequestFailureCount + EmptyResponseCount + ParseFailureCount + BudgetDeferredCount;
 
+    /// <summary>Ordered per-file outcomes accumulated for this validation pass</summary>
+    public IReadOnlyList<SecondOpinionFileValidation> Files => _files;
+
     /// <summary>Records one file's parseable structured validation</summary>
     public void AddValidated(string filePath, IReadOnlyList<LineRange> ranges, ParsedValidation parsed)
     {
         ArgumentNullException.ThrowIfNull(parsed);
         string rangeText = ranges.Count == 0 ? "(entire file)" : string.Join(", ", ranges.Select(range => range.ToString()));
-        _files.Add(new FileValidation(filePath, rangeText, SecondOpinionValidationStatus.Validated, true, parsed.Confirmed, parsed.Discarded, parsed.Verdict, null));
+        _files.Add(new SecondOpinionFileValidation(filePath, rangeText, SecondOpinionValidationStatus.Validated, true, parsed.Confirmed, parsed.Discarded, parsed.Verdict, null));
 
         Severity fileMax = SecondOpinionParser.MaxSeverity(parsed.Confirmed);
         if (fileMax > MaxSeverity)
@@ -88,7 +95,7 @@ public sealed class SecondOpinionJsonReport
         }
 
         string rangeText = ranges.Count == 0 ? "(entire file)" : string.Join(", ", ranges.Select(range => range.ToString()));
-        _files.Add(new FileValidation(filePath, rangeText, status, false, [], [], null, reason));
+        _files.Add(new SecondOpinionFileValidation(filePath, rangeText, status, false, [], [], null, reason));
     }
 
     /// <summary>Writes the companion json artifact and returns its path</summary>
@@ -121,7 +128,4 @@ public sealed class SecondOpinionJsonReport
 
         return path;
     }
-
-    private sealed record FileValidation(string File, string ChangedRanges, SecondOpinionValidationStatus Status, bool ParseOk, IReadOnlyList<ConfirmedFinding> Confirmed,
-        IReadOnlyList<DiscardedFinding> Discarded, string? Verdict, string? FailureReason);
 }

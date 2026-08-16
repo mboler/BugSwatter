@@ -24,7 +24,7 @@ public sealed class PrimaryReviewParserTests
             Definite high-severity issue in Foo.cs.
 
             ```json
-            { "findings": [ { "file": "Foo.cs", "line": 12, "severity": "high", "summary": "unsafe path" } ] }
+            { "findings": [ { "file": "Foo.cs", "line": 12, "severity": "high", "category": "security", "summary": "unsafe path" } ] }
             ```
             """;
 
@@ -36,8 +36,23 @@ public sealed class PrimaryReviewParserTests
         CandidateFinding finding = Assert.Single(review.Findings);
         Assert.Equal("Foo.cs", finding.File);
         Assert.Equal(12, finding.Line);
+        Assert.Equal("security", finding.Category);
         Assert.Contains("Definite high-severity issue", prose);
         Assert.DoesNotContain("```json", prose);
+    }
+
+    [Fact]
+    public void MissingCategoryUsesBackwardCompatibleGeneralCategory()
+    {
+        const string Text = """
+            Finding.
+            ```json
+            { "findings": [ { "file": "Foo.cs", "line": 7, "severity": "low", "summary": "finding" } ] }
+            ```
+            """;
+
+        Assert.True(PrimaryReviewParser.TryParse(Text, out ParsedPrimaryReview? parsed, out _));
+        Assert.Equal("general", Assert.Single(parsed!.Findings).Category);
     }
 
     [Fact]

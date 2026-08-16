@@ -5,7 +5,7 @@ using System.Text.RegularExpressions;
 namespace Informant;
 
 /// <summary>One candidate finding reported by the primary model before second-opinion validation</summary>
-public sealed record CandidateFinding(string? File, int? Line, string Severity, string Summary);
+public sealed record CandidateFinding(string? File, int? Line, string Severity, string Summary, string Category = "general");
 
 /// <summary>The structured candidate findings parsed from one primary-model answer</summary>
 public sealed record ParsedPrimaryReview(IReadOnlyList<CandidateFinding> Findings, Severity MaxSeverity);
@@ -104,7 +104,7 @@ public static partial class PrimaryReviewParser
                     maxSeverity = severity;
                 }
 
-                findings.Add(new CandidateFinding(item.File, item.Line, item.Severity!.Trim().ToLowerInvariant(), item.Summary ?? ""));
+                findings.Add(new CandidateFinding(item.File, item.Line, item.Severity!.Trim().ToLowerInvariant(), item.Summary ?? "", NormalizeCategory(item.Category)));
             }
 
             parsed = new ParsedPrimaryReview(findings, maxSeverity);
@@ -130,6 +130,8 @@ public static partial class PrimaryReviewParser
         return severity != Severity.None;
     }
 
+    private static string NormalizeCategory(string? category) => string.IsNullOrWhiteSpace(category) ? "general" : category.Trim().ToLowerInvariant();
+
     [GeneratedRegex(@"```(?:json)?\s*(?<body>\{.*?\})\s*```", RegexOptions.Singleline | RegexOptions.IgnoreCase)]
     private static partial Regex FencedJsonRegex();
 
@@ -152,5 +154,8 @@ public static partial class PrimaryReviewParser
 
         [JsonPropertyName("summary")]
         public string? Summary { get; init; }
+
+        [JsonPropertyName("category")]
+        public string? Category { get; init; }
     }
 }

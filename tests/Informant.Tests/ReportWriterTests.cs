@@ -210,6 +210,23 @@ public sealed class ReportWriterTests : IDisposable
         Assert.Contains("Events: 8; repository reads: 3 (1 served, 1 partial, 1 rejected); model requests: 2; tool-call events: 3", report);
     }
 
+    /// <summary>Verifies the report distinguishes dispositions from validator outcomes and names the ledger artifact</summary>
+    [Fact]
+    public void FindingSummaryReportsDispositionAndValidationCounts()
+    {
+        ReportWriter writer = CreateWriter();
+        writer.WriteHeader("repo", "main", ReviewMode.Changed, "base", "tip", DateTimeOffset.Now);
+        writer.AppendFindingSummary(new FindingRunSummary("C:\\reports\\Informant-Findings-run.json", 2, 3, 4, 1, 1, 2, 1, 5, 1, 2));
+
+        string report = File.ReadAllText(writer.ReportPath);
+
+        Assert.Contains("Finding artifact: `Informant-Findings-run.json`", report);
+        Assert.Contains("Dispositions: 2 new; 3 known; 4 suppressed", report);
+        Assert.Contains("Second-opinion status: 1 confirmed; 1 discarded; 2 unresolved; 1 incomplete", report);
+        Assert.Contains("invalid suppression markers: 1; stale suppressions: 2", report);
+        Assert.Contains("does not prove that the underlying risk is resolved", report);
+    }
+
     private ReportWriter CreateWriter() => new(Path.Combine(_directory.Path, "reports"), "2026-07-10_14-30-00", "test-model", "http://localhost:1234/v1", 24000, 800);
 
     private static int CountOccurrences(string text, string value)

@@ -304,6 +304,29 @@ public sealed class ReportWriter
         File.AppendAllText(_path, builder.ToString());
     }
 
+    /// <summary>Appends structural finding dispositions, validator outcomes, and suppression health</summary>
+    public void AppendFindingSummary(FindingRunSummary summary)
+    {
+        ArgumentNullException.ThrowIfNull(summary);
+
+        var builder = new StringBuilder();
+        builder.AppendLine("## Finding disposition");
+        builder.AppendLine();
+        builder.AppendLine($"Finding artifact: `{Path.GetFileName(summary.ArtifactPath)}`");
+        builder.AppendLine();
+        builder.AppendLine($"Dispositions: {summary.NewCount} new; {summary.KnownCount} known; {summary.SuppressedCount} suppressed");
+        builder.AppendLine();
+        builder.AppendLine($"Second-opinion status: {summary.ConfirmedCount} confirmed; {summary.DiscardedCount} discarded; {summary.UnresolvedCount} unresolved; {summary.IncompleteCount} incomplete");
+        builder.AppendLine();
+        builder.AppendLine($"Accepted ledger: {summary.AcceptedLedgerCount}; invalid suppression markers: {summary.InvalidSuppressionMarkerCount}; stale suppressions: {summary.StaleSuppressionCount}");
+        builder.AppendLine();
+        builder.AppendLine("A known or suppressed disposition means BugSwatter recognized prior operator intent. It does not prove that the underlying risk is resolved.");
+        builder.AppendLine();
+        builder.AppendLine("---");
+        builder.AppendLine();
+        File.AppendAllText(_path, builder.ToString());
+    }
+
     private void ReplaceFinalizedReport(string report)
     {
         string temporaryPath = $"{_path}.{Guid.NewGuid():N}.tmp";

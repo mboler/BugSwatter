@@ -22,6 +22,7 @@ public sealed class InformantConfigTests : IDisposable
         Assert.Equal(31, config.ReportRetentionDays);
         Assert.Equal(Path.Combine(_directory.Path, "informant.state.json"), config.StateFilePath);
         Assert.Equal(Path.Combine(_directory.Path, "informant.coverage-state.json"), config.CoverageStateFilePath);
+        Assert.Equal(Path.Combine(_directory.Path, "informant.findings.json"), config.FindingStateFilePath);
         Assert.Equal(24000, config.MaxContextCharacters);
         Assert.Null(config.PrimaryReviewBudgetMinutes);
         Assert.Equal(0, config.AdaptiveCarryoverCount);
@@ -72,12 +73,14 @@ public sealed class InformantConfigTests : IDisposable
             values["primaryReviewBudgetMinutes"] = 180;
             values["adaptiveCarryoverCount"] = 25;
             values["coverageStateFilePath"] = "state/coverage.json";
+            values["findingStateFilePath"] = "state/findings.json";
         });
 
         InformantConfig config = InformantConfig.Load(_directory.Path);
         Assert.Equal(180, config.PrimaryReviewBudgetMinutes);
         Assert.Equal(25, config.AdaptiveCarryoverCount);
         Assert.Equal(Path.Combine(_directory.Path, "state", "coverage.json"), config.CoverageStateFilePath);
+        Assert.Equal(Path.Combine(_directory.Path, "state", "findings.json"), config.FindingStateFilePath);
     }
 
     [Theory]

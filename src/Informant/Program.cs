@@ -136,6 +136,33 @@ internal static class Program
         RepositoryManifest manifest = await manifestBuilder.BuildAsync(config.RepositoryUrl, config.Branch, baselineSha, tipSha, config.ReviewMode, runStamp, startedAt);
         progress.ReportPhase("Detecting changes");
         IReadOnlyList<ChangedFile> files = await DetectReviewSetAsync(config, git, baselineSha, tipSha);
+        var coverageDebtStore = new CoverageDebtStore(config.CoverageStateFilePath);
+        CoverageDebtSelection debtSelection = new(0, [], 0);
+        HashSet<string> carryoverPaths = new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+        if (config.ReviewStrategy == ReviewStrategy.Adaptive && config.AdaptiveCarryoverCount > 0)
+        {
+            debtSelection = coverageDebtStore.Select(config.RepositoryUrl, config.Branch, manifest, files.Select(file => file.Path).ToArray(), config.AdaptiveCarryoverCount);
+            foreach (CoverageDebtEntry entry in debtSelection.Carried)
+            {
+                carryoverPaths.Add(entry.Path);
+            }
+
+            files = [.. files, .. debtSelection.Carried.Select(entry => new ChangedFile(entry.Path, ChangeKind.FullReview, []))];
+            Log.Information("Adaptive coverage debt: {Prior} current entries, {Carried} carried into this run, {Stale} stale entries discarded", debtSelection.PriorCount,
+                debtSelection.Carried.Count, debtSelection.DiscardedStaleCount);
+        }
+
+        if (config.ReviewStrategy == ReviewStrategy.Adaptive)
+        {
+            progress.ReportCoverageDebt(new ReviewCoverageDebtSnapshot
+            {
+                PriorCount = debtSelection.PriorCount,
+                CarriedCount = debtSelection.Carried.Count,
+                RemainingCount = debtSelection.PriorCount,
+                DiscardedStaleCount = debtSelection.DiscardedStaleCount
+            });
+        }
+
         manifest = manifest.WithChanges(files);
         Log.Information("Repository manifest rebuilt at {Tip}: {Entries} entries, {Reviewable} reviewable, {Excluded} excluded, {Selected} selected", tipSha, manifest.EntryCount,
             manifest.ReviewableCount, manifest.ExcludedCount, manifest.SelectedCount);
@@ -164,11 +191,14 @@ internal static class Program
         IReadOnlyList<PrimaryModelTarget> modelTargets = [.. sessions.Select(session => session.Target)];
         PrimaryModelTarget primaryTarget = modelTargets[0];
         var report = new ReportWriter(config.ReportDirectory, runStamp, primaryTarget.ModelName, primaryTarget.Endpoint, config.MaxContextCharacters, config.MaxFileLines, modelTargets, trace.TraceFileName);
-        report.WriteHeader(config.RepositoryUrl, config.Branch, config.ReviewMode, baselineSha, tipSha, startedAt, config.ReviewStrategy);
+        report.WriteHeader(config.RepositoryUrl, config.Branch, config.ReviewMode, baselineSha, tipSha, startedAt, config.ReviewStrategy, config.PrimaryReviewBudgetMinutes);
 
         progress.ReportPhase("Verifying primary model", primaryTarget.ModelName, "primary", primaryTarget.Pricing);
         var reviewer = new PrimaryModelFailoverReviewer(sessions, target => progress.ReportModelTarget(target.ModelName, target.Name, target.Pricing));
         await reviewer.InitializeAsync();
+
+        var primaryBudget = new ReviewTimeBudget(config.PrimaryReviewBudgetMinutes);
+        progress.ReportPrimaryBudget(CreateBudgetSnapshot(primaryBudget));
 
         progress.ReportPhase("Planning repository review", reviewer.ActiveTarget!.ModelName, reviewer.ActiveTarget.Name, reviewer.ActiveTarget.Pricing);
         int manifestPartitionCharacters = Math.Max(256, config.MaxContextCharacters / 4);
@@ -181,7 +211,7 @@ internal static class Program
         IReadOnlyCollection<string> mandatoryPlanningPaths = allowDeferrals ? [] : candidatePaths;
         var planner = new RepositoryReviewPlanner(config.MaxContextCharacters);
         RepositoryPlanningResult planning = await planner.PlanAsync(manifest, briefing, candidatePaths, mandatoryPlanningPaths, allowDeferrals, reviewer.PlanAsync, initialContext,
-            (batchNumber, item) => trace.WritePlanningContextSelected(batchNumber, item, reviewer.ActiveTarget!));
+            (batchNumber, item) => trace.WritePlanningContextSelected(batchNumber, item, reviewer.ActiveTarget!), primaryBudget);
         RepositoryReviewPlan reviewPlan = RepositoryAdaptivePlan.AddMandatoryChangedContent(planning.Plan, files, config.ReviewStrategy);
         trace.WritePlanningCompleted(planning, reviewPlan, reviewer.ActiveTarget!);
         Log.Information("Repository planning produced {Units} units across {Batches} batches, with {ModelBatches} model calls, fallback {Fallback}, coverage repair {CoverageRepair}",
@@ -199,6 +229,13 @@ internal static class Program
         for (int index = 0; index < reviewBuild.Units.Count; index++)
         {
             ReviewExecutionUnit unit = reviewBuild.Units[index];
+            if (primaryBudget.IsExhausted)
+            {
+                reviewPlan = AddBudgetDeferrals(reviewPlan, reviewBuild.Units.Skip(index));
+                Log.Warning("Primary review budget exhausted before unit {Unit}; {Remaining} execution units will not start", unit.Id, reviewBuild.Units.Count - index);
+                break;
+            }
+
             traceContext.UnitId = unit.Id;
             Log.Information("Reviewing clustered unit {Unit} ({Position}/{Count}) with {Parts} source parts", unit.Id, index + 1, reviewBuild.Units.Count, unit.Parts.Count);
             PrimaryModelTarget activeTarget = reviewer.ActiveTarget ?? modelTargets[^1];
@@ -206,10 +243,27 @@ internal static class Program
             trace.WriteReviewUnitStarted(unit, activeTarget);
 
             var unitStopwatch = Stopwatch.StartNew();
-            ReviewUnitResult unitResult = await reviewer.ReviewUnitAsync(unit);
+            ReviewUnitResult unitResult;
+            using CancellationTokenSource budgetTokenSource = primaryBudget.CreateLinkedTokenSource();
+            try
+            {
+                unitResult = await reviewer.ReviewUnitAsync(unit, budgetTokenSource.Token);
+            }
+            catch (OperationCanceledException) when (primaryBudget.IsExhausted)
+            {
+                const string reason = "primary review budget expired during clustered review";
+                unitResult = new ReviewUnitResult(unit, [], FileReviewFailureKind.Model, reason);
+                reviewPlan = AddBudgetDeferrals(reviewPlan, reviewBuild.Units.Skip(index));
+                Log.Warning("Primary review budget expired during unit {Unit}; remaining deep-review work was deferred", unit.Id);
+            }
+
             trace.WriteReviewUnitCompleted(unitResult, unitStopwatch.Elapsed);
             report.AppendReviewUnitSection(unitResult);
             unitResults.Add(unitResult);
+            if (primaryBudget.IsExhausted)
+            {
+                break;
+            }
         }
 
         IReadOnlyList<FileReviewResult> results = ClusteredReviewResultAggregator.Build(files, reviewBuild, unitResults, reviewPlan.Deferred);
@@ -220,10 +274,26 @@ internal static class Program
             report.AppendFileSection(result with { Findings = null });
         }
 
-        ReviewCoverageLedger coverage = ReviewCoverageLedger.Create(config.ReviewStrategy, files, reviewPlan, results);
+        ReviewCoverageLedger coverage = ReviewCoverageLedger.Create(config.ReviewStrategy, files, reviewPlan, results, carryoverPaths);
+        int remainingDebtCount = config.ReviewStrategy == ReviewStrategy.Adaptive
+            ? coverageDebtStore.Update(config.RepositoryUrl, config.Branch, manifest, coverage)
+            : 0;
+        int primaryBudgetDeferredCount = coverage.Entries.Count(entry => entry.Reason?.Contains("primary review budget", StringComparison.OrdinalIgnoreCase) == true);
+        progress.ReportPrimaryBudget(CreateBudgetSnapshot(primaryBudget, primaryBudget.IsExhausted ? "Primary review budget exhausted" : null, primaryBudgetDeferredCount));
+        if (config.ReviewStrategy == ReviewStrategy.Adaptive)
+        {
+            progress.ReportCoverageDebt(new ReviewCoverageDebtSnapshot
+            {
+                PriorCount = debtSelection.PriorCount,
+                CarriedCount = debtSelection.Carried.Count,
+                RemainingCount = remainingDebtCount,
+                DiscardedStaleCount = debtSelection.DiscardedStaleCount
+            });
+        }
         string coveragePath = ReviewCoverageLedgerFile.Write(config.ReportDirectory, runStamp, coverage);
         trace.WriteCoverageCreated(coverage);
         report.AppendCoverageSummary(coverage, Path.GetFileName(coveragePath));
+        report.AppendReviewControlSummary(primaryBudget, debtSelection, remainingDebtCount);
         int reviewedCount = results.Count(result => result.FullyReviewed);
         IReadOnlyList<(string Path, string Reason)> skipped =
         [
@@ -454,45 +524,59 @@ internal static class Program
         var stopwatch = Stopwatch.StartNew();
         try
         {
-            List<FileReviewResult> toValidate = [.. results.Where(result => result.Findings is not null)];
-
-            // Optionally also look at files the local reviewer could not review, so a changed file the first model skipped is not left silently unreviewed
-            if (secondOpinion.ReviewSkippedFiles)
-            {
-                toValidate.AddRange(results.Where(result => result.Status != FileReviewStatus.Deferred && result.Findings is null && result.SkipReason is not null));
-            }
-
-            if (toValidate.Count == 0)
-            {
-                Log.Information("Second opinion: nothing to validate");
-                return null;
-            }
-
+            IReadOnlyList<SecondOpinionSelectionItem> toValidate = SecondOpinionSelection.Build(results, secondOpinion);
             PrimaryReviewClassification classification = PrimaryReviewClassification.FromResults(results);
             SecondOpinionModelSelection selection = secondOpinion.SelectModel(classification);
             SecondOpinionModelProfile selectedModel = selection.Model;
             Log.Information("Second-opinion routing: {Reason}", selection.SelectionReason);
-            progress.ReportPhase("Verifying second-opinion model", selectedModel.ModelName, selection.ProfileName, selectedModel.Pricing);
+            Log.Information("Second-opinion scope {Scope} selected {Selected} primary results: {Candidates} with candidates, {CleanSamples} clean samples, {Skipped} skipped primary results", secondOpinion.Scope,
+                toValidate.Count, toValidate.Count(item => item.HasCandidates), toValidate.Count(item => item.CleanSample), toValidate.Count(item => item.SkippedPrimaryReview));
 
             string? apiKey = selectedModel.ResolveApiKey();
-            if (selectedModel.RequiresApiKey && string.IsNullOrEmpty(apiKey))
+            if (toValidate.Count > 0 && selectedModel.RequiresApiKey && string.IsNullOrEmpty(apiKey))
             {
                 Log.Error("Second-opinion profile {Profile} is configured but the secret referenced by '{Reference}' is not set; skipping the validation pass. The local review report stands", selection.ProfileName,
                     selectedModel.ApiKey);
                 return null;
             }
 
+            var writer = new SecondOpinionReportWriter(config.ReportDirectory, runStamp);
+            writer.WriteHeader(selection, sourceReportPath, DateTimeOffset.Now, secondOpinion.ContextLines, secondOpinion.Scope, toValidate.Count, toValidate.Count(item => item.HasCandidates),
+                toValidate.Count(item => item.CleanSample), secondOpinion.ReviewBudgetMinutes);
+            var jsonReport = new SecondOpinionJsonReport();
+            var budget = new ReviewTimeBudget(secondOpinion.ReviewBudgetMinutes);
+            progress.ReportSecondOpinionBudget(CreateBudgetSnapshot(budget));
+            if (toValidate.Count == 0)
+            {
+                Log.Information("Second opinion: the configured scope selected no primary results; writing a completed zero-call validation report");
+                return CompleteSecondOpinion(writer, jsonReport, config.ReportDirectory, runStamp, selection, sourceReportPath, stopwatch.Elapsed);
+            }
+
+            progress.ReportPhase("Verifying second-opinion model", selectedModel.ModelName, selection.ProfileName, selectedModel.Pricing);
             Action<ModelCallProgress> modelProgressObserver = CreateModelProgressObserver(progress, trace, selection.ProfileName, traceContext);
             var client = new ModelClient(SharedHttpClient, selectedModel.Endpoint, selectedModel.ModelName, TimeSpan.FromSeconds(secondOpinion.RequestTimeoutSeconds), apiKey, config.MaxModelResponseBytes,
                 selectedModel.Authentication, modelProgressObserver);
 
-            // Gate: prove endpoint, model and key with a minimal round trip before any code leaves the machine
-            await client.CompleteAsync([new ChatMessage { Role = "user", Content = "Reply with the single word READY." }], []);
-            Log.Information("Second-opinion endpoint verified: {Model} at {Endpoint}", selectedModel.ModelName, selectedModel.Endpoint);
+            VerificationResult toolProbe;
+            try
+            {
+                using CancellationTokenSource verificationTokenSource = budget.CreateLinkedTokenSource();
 
-            // The local reviewer must support tool-calling, but the validator need not: probe it, and when it does,
-            // let it read more of a file on demand within a per-file budget; when it does not, it validates from the excerpt only
-            VerificationResult toolProbe = await ToolCallingVerifier.VerifyAsync(client, config.MaxContextCharacters);
+                // Gate: prove endpoint, model and key with a minimal round trip before any code leaves the machine
+                await client.CompleteAsync([new ChatMessage { Role = "user", Content = "Reply with the single word READY." }], [], verificationTokenSource.Token);
+                Log.Information("Second-opinion endpoint verified: {Model} at {Endpoint}", selectedModel.ModelName, selectedModel.Endpoint);
+
+                // The validator may run without tools; when supported, bounded reads let it inspect more than the initial excerpt.
+                toolProbe = await ToolCallingVerifier.VerifyAsync(client, config.MaxContextCharacters, verificationTokenSource.Token);
+            }
+            catch (OperationCanceledException) when (budget.IsExhausted)
+            {
+                const string reason = "The second-opinion pass budget expired during endpoint verification.";
+                AppendBudgetDeferrals(toValidate, 0, writer, jsonReport, reason);
+                progress.ReportSecondOpinionBudget(CreateBudgetSnapshot(budget, reason, jsonReport.BudgetDeferredCount));
+                return CompleteSecondOpinion(writer, jsonReport, config.ReportDirectory, runStamp, selection, sourceReportPath, stopwatch.Elapsed);
+            }
+
             bool enableToolCalls = toolProbe.Success && secondOpinion.MaxFileReads > 0;
             string toolStatus = enableToolCalls ? $"supported, up to {secondOpinion.MaxFileReads} reads per file" : "disabled, validating from the excerpt only";
             Log.Information("Second-opinion tool-calling: {Status} ({Detail})", toolStatus, toolProbe.Detail);
@@ -500,15 +584,18 @@ internal static class Program
             var validator = new SecondOpinionReviewer(client, config.WorkingTreePath, secondOpinion.ResolvePrompt(), config.MaxContextCharacters, secondOpinion.ContextLines, enableToolCalls, secondOpinion.MaxFileReads,
                 config.MaxFileBytes, git, manifest, ReadFileLinesTool.ResultCharactersForContext(config.MaxContextCharacters), trace.CreateReadObserver(selectedModel.ModelName, selection.ProfileName, traceContext),
                 trace.CreateToolObserver(selectedModel.ModelName, selection.ProfileName, traceContext));
-            var writer = new SecondOpinionReportWriter(config.ReportDirectory, runStamp);
-            writer.WriteHeader(selection, sourceReportPath, DateTimeOffset.Now, secondOpinion.ContextLines);
-            var jsonReport = new SecondOpinionJsonReport();
 
-            int validated = 0;
-            int failed = 0;
             for (int index = 0; index < toValidate.Count; index++)
             {
-                var result = toValidate[index];
+                if (budget.IsExhausted)
+                {
+                    const string reason = "The second-opinion pass budget expired before validation started.";
+                    AppendBudgetDeferrals(toValidate, index, writer, jsonReport, reason);
+                    progress.ReportSecondOpinionBudget(CreateBudgetSnapshot(budget, reason, jsonReport.BudgetDeferredCount));
+                    break;
+                }
+
+                FileReviewResult result = toValidate[index].Result;
                 traceContext.UnitId = $"second-opinion:{result.File.Path}";
                 Log.Information("Second opinion for {Path} ({Position}/{Count})", result.File.Path, index + 1, toValidate.Count);
                 progress.ReportFile("Second-opinion review", selectedModel.ModelName, selection.ProfileName, result.File.Path, index + 1, toValidate.Count, selectedModel.Pricing);
@@ -516,11 +603,18 @@ internal static class Program
                 string? validation;
                 try
                 {
-                    validation = await validator.ValidateAsync(result);
+                    using CancellationTokenSource validationTokenSource = budget.CreateLinkedTokenSource();
+                    validation = await validator.ValidateAsync(result, validationTokenSource.Token);
+                }
+                catch (OperationCanceledException) when (budget.IsExhausted)
+                {
+                    const string reason = "The second-opinion pass budget expired during validation.";
+                    AppendBudgetDeferrals(toValidate, index, writer, jsonReport, reason);
+                    progress.ReportSecondOpinionBudget(CreateBudgetSnapshot(budget, reason, jsonReport.BudgetDeferredCount));
+                    break;
                 }
                 catch (ModelCallException ex)
                 {
-                    failed++;
                     Log.Warning("Second opinion for {Path} failed after the bounded retry: {Reason}", result.File.Path, ex.Message);
                     writer.AppendFailureSection(result.File.Path, result.File.ChangedRanges, SecondOpinionValidationStatus.RequestFailed, ex.Message);
                     jsonReport.AddFailure(result.File.Path, result.File.ChangedRanges, SecondOpinionValidationStatus.RequestFailed, ex.Message);
@@ -529,8 +623,7 @@ internal static class Program
 
                 if (validation is null)
                 {
-                    failed++;
-                    const string reason = "The model returned an empty response";
+                    const string reason = "The model returned an empty response.";
                     writer.AppendFailureSection(result.File.Path, result.File.ChangedRanges, SecondOpinionValidationStatus.EmptyResponse, reason);
                     jsonReport.AddFailure(result.File.Path, result.File.ChangedRanges, SecondOpinionValidationStatus.EmptyResponse, reason);
                     continue;
@@ -539,25 +632,18 @@ internal static class Program
                 bool parseOk = SecondOpinionParser.TryParse(validation, out ParsedValidation? parsed, out string prose);
                 if (parseOk)
                 {
-                    validated++;
                     writer.AppendFileSection(result.File.Path, result.File.ChangedRanges, prose);
                     jsonReport.AddValidated(result.File.Path, result.File.ChangedRanges, parsed!);
                     continue;
                 }
 
-                failed++;
-                const string parseReason = "The model response did not contain parseable structured findings";
+                const string parseReason = "The model response did not contain parseable structured findings.";
                 writer.AppendFailureSection(result.File.Path, result.File.ChangedRanges, SecondOpinionValidationStatus.ParseFailed, parseReason, prose);
                 jsonReport.AddFailure(result.File.Path, result.File.ChangedRanges, SecondOpinionValidationStatus.ParseFailed, parseReason);
             }
 
-            writer.Finalize(validated, failed, stopwatch.Elapsed);
-            string jsonPath = jsonReport.Write(config.ReportDirectory, runStamp, selection, sourceReportPath);
-            Log.Information("Second opinion complete: {Validated} validated, {Failed} failed, max confirmed severity {Severity}, reports at {Report} and {Json}", validated, failed,
-                jsonReport.MaxSeverity, writer.ReportPath, jsonPath);
-
-            return new SecondOpinionOutcome(writer.ReportPath, jsonPath, jsonReport.MaxSeverity, jsonReport.ValidatedCount, jsonReport.RequestFailureCount, jsonReport.EmptyResponseCount,
-                jsonReport.ParseFailureCount);
+            progress.ReportSecondOpinionBudget(CreateBudgetSnapshot(budget, budget.IsExhausted ? "Second-opinion pass budget exhausted" : null, jsonReport.BudgetDeferredCount));
+            return CompleteSecondOpinion(writer, jsonReport, config.ReportDirectory, runStamp, selection, sourceReportPath, stopwatch.Elapsed);
         }
         catch (ModelCallException ex)
         {
@@ -571,6 +657,40 @@ internal static class Program
             return null;
         }
     }
+
+    private static void AppendBudgetDeferrals(IReadOnlyList<SecondOpinionSelectionItem> selected, int startIndex, SecondOpinionReportWriter writer, SecondOpinionJsonReport jsonReport, string reason)
+    {
+        for (int index = startIndex; index < selected.Count; index++)
+        {
+            FileReviewResult result = selected[index].Result;
+            writer.AppendFailureSection(result.File.Path, result.File.ChangedRanges, SecondOpinionValidationStatus.BudgetDeferred, reason);
+            jsonReport.AddFailure(result.File.Path, result.File.ChangedRanges, SecondOpinionValidationStatus.BudgetDeferred, reason);
+        }
+
+        Log.Warning("Second-opinion budget deferred {Count} selected results", selected.Count - startIndex);
+    }
+
+    private static SecondOpinionOutcome CompleteSecondOpinion(SecondOpinionReportWriter writer, SecondOpinionJsonReport jsonReport, string reportDirectory, string runStamp,
+        SecondOpinionModelSelection selection, string sourceReportPath, TimeSpan duration)
+    {
+        writer.Finalize(jsonReport.ValidatedCount, jsonReport.FailedCount, duration, jsonReport.BudgetDeferredCount);
+        string jsonPath = jsonReport.Write(reportDirectory, runStamp, selection, sourceReportPath);
+        Log.Information("Second opinion complete: {Validated} validated, {Failed} incomplete including {BudgetDeferred} budget-deferred, max confirmed severity {Severity}, reports at {Report} and {Json}",
+            jsonReport.ValidatedCount, jsonReport.FailedCount, jsonReport.BudgetDeferredCount, jsonReport.MaxSeverity, writer.ReportPath, jsonPath);
+
+        return new SecondOpinionOutcome(writer.ReportPath, jsonPath, jsonReport.MaxSeverity, jsonReport.ValidatedCount, jsonReport.RequestFailureCount, jsonReport.EmptyResponseCount,
+            jsonReport.ParseFailureCount, jsonReport.BudgetDeferredCount);
+    }
+
+    private static ReviewBudgetProgressSnapshot CreateBudgetSnapshot(ReviewTimeBudget budget, string? stopReason = null, int deferredCount = 0) => new()
+    {
+        ConfiguredMinutes = budget.ConfiguredMinutes,
+        StartedUtc = budget.StartedAtUtc,
+        DeadlineUtc = budget.DeadlineUtc,
+        Exhausted = budget.IsExhausted,
+        StopReason = stopReason,
+        DeferredCount = deferredCount
+    };
 
     private static async Task<int> VerifyToolCallingAsync(InformantConfig config)
     {
@@ -633,6 +753,33 @@ internal static class Program
         }
 
         return await detector.GetChangedFilesAsync(baselineSha, tipSha);
+    }
+
+    private static RepositoryReviewPlan AddBudgetDeferrals(RepositoryReviewPlan plan, IEnumerable<ReviewExecutionUnit> remainingUnits)
+    {
+        StringComparer comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        var deferredPaths = new HashSet<string>(plan.Deferred.Select(item => item.Path), comparer);
+        string[] budgetDeferredPaths =
+        [
+            .. remainingUnits
+                .SelectMany(unit => unit.Parts)
+                .Where(part => !part.MandatoryChangedContent)
+                .Select(part => part.File.Path)
+                .Where(deferredPaths.Add)
+                .Distinct(comparer)
+                .OrderBy(path => path, StringComparer.Ordinal)
+        ];
+        if (budgetDeferredPaths.Length == 0)
+        {
+            return plan;
+        }
+
+        const string reason = "primary review budget exhausted before deep review completed";
+        return plan with
+        {
+            Deferred = [.. plan.Deferred, .. budgetDeferredPaths.Select(path => new RepositoryReviewDeferral(path, reason))],
+            Diagnostics = [.. plan.Diagnostics, $"controller deferred deep review for {budgetDeferredPaths.Length} paths after the primary review budget expired"]
+        };
     }
 
     private static void PrintDestructiveTreeWarning(InformantConfig config)

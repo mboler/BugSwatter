@@ -56,7 +56,9 @@ public sealed class ClusteredReviewUnitBuilder
         var units = new List<ReviewExecutionUnit>();
         var allParts = new List<ReviewUnitPart>();
         var immediateResults = new List<FileReviewResult>();
+        var immediatePaths = new HashSet<string>(comparer);
         var partFailures = new List<ReviewPartBuildFailure>();
+        var plannedAssignments = new HashSet<string>(comparer);
         var plannedPaths = new HashSet<string>(comparer);
         var deferredPaths = new HashSet<string>(plan.Deferred.Select(item => item.Path), comparer);
         int partSequence = 0;
@@ -76,10 +78,13 @@ public sealed class ClusteredReviewUnitBuilder
             var plannedParts = new List<ReviewUnitPart>();
             foreach (string path in plannedUnit.Paths)
             {
-                if (!plannedPaths.Add(path))
+                string assignment = $"{(plannedUnit.ChangedLinesOnly ? "mandatory" : "deep")}:{path}";
+                if (!plannedAssignments.Add(assignment))
                 {
-                    throw new InvalidOperationException($"Validated review plan assigned path '{path}' more than once");
+                    throw new InvalidOperationException($"Validated review plan assigned path '{path}' more than once for the same review depth.");
                 }
+
+                plannedPaths.Add(path);
 
                 if (!filesByPath.TryGetValue(path, out ChangedFile? file))
                 {
@@ -89,7 +94,11 @@ public sealed class ClusteredReviewUnitBuilder
                 PreparedReviewFile prepared = await _sourceLoader.LoadAsync(file, cancellationToken);
                 if (prepared.ImmediateResult is not null)
                 {
-                    immediateResults.Add(prepared.ImmediateResult);
+                    if (immediatePaths.Add(path))
+                    {
+                        immediateResults.Add(prepared.ImmediateResult);
+                    }
+
                     continue;
                 }
 

@@ -56,7 +56,7 @@ public sealed record RepositoryReviewDeferral(string Path, string Reason);
 public sealed record RepositoryReviewPlan(string RepositorySummary, IReadOnlyList<RepositoryReviewUnit> Units, IReadOnlyList<RepositoryReviewDeferral> Deferred, IReadOnlyList<string> Uncertainties,
     bool UsedFallback, bool CoverageRepaired, IReadOnlyList<string> Diagnostics);
 
-/// <summary>Adds mandatory changed-content units for adaptive paths whose full-file deep review was deferred</summary>
+/// <summary>Adds mandatory changed-content units before adaptive deep-review work</summary>
 public static class RepositoryAdaptivePlan
 {
     private const int MaxPathsPerMandatoryUnit = 50;
@@ -66,7 +66,7 @@ public static class RepositoryAdaptivePlan
     {
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(files);
-        if (strategy == ReviewStrategy.Exhaustive || plan.Deferred.Count == 0)
+        if (strategy == ReviewStrategy.Exhaustive)
         {
             return plan;
         }
@@ -75,9 +75,9 @@ public static class RepositoryAdaptivePlan
         Dictionary<string, ChangedFile> filesByPath = files.ToDictionary(file => file.Path, comparer);
         string[] mandatoryPaths =
         [
-            .. plan.Deferred
-                .Select(item => item.Path)
-                .Where(path => filesByPath.TryGetValue(path, out ChangedFile? file) && file.Kind != ChangeKind.FullReview)
+            .. files
+                .Where(file => file.Kind != ChangeKind.FullReview)
+                .Select(file => file.Path)
                 .OrderBy(path => path, StringComparer.Ordinal)
         ];
         if (mandatoryPaths.Length == 0)
@@ -92,15 +92,15 @@ public static class RepositoryAdaptivePlan
             for (int index = 0; index < paths.Length; index += MaxPathsPerMandatoryUnit)
             {
                 string[] unitPaths = paths[index..Math.Min(index + MaxPathsPerMandatoryUnit, paths.Length)];
-                mandatoryUnits.Add(new RepositoryReviewUnit($"mandatory-changes-{mandatoryUnits.Count + 1:D3}", 95,
-                    "Mandatory changed-line coverage for paths deferred from adaptive deep review", unitPaths, [], ChangedLinesOnly: true));
+                mandatoryUnits.Add(new RepositoryReviewUnit($"mandatory-changes-{mandatoryUnits.Count + 1:D3}", 0,
+                    "Mandatory changed-line coverage before adaptive deep review", unitPaths, [], ChangedLinesOnly: true));
             }
         }
 
         return plan with
         {
-            Units = [.. plan.Units, .. mandatoryUnits],
-            Diagnostics = [.. plan.Diagnostics, $"controller added {mandatoryUnits.Count} units covering changed content in {mandatoryPaths.Length} adaptively deferred paths"]
+            Units = [.. mandatoryUnits, .. plan.Units],
+            Diagnostics = [.. plan.Diagnostics, $"controller added {mandatoryUnits.Count} leading units covering changed content in {mandatoryPaths.Length} adaptive candidates"]
         };
     }
 

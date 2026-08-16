@@ -27,7 +27,7 @@ public enum ReviewCoverageOutcome
 
 /// <summary>Coverage facts for one candidate path without source or model-response content</summary>
 public sealed record ReviewCoverageEntry(string Path, ChangeKind ChangeKind, bool SelectedForDeepReview, bool DeepReviewDeferred, bool MandatoryChangedContent,
-    ReviewCoverageOutcome Outcome, string? Reason);
+    ReviewCoverageOutcome Outcome, string? Reason, bool CoverageCarryover = false);
 
 /// <summary>Run-level coverage ledger used for reporting and strategy-aware baseline advancement</summary>
 public sealed record ReviewCoverageLedger(ReviewStrategy Strategy, IReadOnlyList<ReviewCoverageEntry> Entries)
@@ -54,11 +54,14 @@ public sealed record ReviewCoverageLedger(ReviewStrategy Strategy, IReadOnlyList
     public int PartialCount => Entries.Count(entry => entry.Outcome == ReviewCoverageOutcome.Partial);
 
     /// <summary>Whether all mandatory work completed under the configured strategy</summary>
-    public bool CanAdvanceBaseline => Entries.All(entry => entry.Outcome is not ReviewCoverageOutcome.Failed and not ReviewCoverageOutcome.Partial
-        && (!entry.MandatoryChangedContent || entry.Outcome is ReviewCoverageOutcome.DeepReviewed or ReviewCoverageOutcome.MandatoryChangesReviewed or ReviewCoverageOutcome.Excluded));
+    public bool CanAdvanceBaseline => Strategy == ReviewStrategy.Exhaustive
+        ? Entries.All(entry => entry.Outcome is ReviewCoverageOutcome.DeepReviewed or ReviewCoverageOutcome.Excluded)
+        : Entries.Where(entry => !entry.CoverageCarryover).All(entry => entry.Outcome is not ReviewCoverageOutcome.Failed and not ReviewCoverageOutcome.Partial
+            && (!entry.MandatoryChangedContent || entry.Outcome is ReviewCoverageOutcome.DeepReviewed or ReviewCoverageOutcome.MandatoryChangesReviewed or ReviewCoverageOutcome.Excluded));
 
     /// <summary>Builds an ordered ledger from the validated plan and aggregate file results</summary>
-    public static ReviewCoverageLedger Create(ReviewStrategy strategy, IReadOnlyList<ChangedFile> files, RepositoryReviewPlan plan, IReadOnlyList<FileReviewResult> results)
+    public static ReviewCoverageLedger Create(ReviewStrategy strategy, IReadOnlyList<ChangedFile> files, RepositoryReviewPlan plan, IReadOnlyList<FileReviewResult> results,
+        IReadOnlySet<string>? coverageCarryoverPaths = null)
     {
         ArgumentNullException.ThrowIfNull(files);
         ArgumentNullException.ThrowIfNull(plan);
@@ -70,18 +73,20 @@ public sealed record ReviewCoverageLedger(ReviewStrategy Strategy, IReadOnlyList
         var deferred = plan.Deferred.ToDictionary(item => item.Path, item => item.Reason, comparer);
         Dictionary<string, FileReviewResult> resultsByPath = results.ToDictionary(result => result.File.Path, comparer);
         var entries = new List<ReviewCoverageEntry>(files.Count);
+        IReadOnlySet<string> carryoverPaths = coverageCarryoverPaths ?? new HashSet<string>(comparer);
         foreach (ChangedFile file in files)
         {
             if (!resultsByPath.TryGetValue(file.Path, out FileReviewResult? result))
             {
                 entries.Add(new ReviewCoverageEntry(file.Path, file.Kind, deepSelected.Contains(file.Path), deferred.ContainsKey(file.Path), mandatorySelected.Contains(file.Path),
-                    ReviewCoverageOutcome.Failed, "aggregate review result was missing"));
+                    ReviewCoverageOutcome.Failed, "aggregate review result was missing", carryoverPaths.Contains(file.Path)));
                 continue;
             }
 
             ReviewCoverageOutcome outcome = Outcome(result, deepSelected.Contains(file.Path), mandatorySelected.Contains(file.Path));
             string? reason = result.SkipReason ?? deferred.GetValueOrDefault(file.Path);
-            entries.Add(new ReviewCoverageEntry(file.Path, file.Kind, deepSelected.Contains(file.Path), deferred.ContainsKey(file.Path), mandatorySelected.Contains(file.Path), outcome, reason));
+            entries.Add(new ReviewCoverageEntry(file.Path, file.Kind, deepSelected.Contains(file.Path), deferred.ContainsKey(file.Path), mandatorySelected.Contains(file.Path), outcome, reason,
+                carryoverPaths.Contains(file.Path)));
         }
 
         return new ReviewCoverageLedger(strategy, entries);

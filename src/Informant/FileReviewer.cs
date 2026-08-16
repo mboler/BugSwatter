@@ -38,10 +38,14 @@ public enum FileReviewFailureKind
 
 /// <summary>Outcome of reviewing one file, with an explicit status separating expected exclusions from failures that must preserve the previous baseline</summary>
 public sealed record FileReviewResult(ChangedFile File, FileReviewStatus Status, string? Findings, int CompletedChunks, int TotalChunks, string? SkipReason, Severity CandidateSeverity = Severity.None,
-    bool CandidateSeverityDetermined = false, FileReviewFailureKind FailureKind = FileReviewFailureKind.None, string? ReviewModelName = null, string? ReviewModelProfile = null)
+    bool CandidateSeverityDetermined = false, FileReviewFailureKind FailureKind = FileReviewFailureKind.None, string? ReviewModelName = null, string? ReviewModelProfile = null,
+    IReadOnlyList<CandidateFinding>? CandidateFindings = null)
 {
     /// <summary>True when every part of the file was reviewed</summary>
     public bool FullyReviewed => Status == FileReviewStatus.Reviewed;
+
+    /// <summary>Structured primary candidates retained for scoping and later disposition</summary>
+    public IReadOnlyList<CandidateFinding> StructuredCandidates => CandidateFindings ?? [];
 }
 
 /// <summary>Metadata describing one source range initially selected by the controller for a model review</summary>
@@ -107,6 +111,7 @@ public sealed class FileReviewer
 
         IReadOnlyList<SourceChunk> chunks = SourceChunker.Split(lines, _maxFileLines, _maxContentCharacters);
         var findings = new StringBuilder();
+        var structuredCandidates = new List<CandidateFinding>();
         Severity candidateSeverity = Severity.None;
         bool candidateSeverityDetermined = true;
 
@@ -121,10 +126,12 @@ public sealed class FileReviewer
             {
                 string reason = $"part {index + 1} of {chunks.Count} failed after {_retryCount} retries";
                 FileReviewStatus status = index == 0 ? FileReviewStatus.Failed : FileReviewStatus.Partial;
-                return new FileReviewResult(file, status, findings.Length > 0 ? findings.ToString() : null, index, chunks.Count, reason, candidateSeverity, false, FileReviewFailureKind.Model);
+                return new FileReviewResult(file, status, findings.Length > 0 ? findings.ToString() : null, index, chunks.Count, reason, candidateSeverity, false, FileReviewFailureKind.Model,
+                    CandidateFindings: structuredCandidates);
             }
 
             candidateSeverityDetermined &= partReview.CandidateSeverityDetermined;
+            structuredCandidates.AddRange(partReview.CandidateFindings);
             if (partReview.CandidateSeverity > candidateSeverity)
             {
                 candidateSeverity = partReview.CandidateSeverity;
@@ -140,7 +147,8 @@ public sealed class FileReviewer
             findings.AppendLine();
         }
 
-        return new FileReviewResult(file, FileReviewStatus.Reviewed, findings.ToString().TrimEnd() + Environment.NewLine, chunks.Count, chunks.Count, null, candidateSeverity, candidateSeverityDetermined);
+        return new FileReviewResult(file, FileReviewStatus.Reviewed, findings.ToString().TrimEnd() + Environment.NewLine, chunks.Count, chunks.Count, null, candidateSeverity, candidateSeverityDetermined,
+            CandidateFindings: structuredCandidates);
     }
 
     private async Task<PrimaryReviewPart?> RunWithRetriesAsync(ChangedFile file, int part, int totalParts, string userPrompt, CancellationToken cancellationToken)
@@ -158,7 +166,7 @@ public sealed class FileReviewer
                     Log.Warning("Review of {Path} part {Part}/{Total} returned no parseable candidate-severity JSON; advanced second-opinion routing will fail safe", file.Path, part, totalParts);
                 }
 
-                return new PrimaryReviewPart(prose, primaryReview?.MaxSeverity ?? Severity.None, parsed);
+                return new PrimaryReviewPart(prose, primaryReview?.MaxSeverity ?? Severity.None, parsed, primaryReview?.Findings ?? []);
             }
             catch (ModelCallException ex)
             {
@@ -169,7 +177,7 @@ public sealed class FileReviewer
         return null;
     }
 
-    private sealed record PrimaryReviewPart(string Findings, Severity CandidateSeverity, bool CandidateSeverityDetermined);
+    private sealed record PrimaryReviewPart(string Findings, Severity CandidateSeverity, bool CandidateSeverityDetermined, IReadOnlyList<CandidateFinding> CandidateFindings);
 
     private void ObserveContextSelection(ReviewContextSelectionEvent selection)
     {

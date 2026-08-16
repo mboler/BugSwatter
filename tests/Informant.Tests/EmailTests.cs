@@ -153,7 +153,7 @@ public sealed class EmailTests : IDisposable
     [Fact]
     public void BuildPreservesConfirmedSeverityAndExplainsIncompleteValidation()
     {
-        var outcome = new SecondOpinionOutcome("v.md", "v.json", Severity.High, 2, 1, 0, 1);
+        var outcome = new SecondOpinionOutcome("v.md", "v.json", Severity.High, 2, 1, 0, 1, 4);
         EmailMessage message = EmailReportBuilder.Build("sender@example.test", ["recipient@example.test"], "repo", "dev", "local.md", outcome, attachReports: false);
 
         Assert.Contains("max confirmed severity High", message.Subject);
@@ -161,6 +161,7 @@ public sealed class EmailTests : IDisposable
         Assert.DoesNotContain("undetermined", message.Subject);
         Assert.Contains("Model request failures: 1", message.Body);
         Assert.Contains("Unparseable structured responses: 1", message.Body);
+        Assert.Contains("Files deferred by the second-opinion budget: 4", message.Body);
         Assert.Contains("successfully parsed files only", message.Body);
         Assert.Empty(message.Attachments);
     }

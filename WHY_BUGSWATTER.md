@@ -24,6 +24,8 @@ BugSwatter rebuilds its repository manifest at the start of every review. It sup
 
 After the first completed review, changed mode focuses on work since the last successful baseline while still allowing unchanged supporting files to be included for context. This keeps routine runs smaller without forcing the model to reason about each changed file in isolation.
 
+Optional primary and second-opinion pass budgets put a graceful ceiling on unattended model work. Adaptive runs keep metadata-only coverage debt for deferred deep review and can carry a bounded number of the oldest still-current paths into later runs. That does not guarantee eventual review when the queue grows faster than the budget, but it makes the tradeoff visible instead of hiding it.
+
 Two review strategies make the coverage tradeoff explicit. Exhaustive review deeply inspects every reviewable candidate. Adaptive review can defer some deep file review when the repository or change set is too large, while still recording what was reviewed, deferred, excluded, partial, or failed. BugSwatter does not claim it reviewed files that it did not review.
 
 The design is repository-aware without being tied to C#, one framework, or one directory layout. Project guidance and seed paths can help it understand an unfamiliar codebase, but the application does not need a language-specific graph before it can begin.

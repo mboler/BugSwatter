@@ -41,7 +41,7 @@ public sealed class ReportWriter
 
     /// <summary>Writes the deterministic metadata header; counts, duration and completion time carry pending markers until <see cref="Finalize"/></summary>
     public void WriteHeader(string repositoryUrl, string branch, ReviewMode mode, string? baselineSha, string tipSha, DateTimeOffset startedAt,
-        ReviewStrategy strategy = ReviewStrategy.Exhaustive)
+        ReviewStrategy strategy = ReviewStrategy.Exhaustive, int? primaryReviewBudgetMinutes = null)
     {
         _startedAt = startedAt;
 
@@ -57,6 +57,7 @@ public sealed class ReportWriter
         builder.AppendLine($"| Branch | {branch} |");
         builder.AppendLine($"| Mode | {mode} |");
         builder.AppendLine($"| Strategy | {strategy} |");
+        builder.AppendLine($"| Primary pass budget | {(primaryReviewBudgetMinutes is null ? "unbounded" : $"{primaryReviewBudgetMinutes} minutes")} |");
         builder.AppendLine($"| Baseline SHA | {baselineSha ?? "(none; first-run candidate universe is the full tree)"} |");
         builder.AppendLine($"| Reviewed tip SHA | {tipSha} |");
         builder.AppendLine($"| Review model | {_modelName} |");
@@ -277,6 +278,27 @@ public sealed class ReportWriter
             builder.AppendLine();
         }
 
+        builder.AppendLine("---");
+        builder.AppendLine();
+        File.AppendAllText(_path, builder.ToString());
+    }
+
+    /// <summary>Appends pass-budget and persistent adaptive coverage-debt accounting</summary>
+    public void AppendReviewControlSummary(ReviewTimeBudget primaryBudget, CoverageDebtSelection debtSelection, int remainingDebtCount)
+    {
+        ArgumentNullException.ThrowIfNull(primaryBudget);
+        ArgumentNullException.ThrowIfNull(debtSelection);
+        ArgumentOutOfRangeException.ThrowIfNegative(remainingDebtCount);
+
+        var builder = new StringBuilder();
+        builder.AppendLine("## Review controls");
+        builder.AppendLine();
+        builder.AppendLine($"Primary pass budget: {(primaryBudget.ConfiguredMinutes is null ? "unbounded" : $"{primaryBudget.ConfiguredMinutes} minutes")}");
+        builder.AppendLine();
+        builder.AppendLine($"Primary budget exhausted: {primaryBudget.IsExhausted}");
+        builder.AppendLine();
+        builder.AppendLine($"Adaptive coverage debt before selection: {debtSelection.PriorCount}; carried into this run: {debtSelection.Carried.Count}; stale entries discarded: {debtSelection.DiscardedStaleCount}; remaining: {remainingDebtCount}");
+        builder.AppendLine();
         builder.AppendLine("---");
         builder.AppendLine();
         File.AppendAllText(_path, builder.ToString());

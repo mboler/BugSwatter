@@ -31,7 +31,7 @@ public sealed class RepositoryReviewPlanner
     /// <summary>Plans every candidate partition and deterministically falls back for invalid or oversized model output</summary>
     public async Task<RepositoryPlanningResult> PlanAsync(RepositoryManifest manifest, RepositoryBriefing briefing, IReadOnlyCollection<string> candidatePaths,
         IReadOnlyCollection<string> mandatoryPaths, bool allowDeferrals, Func<string, string, CancellationToken, Task<string>> modelCall, RepositoryInitialContext? initialContext = null,
-        Action<int, RepositoryContextItem>? contextObserver = null, CancellationToken cancellationToken = default)
+        Action<int, RepositoryContextItem>? contextObserver = null, ReviewTimeBudget? budget = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(manifest);
         ArgumentNullException.ThrowIfNull(briefing);
@@ -66,15 +66,28 @@ public sealed class RepositoryReviewPlanner
             string[] batchMandatory = [.. batchCandidates.Where(mandatory.Contains)];
             RepositoryPlanningPrompt? planningPrompt = partition.WithinCharacterLimit ? BuildUserPrompt(briefing, partition, batchCandidates, allowDeferrals, effectiveInitialContext) : null;
             string? response = null;
-            if (planningPrompt is not null)
+            if (planningPrompt is not null && budget?.IsExhausted == true)
             {
-                response = await modelCall(SystemPrompt, planningPrompt.UserPrompt, cancellationToken);
+                diagnostics.Add($"batch-{batchCount:D3}: primary review budget exhausted before model planning; deterministic grouping used");
+            }
+            else if (planningPrompt is not null)
+            {
                 modelBatchCount++;
                 modelInputCharacters += SystemPrompt.Length + planningPrompt.UserPrompt.Length;
                 initialContextSelectionCount += planningPrompt.InitialContext.Selected.Count;
                 foreach (RepositoryContextItem item in planningPrompt.InitialContext.Selected)
                 {
                     ObserveContext(contextObserver, batchCount, item);
+                }
+
+                using CancellationTokenSource? budgetTokenSource = budget?.CreateLinkedTokenSource(cancellationToken);
+                try
+                {
+                    response = await modelCall(SystemPrompt, planningPrompt.UserPrompt, budgetTokenSource?.Token ?? cancellationToken);
+                }
+                catch (OperationCanceledException) when (budget is not null && !cancellationToken.IsCancellationRequested)
+                {
+                    diagnostics.Add($"batch-{batchCount:D3}: primary review budget expired during model planning; deterministic grouping used");
                 }
             }
 

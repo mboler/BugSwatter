@@ -157,6 +157,36 @@ public sealed class ReviewProgressReporterTests
         Assert.Equal(0, snapshot.LocalUsage.RequestCount);
     }
 
+    [Fact]
+    public void ControllerStateReportsBudgetAndCoverageDebt()
+    {
+        var output = new StringWriter();
+        var reporter = new ReviewProgressReporter(ProgressOutput.Json, output);
+        DateTimeOffset startedUtc = DateTimeOffset.Parse("2026-07-13T08:00:00Z");
+        var primaryBudget = new ReviewBudgetProgressSnapshot
+        {
+            ConfiguredMinutes = 180,
+            StartedUtc = startedUtc,
+            DeadlineUtc = startedUtc.AddMinutes(180),
+            Exhausted = true,
+            StopReason = "Primary review budget exhausted",
+            DeferredCount = 7
+        };
+        var coverageDebt = new ReviewCoverageDebtSnapshot { PriorCount = 20, CarriedCount = 5, RemainingCount = 16, DiscardedStaleCount = 1 };
+
+        reporter.ReportPhase("Primary review");
+        reporter.ReportPrimaryBudget(primaryBudget);
+        reporter.ReportCoverageDebt(coverageDebt);
+
+        ReviewProgressSnapshot snapshot = output.ToString()
+            .Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries)
+            .Select(Parse)
+            .Last();
+
+        Assert.Equal(primaryBudget, snapshot.PrimaryBudget);
+        Assert.Equal(coverageDebt, snapshot.CoverageDebt);
+    }
+
     private static ReviewProgressSnapshot Parse(string line)
     {
         Assert.True(ReviewProgressMarker.TryParse(line, out ReviewProgressSnapshot? snapshot));

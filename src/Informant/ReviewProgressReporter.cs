@@ -24,6 +24,9 @@ public sealed class ReviewProgressReporter
     private readonly UsageAccumulator _localUsage = new();
     private readonly UsageAccumulator _frontierUsage = new();
     private ModelUsagePricing _currentPricing = new(null, null);
+    private ReviewBudgetProgressSnapshot? _primaryBudget;
+    private ReviewBudgetProgressSnapshot? _secondOpinionBudget;
+    private ReviewCoverageDebtSnapshot? _coverageDebt;
 
     /// <summary>Creates a reporter over the selected output mode and destination</summary>
     public ReviewProgressReporter(ProgressOutput outputMode, TextWriter output)
@@ -159,6 +162,27 @@ public sealed class ReviewProgressReporter
     /// <summary>Reports that the Informant run is ending because of a fatal error</summary>
     public void ReportFailed() => ReportPhase("Failed");
 
+    /// <summary>Reports the latest primary pass budget status</summary>
+    public void ReportPrimaryBudget(ReviewBudgetProgressSnapshot budget)
+    {
+        ArgumentNullException.ThrowIfNull(budget);
+        ReportControllerState(() => _primaryBudget = budget);
+    }
+
+    /// <summary>Reports the latest second-opinion pass budget status</summary>
+    public void ReportSecondOpinionBudget(ReviewBudgetProgressSnapshot budget)
+    {
+        ArgumentNullException.ThrowIfNull(budget);
+        ReportControllerState(() => _secondOpinionBudget = budget);
+    }
+
+    /// <summary>Reports the latest adaptive coverage-debt counts</summary>
+    public void ReportCoverageDebt(ReviewCoverageDebtSnapshot debt)
+    {
+        ArgumentNullException.ThrowIfNull(debt);
+        ReportControllerState(() => _coverageDebt = debt);
+    }
+
     private void SetScope(string phase, string? modelName, string? modelProfile, ModelUsagePricing pricing)
     {
         if (!string.Equals(_phase, phase, StringComparison.Ordinal) || !string.Equals(_modelName, modelName, StringComparison.Ordinal)
@@ -190,7 +214,10 @@ public sealed class ReviewProgressReporter
                 RunUsage = _runUsage.Snapshot(),
                 CurrentUsage = _currentUsage.Snapshot(),
                 LocalUsage = _localUsage.Snapshot(),
-                FrontierUsage = _frontierUsage.Snapshot()
+                FrontierUsage = _frontierUsage.Snapshot(),
+                PrimaryBudget = _primaryBudget,
+                SecondOpinionBudget = _secondOpinionBudget,
+                CoverageDebt = _coverageDebt
             };
             _output.WriteLine(ReviewProgressMarker.Format(snapshot));
             _output.Flush();
@@ -199,6 +226,20 @@ public sealed class ReviewProgressReporter
         {
             // catch-all: progress is optional telemetry and must never alter the review outcome
             Log.Warning("Could not write review progress: {Reason}", ex.Message);
+        }
+    }
+
+    private void ReportControllerState(Action update)
+    {
+        if (!_enabled)
+        {
+            return;
+        }
+
+        lock (_gate)
+        {
+            update();
+            WriteSnapshot();
         }
     }
 

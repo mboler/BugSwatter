@@ -15,6 +15,7 @@ public sealed class InformantConfig
     private string? _allowedReadRoot;
     private string _reportDirectory = "reports";
     private string _stateFilePath = "informant.state.json";
+    private string _coverageStateFilePath = "informant.coverage-state.json";
     private string? _reviewPromptFile;
     private string _logFilePath = "logs/informant-.log";
 
@@ -84,6 +85,13 @@ public sealed class InformantConfig
         init => _stateFilePath = value;
     }
 
+    /// <summary>Path of the persistent adaptive coverage-debt state, resolved from the configuration directory when relative</summary>
+    public string CoverageStateFilePath
+    {
+        get => ResolvePath(_coverageStateFilePath);
+        init => _coverageStateFilePath = value;
+    }
+
     /// <summary>Inline review prompt text; when null or empty the prompt file is used instead</summary>
     public string? ReviewPrompt { get; init; }
 
@@ -104,6 +112,12 @@ public sealed class InformantConfig
 
     /// <summary>Target character budget per review call, deliberately kept well below the model's advertised context window</summary>
     public int MaxContextCharacters { get; init; } = 24000;
+
+    /// <summary>Maximum minutes for primary planning and review; null leaves the pass unbounded for backward compatibility</summary>
+    public int? PrimaryReviewBudgetMinutes { get; init; }
+
+    /// <summary>Maximum deferred adaptive paths carried into a later run for deep review; zero disables carryover</summary>
+    public int AdaptiveCarryoverCount { get; init; }
 
     /// <summary>Line count above which a file is chunked at logical boundaries instead of fed whole</summary>
     public int MaxFileLines { get; init; } = 800;
@@ -315,6 +329,16 @@ public sealed class InformantConfig
         RequirePositive(MaxFileBytes, "maxFileBytes");
         RequirePositive(MaxModelResponseBytes, "maxModelResponseBytes");
         RequirePositive(RequestTimeoutSeconds, "requestTimeoutSeconds");
+
+        if (PrimaryReviewBudgetMinutes is <= 0)
+        {
+            throw new InformantFatalException($"primaryReviewBudgetMinutes must be greater than zero when configured, got {PrimaryReviewBudgetMinutes}");
+        }
+
+        if (AdaptiveCarryoverCount < 0)
+        {
+            throw new InformantFatalException($"adaptiveCarryoverCount cannot be negative, got {AdaptiveCarryoverCount}");
+        }
 
         if (ReportRetentionDays != -1 && ReportRetentionDays < 1)
         {

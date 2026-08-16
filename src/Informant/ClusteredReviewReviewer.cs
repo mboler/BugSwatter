@@ -5,7 +5,12 @@ using Serilog;
 namespace Informant;
 
 /// <summary>Attributed findings and severity state for one supplied source part</summary>
-public sealed record ReviewUnitPartResult(ReviewUnitPart Part, string Findings, Severity CandidateSeverity, bool CandidateSeverityDetermined);
+public sealed record ReviewUnitPartResult(ReviewUnitPart Part, string Findings, Severity CandidateSeverity, bool CandidateSeverityDetermined,
+    IReadOnlyList<CandidateFinding>? CandidateFindings = null)
+{
+    /// <summary>Structured candidates attributed to this source part</summary>
+    public IReadOnlyList<CandidateFinding> StructuredCandidates => CandidateFindings ?? [];
+}
 
 /// <summary>Outcome of one clustered model conversation</summary>
 public sealed record ReviewUnitResult(ReviewExecutionUnit Unit, IReadOnlyList<ReviewUnitPartResult> PartResults, FileReviewFailureKind FailureKind, string? FailureReason,
@@ -117,7 +122,7 @@ public static class ClusteredReviewResponseParser
                 : [];
             Severity severity = fileFindings.Select(finding => ParseSeverity(finding.Severity)).DefaultIfEmpty(Severity.None).Max();
             string findings = sections is not null ? sections[part.Id] : BuildStructuredSummary(part, fileFindings);
-            partResults.Add(new ReviewUnitPartResult(part, findings, severity, structuredValid));
+            partResults.Add(new ReviewUnitPartResult(part, findings, severity, structuredValid, fileFindings));
         }
 
         results = partResults;
@@ -267,19 +272,22 @@ public static class ClusteredReviewResultAggregator
             }
 
             List<(ReviewUnitPartResult Part, ReviewUnitResult Unit)> completed = [.. parts.Where(part => successes.ContainsKey(part.Id)).Select(part => successes[part.Id])];
-            bool complete = completed.Count == parts.Length;
             bool deepReviewDeferred = deferred.TryGetValue(file.Path, out string? deepReviewReason);
-            FileReviewStatus status = complete ? deepReviewDeferred ? FileReviewStatus.Deferred : FileReviewStatus.Reviewed : completed.Count == 0 ? FileReviewStatus.Failed : FileReviewStatus.Partial;
+            ReviewUnitPart[] requiredParts = deepReviewDeferred ? [.. parts.Where(part => part.MandatoryChangedContent)] : parts;
+            List<(ReviewUnitPartResult Part, ReviewUnitResult Unit)> requiredCompleted = [.. requiredParts.Where(part => successes.ContainsKey(part.Id)).Select(part => successes[part.Id])];
+            bool complete = requiredParts.Length > 0 && requiredCompleted.Count == requiredParts.Length;
+            FileReviewStatus status = complete ? deepReviewDeferred ? FileReviewStatus.Deferred : FileReviewStatus.Reviewed : requiredCompleted.Count == 0 ? FileReviewStatus.Failed : FileReviewStatus.Partial;
             string? findings = BuildFindings(parts, completed);
             Severity severity = completed.Select(result => result.Part.CandidateSeverity).DefaultIfEmpty(Severity.None).Max();
-            bool severityDetermined = complete && completed.All(result => result.Part.CandidateSeverityDetermined);
+            bool severityDetermined = complete && requiredCompleted.All(result => result.Part.CandidateSeverityDetermined);
+            CandidateFinding[] candidateFindings = [.. completed.SelectMany(result => result.Part.StructuredCandidates)];
             string? reason = complete
                 ? deepReviewDeferred ? $"deep review deferred: {deepReviewReason}; mandatory changed content reviewed" : null
-                : BuildFailureReason(parts, failures, completed.Count);
+                : BuildFailureReason(requiredParts, failures, requiredCompleted.Count);
             string? modelNames = JoinModels(completed.Select(result => result.Unit.ReviewModelName));
             string? modelProfiles = JoinModels(completed.Select(result => result.Unit.ReviewModelProfile));
-            results.Add(new FileReviewResult(file, status, findings, completed.Count, parts.Length, reason, severity, severityDetermined,
-                complete ? FileReviewFailureKind.None : FileReviewFailureKind.Model, modelNames, modelProfiles));
+            results.Add(new FileReviewResult(file, status, findings, requiredCompleted.Count, requiredParts.Length, reason, severity, severityDetermined,
+                complete ? FileReviewFailureKind.None : FileReviewFailureKind.Model, modelNames, modelProfiles, candidateFindings));
         }
 
         return results;

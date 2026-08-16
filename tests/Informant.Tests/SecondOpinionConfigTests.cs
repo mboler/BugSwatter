@@ -25,7 +25,45 @@ public sealed class SecondOpinionConfigTests : IDisposable
         Assert.Equal("https://api.example.test/v1", secondOpinion.Endpoint);
         Assert.Equal("frontier-1", secondOpinion.ModelName);
         Assert.Equal(1800, secondOpinion.RequestTimeoutSeconds);
+        Assert.Equal(SecondOpinionScope.AllReviewed, secondOpinion.Scope);
+        Assert.Equal(0, secondOpinion.MaxCleanFiles);
+        Assert.Null(secondOpinion.ReviewBudgetMinutes);
         Assert.Equal(DefaultSecondOpinionPrompt.Text, secondOpinion.ResolvePrompt());
+    }
+
+    [Fact]
+    public void BoundedScopeAndBudgetAreConfigurable()
+    {
+        WriteConfig(secondOpinion: new Dictionary<string, object?>
+        {
+            ["endpoint"] = "https://api.example.test/v1",
+            ["modelName"] = "frontier-1",
+            ["scope"] = "CandidatePlusSample",
+            ["maxCleanFiles"] = 10,
+            ["reviewBudgetMinutes"] = 60
+        });
+
+        SecondOpinionConfig secondOpinion = InformantConfig.Load(_directory.Path).SecondOpinion!;
+        Assert.Equal(SecondOpinionScope.CandidatePlusSample, secondOpinion.Scope);
+        Assert.Equal(10, secondOpinion.MaxCleanFiles);
+        Assert.Equal(60, secondOpinion.ReviewBudgetMinutes);
+    }
+
+    [Theory]
+    [InlineData(-1, 60)]
+    [InlineData(10, 0)]
+    [InlineData(10, -1)]
+    public void InvalidCleanSampleOrReviewBudgetIsRejected(int maxCleanFiles, int budgetMinutes)
+    {
+        WriteConfig(secondOpinion: new Dictionary<string, object?>
+        {
+            ["endpoint"] = "https://api.example.test/v1",
+            ["modelName"] = "frontier-1",
+            ["maxCleanFiles"] = maxCleanFiles,
+            ["reviewBudgetMinutes"] = budgetMinutes
+        });
+
+        Assert.Throws<InformantFatalException>(() => InformantConfig.Load(_directory.Path));
     }
 
     [Fact]

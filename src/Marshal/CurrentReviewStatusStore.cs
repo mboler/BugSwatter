@@ -49,6 +49,15 @@ public sealed record CurrentReviewActivity
 
     /// <summary>Usage and estimated cost from configurations whose cost rates are present</summary>
     public ReviewUsageSnapshot FrontierUsage { get; init; } = new();
+
+    /// <summary>Current primary pass budget status</summary>
+    public ReviewBudgetProgressSnapshot? PrimaryBudget { get; init; }
+
+    /// <summary>Current second-opinion pass budget status</summary>
+    public ReviewBudgetProgressSnapshot? SecondOpinionBudget { get; init; }
+
+    /// <summary>Adaptive coverage-debt counts for this run</summary>
+    public ReviewCoverageDebtSnapshot? CoverageDebt { get; init; }
 }
 
 /// <summary>Thread-safe current-review store updated by the dispatcher and validated Informant progress lines</summary>
@@ -93,7 +102,10 @@ public sealed class CurrentReviewStatusStore
                 RunUsage = progress.RunUsage,
                 CurrentUsage = progress.CurrentUsage,
                 LocalUsage = progress.LocalUsage,
-                FrontierUsage = progress.FrontierUsage
+                FrontierUsage = progress.FrontierUsage,
+                PrimaryBudget = progress.PrimaryBudget,
+                SecondOpinionBudget = progress.SecondOpinionBudget,
+                CoverageDebt = progress.CoverageDebt
             };
         }
     }

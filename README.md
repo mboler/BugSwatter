@@ -42,7 +42,7 @@ C:\BugSwatter\bin\Informant.exe
 
 On Linux, use `/opt/bugswatter/Informant` and Linux paths instead. `Informant init` creates a commented starter configuration and the default review prompt. Set the repository URL, branch, a dedicated absolute working-tree path, Git executable path, model endpoint, and model name before running `verify`. Optional fallbacks must already be loaded and answering at their configured endpoints; BugSwatter does not manage model processes or GPU placement.
 
-The first run uses the full tracked tree as its candidate universe. The default `exhaustive` strategy deeply reviews every reviewable candidate; `adaptive` may defer full-file review and records that limitation explicitly. Later `changed` runs compare the current tip with the last completed-review baseline. Reports are retained for 31 days by default; set `reportRetentionDays` to `-1` to keep them indefinitely.
+The first run uses the full tracked tree as its candidate universe. The default `exhaustive` strategy deeply reviews every reviewable candidate; `adaptive` may defer full-file review and records that limitation explicitly. Optional pass budgets stop new primary or second-opinion work gracefully, and adaptive coverage debt can carry a bounded number of deferred paths into later runs. Later `changed` runs compare the current tip with the last completed-review baseline. Reports are retained for 31 days by default; set `reportRetentionDays` to `-1` to keep them indefinitely.
 
 ## Why use it
 
@@ -51,6 +51,7 @@ The first run uses the full tracked tree as its candidate universe. The default 
 - **Changed-file reviews:** after the first run, review only changes since the last successfully completed primary review
 - **Repository-aware clusters:** group related files and unchanged supporting context without assuming a language or framework
 - **Honest coverage:** choose exhaustive review or adaptive review with explicit deep-reviewed, changed-content, deferred, excluded, failed, and partial outcomes
+- **Bounded unattended work:** cap primary and second-opinion pass time without losing completed report sections, and carry selected adaptive coverage debt into later runs
 - **Second opinion:** use one validator for every run, or route each complete run to one of as many as three local or cloud model profiles according to its highest primary candidate severity
 - **No agentic harness:** models can request bounded, read-only line ranges through Informant's single application-owned tool, but cannot write files, execute commands, or invoke Git; no MCP server or adapter is involved
 - **Swappable LM Studio models:** use `modelName` `*` to select exactly one already-loaded model without editing job configuration

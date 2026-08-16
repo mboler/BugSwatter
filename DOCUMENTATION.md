@@ -178,11 +178,14 @@ JSON comments and trailing commas are supported.
 | `reportDirectory` | Report and change-list directory | `reports` |
 | `reportRetentionDays` | Days to keep managed report artifacts; `-1` keeps them forever | `31` |
 | `stateFilePath` | Completed-review baseline state | `informant.state.json` |
+| `coverageStateFilePath` | Persistent adaptive deep-review debt | `informant.coverage-state.json` |
 | `reviewPrompt` | Inline primary review prompt | null |
 | `reviewPromptFile` | Prompt file used when inline text is absent | built-in prompt, or `review-prompt.txt` from `init` |
 | `promptIncludeFiles` | Root-level Markdown globs or absolute guidance-file paths appended to the prompt | empty; starter config uses `AGENTS.md` |
 | `seedPaths` | Repository-relative files, directories, or globs prioritized for planning context | empty |
 | `maxContextCharacters` | Character budget per primary review conversation | `24000` |
+| `primaryReviewBudgetMinutes` | Graceful wall-clock limit for primary planning and review; omit for no pass limit | null |
+| `adaptiveCarryoverCount` | Oldest still-current deep-review deferrals added to an adaptive run | `0` |
 | `maxFileLines` | File size in lines above which logical chunking begins | `800` |
 | `maxFileBytes` | Maximum source-file bytes read | `10485760` |
 | `maxModelResponseBytes` | Maximum model response body bytes | `4194304` |
@@ -220,6 +223,10 @@ Each validated unit becomes one or more bounded sequential model conversations c
 | `adaptive` | The model may defer full-file deep review. Incremental changes still receive mandatory changed-line windows with up to 20 surrounding lines. First and full runs may defer complete files, so they can miss defects outside selected units |
 
 Adaptive reports never claim that every file was reviewed. They name deferred paths and distinguish deep review from mandatory changed-content coverage. Use `adaptive` for very large first runs or repositories where bounded sampling is acceptable. Use `exhaustive` when complete required-candidate coverage matters more than time or model cost.
+
+`primaryReviewBudgetMinutes` limits model planning and clustered primary review after the primary endpoint has passed verification. When the deadline is reached, Informant stops starting deep-review units, records the remaining paths as budget deferrals, writes the coverage artifacts, and finishes the run normally. Mandatory changed-content work must still complete before an adaptive changed-review baseline advances. Exhaustive review never advances its baseline after a budget deferral.
+
+Adaptive deferrals are stored as metadata-only coverage debt. `adaptiveCarryoverCount` adds the oldest still-current paths to later runs without replacing current changed work. An entry is discarded when its tracked path disappears or its Git object changes, and completed deep review removes it. Set the count to `0` to record debt without scheduling carryover. The starter configuration uses `25`.
 
 ### Primary-model failover
 
@@ -347,7 +354,10 @@ The optional second opinion sends the primary findings and relevant code excerpt
   "requestTimeoutSeconds": 1800,
   "contextLines": 30,
   "maxFileReads": 5,
-  "reviewSkippedFiles": true
+  "reviewSkippedFiles": true,
+  "scope": "candidatePlusSample",
+  "maxCleanFiles": 10,
+  "reviewBudgetMinutes": 60
 }
 ```
 
@@ -365,8 +375,15 @@ The optional second opinion sends the primary findings and relevant code excerpt
 | `contextLines` | Source lines retained around changed ranges | `30` |
 | `maxFileReads` | Additional repository reads allowed per file when the validator supports tools | `5` |
 | `reviewSkippedFiles` | Ask the validator to review files the primary model could not complete | `true` |
+| `scope` | `allReviewed`, `candidateOnly`, or `candidatePlusSample` | `allReviewed` |
+| `maxCleanFiles` | Maximum deterministic clean-result sample for `candidatePlusSample` | `0` |
+| `reviewBudgetMinutes` | Graceful wall-clock limit for the complete second-opinion pass; omit for no pass limit | null |
 
 This simple form preserves the original behavior: every run uses the one configured validator. `reviewSkippedFiles` can include failed or deterministically excluded primary work, but it does not turn completely deferred adaptive paths into an unbounded second-model sweep. A deferred path is sent only when its mandatory changed-content review produced findings that need validation.
+
+`allReviewed` preserves pre-1.2 behavior. `candidateOnly` sends only primary results with parseable candidate findings. `candidatePlusSample` adds as many as `maxCleanFiles` clean primary results, selected deterministically by change risk and path, so the validator can challenge a bounded sample of apparent negatives. Candidate results are processed before the clean sample and ordered by severity.
+
+When `reviewBudgetMinutes` expires, Informant stops starting validator requests and records every remaining selected result as budget-deferred in both validation reports. The validated severity is then incomplete, email says validation was incomplete, and the primary report and baseline remain intact. A scope that selects no files writes a completed zero-call validation report, which keeps always-send email behavior deterministic.
 
 ### Severity-routed model profiles
 
@@ -491,7 +508,7 @@ Each Informant child has a configurable timeout. Timeout or Marshal shutdown kil
 ```jsonc
 {
   "informantExecutable": "C:\\BugSwatter\\bin\\Informant.exe",
-  "perRunTimeoutMinutes": 360,
+  "perRunTimeoutMinutes": 300,
   "fileWatchDebounceSeconds": 300,
   "logLevel": "Information",
   "logFilePath": "logs/marshal-.log",
@@ -534,6 +551,8 @@ Each Informant child has a configurable timeout. Timeout or Marshal shutdown kil
 | `webServer` | Dashboard, API, and webhook listener settings | null, no listener |
 | `webhook` | Global webhook enablement and secrets | null |
 | `jobs` | Repository job configurations | empty |
+
+The sample uses a 300-minute emergency timeout. Existing configurations that omit `perRunTimeoutMinutes` retain the backward-compatible 360-minute default. Set this hard Marshal limit longer than the combined primary and second-opinion pass budgets so Informant can finish reports and coverage accounting before Marshal terminates the process tree.
 
 Each job supports:
 

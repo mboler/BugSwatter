@@ -10,7 +10,7 @@ public sealed class ReviewCoverageLedgerTests : IDisposable
     /// <inheritdoc />
     public void Dispose() => _directory.Dispose();
 
-    /// <summary>Verifies adaptive deferrals of modified files receive mandatory changed-content units</summary>
+    /// <summary>Verifies every adaptive changed path receives leading mandatory changed-content work</summary>
     [Fact]
     public void AdaptivePlanAddsMandatoryChangedContentForDeferredChanges()
     {
@@ -25,6 +25,7 @@ public sealed class ReviewCoverageLedgerTests : IDisposable
 
         RepositoryReviewUnit unit = Assert.Single(augmented.Units);
         Assert.True(unit.ChangedLinesOnly);
+        Assert.Equal(0, unit.Priority);
         Assert.Equal([files[0].Path], unit.Paths);
         Assert.Equal(2, augmented.Deferred.Count);
     }
@@ -76,6 +77,37 @@ public sealed class ReviewCoverageLedgerTests : IDisposable
 
         Assert.Equal(ReviewCoverageOutcome.Failed, Assert.Single(ledger.Entries).Outcome);
         Assert.False(ledger.CanAdvanceBaseline);
+    }
+
+    [Fact]
+    public void ExhaustiveStrategyCannotAdvanceWithADeferredPath()
+    {
+        var file = new ChangedFile("src/Changed.cs", ChangeKind.Modified, [new LineRange(10, 12)]);
+        RepositoryReviewPlan plan = Plan([], [new RepositoryReviewDeferral(file.Path, "budget exhausted")]);
+        FileReviewResult[] results = [new(file, FileReviewStatus.Deferred, null, 0, 0, "deep review deferred")];
+
+        ReviewCoverageLedger ledger = ReviewCoverageLedger.Create(ReviewStrategy.Exhaustive, [file], plan, results);
+
+        Assert.False(ledger.CanAdvanceBaseline);
+    }
+
+    [Fact]
+    public void FailedCoverageCarryoverDoesNotBlockCurrentAdaptiveBaseline()
+    {
+        var current = new ChangedFile("src/Changed.cs", ChangeKind.Modified, [new LineRange(10, 12)]);
+        var carryover = new ChangedFile("src/Debt.cs", ChangeKind.FullReview, []);
+        RepositoryReviewPlan plan = Plan([new RepositoryReviewUnit("mandatory", 0, "changed", [current.Path], [], ChangedLinesOnly: true)],
+            [new RepositoryReviewDeferral(current.Path, "budget exhausted"), new RepositoryReviewDeferral(carryover.Path, "budget exhausted")]);
+        FileReviewResult[] results =
+        [
+            new(current, FileReviewStatus.Deferred, "reviewed changed lines", 1, 1, "deep review deferred", Severity.None, true),
+            new(carryover, FileReviewStatus.Failed, null, 0, 0, "model failed", FailureKind: FileReviewFailureKind.Model)
+        ];
+        var carryoverPaths = new HashSet<string>(StringComparer.Ordinal) { carryover.Path };
+
+        ReviewCoverageLedger ledger = ReviewCoverageLedger.Create(ReviewStrategy.Adaptive, [current, carryover], plan, results, carryoverPaths);
+
+        Assert.True(ledger.CanAdvanceBaseline);
     }
 
     /// <summary>Verifies the coverage JSON artifact contains metadata but not model findings or source bodies</summary>

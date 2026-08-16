@@ -12,6 +12,9 @@ public sealed class WebEndpointsTests
         Assert.Contains("usageTiles('Local', activity.localUsage)", DashboardPage.Html);
         Assert.Contains("usageTiles('Frontier', activity.frontierUsage)", DashboardPage.Html);
         Assert.Contains("Estimated frontier cost", DashboardPage.Html);
+        Assert.Contains("Primary budget", DashboardPage.Html);
+        Assert.Contains("Second-opinion budget", DashboardPage.Html);
+        Assert.Contains("Coverage debt", DashboardPage.Html);
         Assert.Contains("Estimated cost</th>", DashboardPage.Html);
         Assert.DoesNotContain("Marshal dashboard", DashboardPage.Html);
     }

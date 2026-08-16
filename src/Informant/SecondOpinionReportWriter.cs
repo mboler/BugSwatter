@@ -8,6 +8,7 @@ public sealed class SecondOpinionReportWriter
 {
     private const string PendingValidated = "(pending: files validated)";
     private const string PendingFailed = "(pending: files failed)";
+    private const string PendingBudgetDeferred = "(pending: files deferred by budget)";
     private const string PendingDuration = "(pending: pass duration)";
     private const string PendingCompleted = "(pending: pass completed)";
 
@@ -25,7 +26,8 @@ public sealed class SecondOpinionReportWriter
     public string ReportPath => _path;
 
     /// <summary>Writes the deterministic header; counts, duration and completion time carry pending markers until <see cref="Finalize"/></summary>
-    public void WriteHeader(SecondOpinionModelSelection selection, string sourceReportPath, DateTimeOffset startedAt, int contextLines)
+    public void WriteHeader(SecondOpinionModelSelection selection, string sourceReportPath, DateTimeOffset startedAt, int contextLines, SecondOpinionScope scope = SecondOpinionScope.AllReviewed,
+        int selectedCount = 0, int candidateCount = 0, int cleanSampleCount = 0, int? reviewBudgetMinutes = null)
     {
         ArgumentNullException.ThrowIfNull(selection);
         _startedAt = startedAt;
@@ -44,9 +46,13 @@ public sealed class SecondOpinionReportWriter
         builder.AppendLine($"| Primary candidate severity | {selection.PrimaryClassification.DisplaySeverity} |");
         builder.AppendLine($"| Selection reason | {selection.SelectionReason} |");
         builder.AppendLine($"| Context window | {contextLines} lines around each change |");
+        builder.AppendLine($"| Validation scope | {scope} |");
+        builder.AppendLine($"| Selected primary results | {selectedCount} ({candidateCount} with candidates, {cleanSampleCount} clean samples) |");
+        builder.AppendLine($"| Pass budget | {(reviewBudgetMinutes is null ? "unbounded" : $"{reviewBudgetMinutes} minutes")} |");
         builder.AppendLine($"| Source report | {Path.GetFileName(sourceReportPath)} |");
         builder.AppendLine($"| Files validated | {PendingValidated} |");
         builder.AppendLine($"| Files failed | {PendingFailed} |");
+        builder.AppendLine($"| Files deferred by budget | {PendingBudgetDeferred} |");
         builder.AppendLine();
         builder.AppendLine("Each section below is the second-opinion model's validation of the local reviewer's findings against the actual code: confirmed findings with calibrated severity, discarded findings with the reason, and a verdict. The original local report stands unmodified alongside this one.");
         builder.AppendLine();
@@ -85,13 +91,14 @@ public sealed class SecondOpinionReportWriter
     }
 
     /// <summary>Patches the header counts and duration; the delimiter is the standalone horizontal rule, not the table alignment row</summary>
-    public void Finalize(int validatedCount, int failedCount, TimeSpan duration)
+    public void Finalize(int validatedCount, int failedCount, TimeSpan duration, int budgetDeferredCount = 0)
     {
         string report = File.ReadAllText(_path);
         int headerEnd = report.IndexOf($"{Environment.NewLine}---{Environment.NewLine}", StringComparison.Ordinal);
         string header = headerEnd < 0 ? report : report[..headerEnd];
         header = header.Replace(PendingValidated, validatedCount.ToString());
         header = header.Replace(PendingFailed, failedCount.ToString());
+        header = header.Replace(PendingBudgetDeferred, budgetDeferredCount.ToString());
         header = header.Replace(PendingDuration, $"{(int)duration.TotalHours:00}:{duration.Minutes:00}:{duration.Seconds:00}");
         header = header.Replace(PendingCompleted, $"{_startedAt + duration:yyyy-MM-dd HH:mm:ss zzz}");
         File.WriteAllText(_path, headerEnd < 0 ? header : header + report[headerEnd..]);

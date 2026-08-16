@@ -121,8 +121,40 @@ public sealed class RepositoryReviewPlannerTests
         Assert.True(result.ModelInputCharacters <= 16000 * 55 / 100);
     }
 
+    [Fact]
+    public async Task ExpiredBudgetUsesDeterministicPlanningWithoutCallingModel()
+    {
+        RepositoryManifest manifest = Manifest(Text("src/One.cs"));
+        RepositoryBriefing briefing = new RepositoryBriefingBuilder().Build(manifest, [], 2000);
+        var planner = new RepositoryReviewPlanner(16000);
+        var timeProvider = new TestTimeProvider(DateTimeOffset.UnixEpoch);
+        var budget = new ReviewTimeBudget(1, timeProvider);
+        timeProvider.Advance(TimeSpan.FromMinutes(1));
+        int calls = 0;
+
+        RepositoryPlanningResult result = await planner.PlanAsync(manifest, briefing, ["src/One.cs"], ["src/One.cs"], false,
+            (_, _, _) =>
+            {
+                calls++;
+                return Task.FromResult("{}");
+            }, budget: budget);
+
+        Assert.Equal(0, calls);
+        Assert.True(result.Plan.UsedFallback);
+        Assert.Contains(result.Plan.Diagnostics, diagnostic => diagnostic.Contains("budget exhausted", StringComparison.Ordinal));
+    }
+
     private static RepositoryManifest Manifest(params RepositoryManifestEntry[] entries) =>
         new("repository", "main", "tree", "baseline", "tip", ReviewMode.Changed, "run", DateTimeOffset.UnixEpoch, entries);
+
+    private sealed class TestTimeProvider(DateTimeOffset utcNow) : TimeProvider
+    {
+        private DateTimeOffset _utcNow = utcNow;
+
+        public override DateTimeOffset GetUtcNow() => _utcNow;
+
+        public void Advance(TimeSpan duration) => _utcNow += duration;
+    }
 
     private static RepositoryManifestEntry Text(string path) => new(path, "100644", "blob", "object", 100, 10, "hash", Path.GetExtension(path), !path.Contains('/'),
         RepositoryManifestDisposition.Text, ChangeKind.Modified);

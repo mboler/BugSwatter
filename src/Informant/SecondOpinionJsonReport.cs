@@ -16,15 +16,18 @@ public enum SecondOpinionValidationStatus
     EmptyResponse,
 
     /// <summary>The answer did not contain parseable structured findings</summary>
-    ParseFailed
+    ParseFailed,
+
+    /// <summary>The pass-level budget expired before this file could complete validation</summary>
+    BudgetDeferred
 }
 
 /// <summary>Result of a completed second-opinion pass, carried to the email step</summary>
 public sealed record SecondOpinionOutcome(string ValidatedReportPath, string ValidatedJsonPath, Severity MaxSeverity, int ValidatedCount, int RequestFailureCount, int EmptyResponseCount,
-    int ParseFailureCount)
+    int ParseFailureCount, int BudgetDeferredCount = 0)
 {
     /// <summary>Total files whose second-opinion validation did not complete</summary>
-    public int FailedCount => RequestFailureCount + EmptyResponseCount + ParseFailureCount;
+    public int FailedCount => RequestFailureCount + EmptyResponseCount + ParseFailureCount + BudgetDeferredCount;
 
     /// <summary>True only when every attempted file produced parseable structured findings</summary>
     public bool SeverityDetermined => FailedCount == 0;
@@ -52,8 +55,14 @@ public sealed class SecondOpinionJsonReport
     /// <summary>Number of files whose model response could not be parsed</summary>
     public int ParseFailureCount => _files.Count(file => file.Status == SecondOpinionValidationStatus.ParseFailed);
 
+    /// <summary>Number of files deferred after the pass-level budget expired</summary>
+    public int BudgetDeferredCount => _files.Count(file => file.Status == SecondOpinionValidationStatus.BudgetDeferred);
+
     /// <summary>True only when every attempted file produced parseable structured findings</summary>
     public bool SeverityDetermined => _files.All(file => file.Status == SecondOpinionValidationStatus.Validated);
+
+    /// <summary>Total files whose second-opinion validation did not complete</summary>
+    public int FailedCount => RequestFailureCount + EmptyResponseCount + ParseFailureCount + BudgetDeferredCount;
 
     /// <summary>Records one file's parseable structured validation</summary>
     public void AddValidated(string filePath, IReadOnlyList<LineRange> ranges, ParsedValidation parsed)
@@ -104,6 +113,7 @@ public sealed class SecondOpinionJsonReport
             requestFailureCount = RequestFailureCount,
             emptyResponseCount = EmptyResponseCount,
             parseFailureCount = ParseFailureCount,
+            budgetDeferredCount = BudgetDeferredCount,
             fileCount = _files.Count,
             files = _files
         };

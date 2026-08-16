@@ -21,7 +21,10 @@ public sealed class InformantConfigTests : IDisposable
         Assert.Equal(Path.Combine(_directory.Path, "reports"), config.ReportDirectory);
         Assert.Equal(31, config.ReportRetentionDays);
         Assert.Equal(Path.Combine(_directory.Path, "informant.state.json"), config.StateFilePath);
+        Assert.Equal(Path.Combine(_directory.Path, "informant.coverage-state.json"), config.CoverageStateFilePath);
         Assert.Equal(24000, config.MaxContextCharacters);
+        Assert.Null(config.PrimaryReviewBudgetMinutes);
+        Assert.Equal(0, config.AdaptiveCarryoverCount);
         Assert.Equal(800, config.MaxFileLines);
         Assert.Equal(10 * 1024 * 1024, config.MaxFileBytes);
         Assert.Equal(4 * 1024 * 1024, config.MaxModelResponseBytes);
@@ -59,6 +62,37 @@ public sealed class InformantConfigTests : IDisposable
         WriteConfig(values => values["reviewStrategy"] = "Adaptive");
 
         Assert.Equal(ReviewStrategy.Adaptive, InformantConfig.Load(_directory.Path).ReviewStrategy);
+    }
+
+    [Fact]
+    public void PrimaryReviewBudgetAndCarryoverAreConfigurable()
+    {
+        WriteConfig(values =>
+        {
+            values["primaryReviewBudgetMinutes"] = 180;
+            values["adaptiveCarryoverCount"] = 25;
+            values["coverageStateFilePath"] = "state/coverage.json";
+        });
+
+        InformantConfig config = InformantConfig.Load(_directory.Path);
+        Assert.Equal(180, config.PrimaryReviewBudgetMinutes);
+        Assert.Equal(25, config.AdaptiveCarryoverCount);
+        Assert.Equal(Path.Combine(_directory.Path, "state", "coverage.json"), config.CoverageStateFilePath);
+    }
+
+    [Theory]
+    [InlineData(0, 0)]
+    [InlineData(-1, 0)]
+    [InlineData(1, -1)]
+    public void InvalidPrimaryReviewBudgetOrCarryoverIsRejected(int budgetMinutes, int carryoverCount)
+    {
+        WriteConfig(values =>
+        {
+            values["primaryReviewBudgetMinutes"] = budgetMinutes;
+            values["adaptiveCarryoverCount"] = carryoverCount;
+        });
+
+        Assert.Throws<InformantFatalException>(() => InformantConfig.Load(_directory.Path));
     }
 
     [Fact]

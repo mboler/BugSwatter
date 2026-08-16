@@ -45,10 +45,10 @@ internal static class Program
             }
 
             (InformantConfig config, string configPath) = LoadConfig(arguments);
-            
+
             _consoleLogging = LoggingSetup.Initialize(config.LogLevel, config.LogFilePath, config.ConsoleLogging);
             _loggingReady = true;
-            
+
             Log.Information("Config loaded from {Path}", configPath);
 
             switch (arguments.Command)
@@ -343,6 +343,21 @@ internal static class Program
         await findingTracker.ApplySecondOpinionAsync(config.SecondOpinion is not null, secondOpinionOutcome?.Validations);
         FindingRunSummary findingSummary = findingTracker.WriteArtifact(config.ReportDirectory, runStamp);
         report.AppendFindingSummary(findingSummary);
+
+        if (config.GitHubCheckRun is { } gitHubCheckRun)
+        {
+            progress.ReportPhase("Publishing GitHub Check Run");
+            try
+            {
+                GitHubCheckRunResult checkResult = await new GitHubCheckRunPublisher(SharedHttpClient).PublishAsync(gitHubCheckRun, tipSha, findingTracker.CreateArtifact(), results,
+                    Path.GetFileName(findingSummary.ArtifactPath));
+                Log.Information("GitHub Check Run published with {Published} of {Eligible} eligible changed-line annotations.", checkResult.AnnotationCount, checkResult.EligibleFindingCount);
+            }
+            catch (GitHubCheckRunException ex)
+            {
+                Log.Warning("GitHub Check Run publication failure: {Reason}; completed review and local artifacts remain available.", ex.Message);
+            }
+        }
 
         // Email is gated on a completed second opinion, so it only fires when there is a validated report to send
         if (secondOpinionOutcome is not null && config.Email is { } email)

@@ -15,6 +15,7 @@ BugSwatter consists of `Informant`, which performs one code-review run, and `Mar
 - [Secrets](#secrets)
 - [Reports, baselines, and retention](#reports-baselines-and-retention)
 - [Finding identity, acceptance, and suppression](#finding-identity-acceptance-and-suppression)
+- [GitHub Check Runs](#github-check-runs)
 - [Second opinion](#second-opinion)
 - [Email](#email)
 - [Marshal](#marshal)
@@ -197,6 +198,7 @@ JSON comments and trailing commas are supported.
 | `consoleLogging` | Force console logging on or off; null auto-detects | null |
 | `secondOpinion` | Optional validation model settings | null |
 | `email` | Optional report email settings; requires a second opinion | null |
+| `githubCheckRun` | Optional controller-owned informational GitHub Check Run | null |
 
 Pricing fields are configured as a pair on each model target. Leave both null or omit them for a local model. Supply both fields to classify that target as frontier usage. Set either supplied rate to `0` to count frontier tokens without calculating cost, or set both to positive USD rates per million tokens to show an estimate. Negative or unpaired rates are invalid. Estimates use provider-reported usage and the rates in effect for that request; they are not invoices and may differ from provider billing.
 
@@ -338,6 +340,32 @@ The accepted-finding ledger is application state, separate from the disposable r
 A comment line containing `bugswatter-ignore: <justification>` suppresses a finding anchored on that line or the next significant source line. Informant recognizes common comment prefixes including `//`, `#`, `--`, `;`, `/*`, `*`, `<!--`, `<#`, `'`, and `REM`; it does not treat an unprefixed string literal as an operator instruction. The justification is required. An empty marker does not suppress a finding and appears in suppression health as invalid.
 
 Each completed run writes `Informant-Findings-<timestamp>.json` with the stable fingerprint, structural inputs, validator status, and final `New`, `Known`, or `Suppressed` disposition for every finding. The report includes counts for new, known, and suppressed findings; accepted ledger entries; invalid markers; and suppressions first observed at least 90 days earlier. Suppression observation dates live in the same application state file so age survives report retention.
+
+## GitHub Check Runs
+
+An optional `githubCheckRun` block publishes one completed neutral Check Run for the reviewed commit after BugSwatter has written its local finding artifact. Informant owns the GitHub request. Neither the primary model nor the validator receives the token, GitHub API access, or a new tool.
+
+```jsonc
+"githubCheckRun": {
+  "repository": "your-org/your-repo",
+  "token": "env:INFORMANT_GITHUB_TOKEN",
+  "name": "BugSwatter review"
+}
+```
+
+| Field | Meaning | Default |
+| --- | --- | --- |
+| `repository` | GitHub.com repository in `owner/name` form | required |
+| `token` | Fine-grained personal access token or GitHub App token in an `env:` or `file:` reference | required |
+| `name` | Check name shown on the commit and related pull request | `BugSwatter review` |
+
+Grant the token access only to the configured repository and give it the GitHub `Checks: write` repository permission. A classic personal access token is not supported for creating Check Runs. Keep the token in an environment variable or protected file; a literal token is rejected. `Informant validate` resolves the secret reference but does not create a check or make another GitHub API request.
+
+The Check Run is informational and always concludes `neutral`. BugSwatter annotates only findings that are `New`, are not discarded by the validator, and are anchored to a changed line in a current file. Known findings, suppressed findings, discarded findings, deleted files, unchanged supporting files, and full-review-only files remain in the local artifact without annotations. Eligible annotations are ordered by severity, path, line, and fingerprint. One check contains at most 50 annotations, which is GitHub's limit for one creation request; its summary reports the complete eligible count and names the local finding artifact.
+
+The payload sent to GitHub contains the repository and commit identifiers plus bounded finding metadata such as category, severity, path, line, and model-written summary. It does not include a controller-selected source body, but a model summary can quote source. Treat this option as an intentional disclosure to GitHub. Publication currently targets GitHub.com and does not support a custom GitHub Enterprise Server API URL.
+
+Publishing happens after the local review and finding artifacts complete. A timeout, rejected credential, permission error, or other GitHub failure is logged without failing the review, removing artifacts, sending the token to a log, or changing baseline advancement. BugSwatter does not post pull-request comments or update an existing Check Run. When the reviewed commit is the head of a pull request, GitHub displays the commit's Check Run and eligible annotations in that pull request.
 
 ## Second opinion
 

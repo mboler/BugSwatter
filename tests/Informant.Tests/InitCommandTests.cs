@@ -24,6 +24,7 @@ public sealed class InitCommandTests : IDisposable
         Assert.Contains("\"scope\": \"candidatePlusSample\"", config);
         Assert.Contains("\"maxCleanFiles\": 10", config);
         Assert.Contains("\"reviewBudgetMinutes\": 60", config);
+        Assert.Contains("\"githubCheckRun\": null", config);
         Assert.Contains("Informant never loads models", config);
     }
 }

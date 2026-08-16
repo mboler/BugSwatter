@@ -161,6 +161,9 @@ public sealed class InformantConfig
     /// <summary>Optional report email; only sends when a Second Opinion also completed. Null disables email</summary>
     public EmailConfig? Email { get; init; }
 
+    /// <summary>Optional controller-owned informational GitHub Check Run; null disables publication</summary>
+    public GitHubCheckRunConfig? GitHubCheckRun { get; init; }
+
     /// <summary>Absolute directory the read_file_lines tool is confined to</summary>
     public string ResolvedAllowedReadRoot => string.IsNullOrWhiteSpace(AllowedReadRoot) ? WorkingTreePath : ConfigLoader.ResolvePath(_configDirectory, AllowedReadRoot);
 
@@ -239,7 +242,7 @@ public sealed class InformantConfig
                 }
 
                 Log.Information("Appending {File} ({Length} characters) to the review prompt", Path.GetFileName(file), content.Length);
-                
+
                 builder.AppendLine();
                 builder.AppendLine();
                 builder.AppendLine($"Additional project guidance from {Path.GetFileName(file)}, which the reviewed repository supplies and which takes effect for this review:");
@@ -360,6 +363,7 @@ public sealed class InformantConfig
 
         SecondOpinion?.Validate();
         Email?.Validate();
+        GitHubCheckRun?.Validate();
 
         if (Email is not null && SecondOpinion is null)
         {
@@ -373,6 +377,7 @@ public sealed class InformantConfig
         _pathsResolved = true;
         SecondOpinion?.SetConfigDirectory(configDirectory);
         Email?.SetConfigDirectory(configDirectory);
+        GitHubCheckRun?.SetConfigDirectory(configDirectory);
     }
 
     private string ResolvePath(string configuredPath) => _pathsResolved ? ConfigLoader.ResolvePath(_configDirectory, configuredPath) : configuredPath;

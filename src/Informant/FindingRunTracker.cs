@@ -168,7 +168,7 @@ public sealed class FindingRunTracker
     /// <summary>Writes or replaces the current run artifact and returns report-ready counts</summary>
     public FindingRunSummary WriteArtifact(string reportDirectory, string runStamp)
     {
-        FindingRunArtifact artifact = BuildArtifact();
+        FindingRunArtifact artifact = CreateArtifact();
         string path = FindingArtifactFile.Write(reportDirectory, runStamp, artifact);
         return new FindingRunSummary(path, artifact.Findings.Count(finding => finding.Disposition == FindingDisposition.New),
             artifact.Findings.Count(finding => finding.Disposition == FindingDisposition.Known), artifact.Findings.Count(finding => finding.Disposition == FindingDisposition.Suppressed),
@@ -179,7 +179,8 @@ public sealed class FindingRunTracker
             artifact.StaleSuppressionCount);
     }
 
-    private FindingRunArtifact BuildArtifact()
+    /// <summary>Creates an immutable snapshot of current finding dispositions and validator outcomes</summary>
+    public FindingRunArtifact CreateArtifact()
     {
         DateTimeOffset staleBefore = _timeProvider.GetUtcNow().AddDays(-90);
         int staleSuppressions = _entries

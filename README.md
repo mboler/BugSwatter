@@ -59,6 +59,7 @@ The first run uses the full tracked tree as its candidate universe. The default 
 - **Unattended operation:** run Marshal in the foreground, as a Windows service, or as a systemd service
 - **Machine-wide exclusivity:** allow one Marshal host and one Informant review or verification operation per machine, including across service accounts and interactive sessions
 - **Live review status and cost:** the dashboard separates whole-run, current phase/model, local, and frontier usage, and estimates frontier cost when you configure current per-million-token rates
+- **Optional GitHub feedback:** publish one neutral Check Run with bounded annotations for new findings anchored to changed lines, while keeping the complete finding ledger local
 - **No installer or bundled runtime:** GitHub Releases provide framework-dependent Windows and Linux archives for machines with .NET 10 installed
 
 ## Important safety boundaries

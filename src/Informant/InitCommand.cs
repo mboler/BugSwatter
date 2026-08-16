@@ -116,6 +116,11 @@ public static class InitCommand
           //                  "to": ["dev@you.com"], "acsConnectionString": "env:INFORMANT_ACS_CONNECTION", "sendOn": "high" }
           "email": null,
 
+          // Optional informational GitHub Check Run for new findings on changed lines; null disables it.
+          // token must be an env:VARIABLE_NAME or file:PATH reference with Checks: write permission.
+          // Example: { "repository": "your-org/your-repo", "token": "env:INFORMANT_GITHUB_TOKEN", "name": "BugSwatter review" }
+          "githubCheckRun": null,
+
           "logLevel": "Information",
           "logFilePath": "logs/informant-.log",
 
@@ -142,7 +147,7 @@ public static class InitCommand
         Console.WriteLine($"Wrote {InformantConfig.FileName} and {PromptFileName} to {directory}");
         Console.WriteLine("Edit the config (repository, branch, working tree, git path, model endpoint and name), then run 'Informant verify' to prove tool-calling before the first review run. "
             + "See DOCUMENTATION.md for every option");
-        
+
         return 0;
     }
 }

@@ -98,6 +98,30 @@ public sealed class ValidateCommandTests
         }
     }
 
+    /// <summary>Verifies validation checks the configured GitHub token source without creating a Check Run</summary>
+    [Fact]
+    public async Task GitHubCheckRunTokenIsValidatedWithoutApiCall()
+    {
+        var handler = new StubHttpMessageHandler();
+        handler.Enqueue(HttpStatusCode.OK, "{}");
+        handler.Enqueue(HttpStatusCode.NotFound, "{}");
+        var checkRun = new GitHubCheckRunConfig { Repository = "example/project", Token = "env:INFORMANT_VALIDATE_GITHUB" };
+        InformantConfig config = BuildConfig(withSecondOpinion: false, apiKeyVar: null, gitHubCheckRun: checkRun);
+        string? original = Environment.GetEnvironmentVariable("INFORMANT_VALIDATE_GITHUB");
+        Environment.SetEnvironmentVariable("INFORMANT_VALIDATE_GITHUB", "present");
+        try
+        {
+            IReadOnlyList<ValidationCheck> checks = await ValidateCommand.GatherChecksAsync(config, new HttpClient(handler));
+
+            Assert.True(Assert.Single(checks, check => check.Label == "GitHub Check Run token").Passed);
+            Assert.Equal(2, handler.RequestBodies.Count);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("INFORMANT_VALIDATE_GITHUB", original);
+        }
+    }
+
     [Fact]
     public async Task KeylessLocalSecondOpinionAddsNoKeyCheck()
     {
@@ -251,7 +275,7 @@ public sealed class ValidateCommandTests
         }
         """;
 
-    private static InformantConfig BuildConfig(bool withSecondOpinion, string? apiKeyVar, int maxContextCharacters = 24000) => new()
+    private static InformantConfig BuildConfig(bool withSecondOpinion, string? apiKeyVar, int maxContextCharacters = 24000, GitHubCheckRunConfig? gitHubCheckRun = null) => new()
     {
         RepositoryUrl = "https://example.test/repo.git",
         Branch = "main",
@@ -260,6 +284,7 @@ public sealed class ValidateCommandTests
         ModelEndpoint = "http://localhost:1234/v1",
         ModelName = "test-model",
         MaxContextCharacters = maxContextCharacters,
-        SecondOpinion = withSecondOpinion ? new SecondOpinionConfig { Endpoint = "http://localhost:1235/v1", ModelName = "validator", ApiKey = apiKeyVar is null ? null : $"env:{apiKeyVar}" } : null
+        SecondOpinion = withSecondOpinion ? new SecondOpinionConfig { Endpoint = "http://localhost:1235/v1", ModelName = "validator", ApiKey = apiKeyVar is null ? null : $"env:{apiKeyVar}" } : null,
+        GitHubCheckRun = gitHubCheckRun
     };
 }

@@ -42,6 +42,7 @@ BugSwatter reduces model privileges, but it is not a security boundary for an un
 - Marshal's dashboard and API use unauthenticated HTTP. They are intended only for localhost, a trusted internal network, or a protected VPN
 - Any client that reaches the dashboard API can inspect operational metadata, including current file and model names and provider-reported usage, enqueue reviews, and remove waiting reviews
 - GitHub webhook signatures authenticate payloads but do not encrypt HTTP traffic
+- Optional GitHub Check Runs send bounded finding metadata and model-written summaries to GitHub. A summary can quote source even though BugSwatter does not select source bodies for the payload.
 - Azure DevOps webhook Basic credentials are exposed to anyone who can observe an unprotected HTTP path
 - Repository polling uses outbound Git and avoids opening an inbound port, but still relies on the service account's Git credentials
 - LocalSystem on Windows and root on Linux give Marshal extensive machine privileges. A dedicated least-privilege account limits impact
@@ -54,7 +55,7 @@ The first public release intentionally does not provide dashboard authentication
 
 Never commit passwords, API keys, ACS connection strings, personal access tokens, SSH private keys, webhook secrets, or configuration files containing them.
 
-Informant model API, SMTP, and ACS secrets must use `env:` or `file:` references, including API keys declared inside second-opinion model profiles. Windows service passwords supplied to the installer also require a reference. Marshal webhook secrets additionally permit literals for small internal deployments; when using a literal, protect the configuration file as a secret.
+Informant model API, SMTP, ACS, and GitHub Check Run secrets must use `env:` or `file:` references, including API keys declared inside second-opinion model profiles. Windows service passwords supplied to the installer also require a reference. Marshal webhook secrets additionally permit literals for small internal deployments; when using a literal, protect the configuration file as a secret.
 
 Prefer narrowly scoped, read-only repository credentials. Restrict secret files to the Marshal service identity and rotate a credential if it appears in a log, report, command history, issue, test artifact, or commit.
 

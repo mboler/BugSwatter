@@ -14,6 +14,7 @@ BugSwatter consists of `Informant`, which performs one code-review run, and `Mar
 - [Environment-variable overrides](#environment-variable-overrides)
 - [Secrets](#secrets)
 - [Reports, baselines, and retention](#reports-baselines-and-retention)
+- [Finding identity, acceptance, and suppression](#finding-identity-acceptance-and-suppression)
 - [Second opinion](#second-opinion)
 - [Email](#email)
 - [Marshal](#marshal)
@@ -310,6 +311,24 @@ In `changed` mode, the first run uses the full tracked tree as its candidate uni
 When the tip already equals the baseline, Informant writes no report artifacts. If rewritten history makes the baseline unreachable, Informant performs a full review instead of remaining stuck.
 
 At the beginning of each run, retention deletes top-level managed artifacts whose last-write time is older than `reportRetentionDays`. The default is 31 days. Set `-1` to keep reports forever. Retention recognizes only exact Informant report, change-list, manifest, coverage, and trace filename patterns, does not recurse into subdirectories, does not delete logs or state, and refuses symbolic-link or reparse-point artifacts and directories. Cleanup failures are logged but do not prevent the review.
+
+## Finding identity, acceptance, and suppression
+
+BugSwatter assigns a versioned structural fingerprint to every parsed finding before it decides whether the finding is new, known, or suppressed. The fingerprint does not use model prose because wording is nondeterministic. Fingerprint version 1 hashes these normalized fields with SHA-256:
+
+1. The Git-relative path, normalized to Unicode Form C with `/` separators and no leading `./`
+2. A coarse finding category from the structured model response
+3. A source anchor made from the significant source line nearest the reported line plus its nearest significant predecessor and successor
+
+Whitespace inside each anchor line is collapsed, while source text and Git-path casing remain significant. Inserting unrelated lines above an unchanged finding therefore preserves its fingerprint. Moving or materially editing the anchored code normally creates a new fingerprint.
+
+Two failure modes are unavoidable. A false merge treats distinct defects as one finding and may hide a new problem behind an accepted or suppressed record. A false split gives one defect a new identity after a meaningful code or category change and reports it again. BugSwatter deliberately prefers false splits because repeating a finding is safer than suppressing a distinct defect.
+
+The accepted-finding ledger is application state, separate from the disposable review clone. Its default location is `informant.findings.json` beside the Informant configuration, and `findingStateFilePath` can select another path. `Informant accept-findings` copies every new finding from the latest managed finding artifact into that ledger with its fingerprint, acceptance time, source location, category, and summary. A later run reports matching entries as known instead of new. Acceptance does not change source and does not advance the Git review baseline.
+
+An inline comment containing `bugswatter-ignore: <justification>` suppresses a finding anchored on the same line or the next significant source line. The syntax is language-agnostic because Informant searches comment text rather than parsing one programming language. The justification is required. An empty marker does not suppress a finding and appears in suppression health as invalid.
+
+Each completed run writes `Informant-Findings-<timestamp>.json` with the stable fingerprint, structural inputs, validator status, and final `New`, `Known`, or `Suppressed` disposition for every finding. The report includes counts for new, known, and suppressed findings; accepted ledger entries; invalid markers; and suppressions first observed at least 90 days earlier. Suppression observation dates live in the same application state file so age survives report retention.
 
 ## Second opinion
 

@@ -1,10 +1,12 @@
 # Why BugSwatter?
 
-*An extra set of eyes while you sleep, without sending every nightly review to an expensive cloud model.*
+*Repository-aware review while you sleep, without sending every nightly read to an expensive cloud model.*
 
-BugSwatter is built around a simple split: use a local model for broad, repetitive review work, then let one optional second model challenge the findings that survived the first pass. That second model can be a stronger cloud model, another local model, or nothing at all.
+Pull-request review usually sees a diff. BugSwatter plans review clusters from a fresh whole-repository manifest, so changed files can be examined with the unchanged supporting code they depend on. That is useful when the defect sits in a relationship the diff does not show.
 
-The result is not a promise of perfect review. It is a practical way to add consistent, unattended scrutiny while keeping control of source exposure, hardware use, and cloud spending.
+BugSwatter then applies a simple split: use a local model for broad, repetitive review work, and let one optional second model challenge the findings that survive the first pass. That validator can be a stronger cloud model, another local model, or nothing at all.
+
+The result is not a promise of perfect review. It is a practical way to add consistent, unattended scrutiny while keeping control of source exposure, hardware use, and cloud spending. The [finding case studies](findings/README.md) show the kinds of cross-file and lifecycle defects this approach has surfaced in real runs.
 
 ## Spend cloud tokens on judgment, not bulk reading
 
@@ -21,6 +23,8 @@ BugSwatter selects one validator for a run. It does not fan every review out to 
 BugSwatter rebuilds its repository manifest at the start of every review. It supplies bounded root guidance, configured seed material, changed source, and repository structure, then asks the primary model to group related files into review clusters. Invalid model planning falls back to deterministic clusters so required work is not silently discarded.
 
 After the first completed review, changed mode focuses on work since the last successful baseline while still allowing unchanged supporting files to be included for context. This keeps routine runs smaller without forcing the model to reason about each changed file in isolation.
+
+Optional primary and second-opinion pass budgets put a graceful ceiling on unattended model work. Adaptive runs keep metadata-only coverage debt for deferred deep review and can carry a bounded number of the oldest still-current paths into later runs. That does not guarantee eventual review when the queue grows faster than the budget, but it makes the tradeoff visible instead of hiding it.
 
 Two review strategies make the coverage tradeoff explicit. Exhaustive review deeply inspects every reviewable candidate. Adaptive review can defer some deep file review when the repository or change set is too large, while still recording what was reviewed, deferred, excluded, partial, or failed. BugSwatter does not claim it reviewed files that it did not review.
 
@@ -40,7 +44,9 @@ Informant does use controlled Git commands to maintain its dedicated review clon
 
 Informant can run by itself for one review. Marshal adds schedules, outbound repository polling, filesystem triggers, webhooks, a trusted-network dashboard, report retention, and email delivery. Primary endpoints can have ordered fallbacks, provided the models are already running. BugSwatter does not load models or manage GPU placement.
 
-A changed-review baseline advances only after the primary review completes successfully. Reports preserve coverage and failure information, and the dashboard can show the current phase, file, elapsed time, model request state, and provider-reported token use. The intent is straightforward: make unattended operation understandable when it works and diagnosable when it does not.
+A changed-review baseline advances only after the primary review completes successfully. Stable structural finding fingerprints let a maintainer accept current findings as known or suppress a specific source location with a required justification. Later reports separate new, known, and suppressed findings instead of turning an unchanged concern into nightly noise.
+
+Reports preserve coverage and failure information, and the dashboard can show the current phase, file, elapsed time, model request state, and provider-reported token use. The intent is straightforward: make unattended operation understandable when it works and diagnosable when it does not.
 
 ## The tradeoffs are real
 

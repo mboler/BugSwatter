@@ -2,6 +2,19 @@ using BugSwatter.Common;
 
 namespace Informant;
 
+/// <summary>Source-result scope sent through the optional second-opinion pass</summary>
+public enum SecondOpinionScope
+{
+    /// <summary>Validate every primary result as in earlier releases</summary>
+    AllReviewed,
+
+    /// <summary>Validate only results containing structured primary candidates</summary>
+    CandidateOnly,
+
+    /// <summary>Validate structured candidates plus a bounded deterministic sample of clean results</summary>
+    CandidatePlusSample
+}
+
 /// <summary>One OpenAI-compatible model available to the optional second-opinion pass</summary>
 public sealed record SecondOpinionModelProfile
 {
@@ -117,6 +130,15 @@ public sealed record SecondOpinionConfig
     /// <summary>When true the validator also looks at files the local reviewer could not review</summary>
     public bool ReviewSkippedFiles { get; init; } = true;
 
+    /// <summary>Which primary results enter second-opinion validation</summary>
+    public SecondOpinionScope Scope { get; init; } = SecondOpinionScope.AllReviewed;
+
+    /// <summary>Maximum clean primary results added when scope is candidatePlusSample</summary>
+    public int MaxCleanFiles { get; init; }
+
+    /// <summary>Maximum minutes for the complete second-opinion pass; null leaves the pass unbounded for backward compatibility</summary>
+    public int? ReviewBudgetMinutes { get; init; }
+
     /// <summary>Inline validation prompt text; when null or empty the prompt file is used instead</summary>
     public string? Prompt { get; init; }
 
@@ -222,6 +244,21 @@ public sealed record SecondOpinionConfig
         if (MaxFileReads < 0)
         {
             throw new InformantFatalException($"secondOpinion.maxFileReads cannot be negative, got {MaxFileReads}");
+        }
+
+        if (!Enum.IsDefined(Scope))
+        {
+            throw new InformantFatalException($"secondOpinion.scope is not supported: {Scope}");
+        }
+
+        if (MaxCleanFiles < 0)
+        {
+            throw new InformantFatalException($"secondOpinion.maxCleanFiles cannot be negative, got {MaxCleanFiles}");
+        }
+
+        if (ReviewBudgetMinutes is <= 0)
+        {
+            throw new InformantFatalException($"secondOpinion.reviewBudgetMinutes must be greater than zero when configured, got {ReviewBudgetMinutes}");
         }
     }
 

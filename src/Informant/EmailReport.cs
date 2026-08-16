@@ -49,6 +49,7 @@ public static class EmailReportBuilder
         body.AppendLine($"Model request failures: {outcome.RequestFailureCount}");
         body.AppendLine($"Empty model responses: {outcome.EmptyResponseCount}");
         body.AppendLine($"Unparseable structured responses: {outcome.ParseFailureCount}");
+        body.AppendLine($"Files deferred by the second-opinion budget: {outcome.BudgetDeferredCount}");
         body.AppendLine($"Highest confirmed severity: {outcome.MaxSeverity}");
         if (!outcome.SeverityDetermined)
         {

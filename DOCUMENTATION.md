@@ -14,6 +14,8 @@ BugSwatter consists of `Informant`, which performs one code-review run, and `Mar
 - [Environment-variable overrides](#environment-variable-overrides)
 - [Secrets](#secrets)
 - [Reports, baselines, and retention](#reports-baselines-and-retention)
+- [Finding identity, acceptance, and suppression](#finding-identity-acceptance-and-suppression)
+- [GitHub Check Runs](#github-check-runs)
 - [Second opinion](#second-opinion)
 - [Email](#email)
 - [Marshal](#marshal)
@@ -68,7 +70,7 @@ Download the Windows archive and `SHA256SUMS.txt` from the same GitHub Release. 
 The Windows executables are not code-signed, so Windows may identify them as coming from an unknown publisher or display a SmartScreen warning. Download releases only from this GitHub repository, and proceed only after the archive's checksum matches `SHA256SUMS.txt`.
 
 ```powershell
-$version = "1.0.0"
+$version = "1.2.0"
 Get-FileHash ".\BugSwatter-$version-win-x64.zip" -Algorithm SHA256
 Expand-Archive ".\BugSwatter-$version-win-x64.zip" -DestinationPath C:\BugSwatter\releases
 Move-Item "C:\BugSwatter\releases\BugSwatter-$version-win-x64" C:\BugSwatter\bin
@@ -84,7 +86,7 @@ Install Git and your distribution's .NET 10 and ASP.NET Core 10 runtime packages
 After comparing the archive's SHA-256 value with `SHA256SUMS.txt`:
 
 ```bash
-VERSION=1.0.0
+VERSION=1.2.0
 sudo mkdir -p /opt/bugswatter
 sudo tar -xzf "BugSwatter-${VERSION}-linux-x64.tar.gz" -C /opt/bugswatter --strip-components=1
 sudo chmod 755 /opt/bugswatter/Informant /opt/bugswatter/Marshal
@@ -177,11 +179,15 @@ JSON comments and trailing commas are supported.
 | `reportDirectory` | Report and change-list directory | `reports` |
 | `reportRetentionDays` | Days to keep managed report artifacts; `-1` keeps them forever | `31` |
 | `stateFilePath` | Completed-review baseline state | `informant.state.json` |
+| `coverageStateFilePath` | Persistent adaptive deep-review debt | `informant.coverage-state.json` |
+| `findingStateFilePath` | Persistent accepted-finding and suppression ledger | `informant.findings.json` |
 | `reviewPrompt` | Inline primary review prompt | null |
 | `reviewPromptFile` | Prompt file used when inline text is absent | built-in prompt, or `review-prompt.txt` from `init` |
 | `promptIncludeFiles` | Root-level Markdown globs or absolute guidance-file paths appended to the prompt | empty; starter config uses `AGENTS.md` |
 | `seedPaths` | Repository-relative files, directories, or globs prioritized for planning context | empty |
 | `maxContextCharacters` | Character budget per primary review conversation | `24000` |
+| `primaryReviewBudgetMinutes` | Graceful wall-clock limit for primary planning and review; omit for no pass limit | null |
+| `adaptiveCarryoverCount` | Oldest still-current deep-review deferrals added to an adaptive run | `0` |
 | `maxFileLines` | File size in lines above which logical chunking begins | `800` |
 | `maxFileBytes` | Maximum source-file bytes read | `10485760` |
 | `maxModelResponseBytes` | Maximum model response body bytes | `4194304` |
@@ -192,6 +198,7 @@ JSON comments and trailing commas are supported.
 | `consoleLogging` | Force console logging on or off; null auto-detects | null |
 | `secondOpinion` | Optional validation model settings | null |
 | `email` | Optional report email settings; requires a second opinion | null |
+| `githubCheckRun` | Optional controller-owned informational GitHub Check Run | null |
 
 Pricing fields are configured as a pair on each model target. Leave both null or omit them for a local model. Supply both fields to classify that target as frontier usage. Set either supplied rate to `0` to count frontier tokens without calculating cost, or set both to positive USD rates per million tokens to show an estimate. Negative or unpaired rates are invalid. Estimates use provider-reported usage and the rates in effect for that request; they are not invoices and may differ from provider billing.
 
@@ -219,6 +226,10 @@ Each validated unit becomes one or more bounded sequential model conversations c
 | `adaptive` | The model may defer full-file deep review. Incremental changes still receive mandatory changed-line windows with up to 20 surrounding lines. First and full runs may defer complete files, so they can miss defects outside selected units |
 
 Adaptive reports never claim that every file was reviewed. They name deferred paths and distinguish deep review from mandatory changed-content coverage. Use `adaptive` for very large first runs or repositories where bounded sampling is acceptable. Use `exhaustive` when complete required-candidate coverage matters more than time or model cost.
+
+`primaryReviewBudgetMinutes` limits model planning and clustered primary review after the primary endpoint has passed verification. When the deadline is reached, Informant stops starting deep-review units, records the remaining paths as budget deferrals, writes the coverage artifacts, and finishes the run normally. Mandatory changed-content work must still complete before an adaptive changed-review baseline advances. Exhaustive review never advances its baseline after a budget deferral. The starter configuration uses 180 minutes; an existing configuration that omits the field has no primary-pass limit.
+
+Adaptive deferrals are stored as metadata-only coverage debt. `adaptiveCarryoverCount` adds the oldest still-current paths to later runs without replacing current changed work. An entry is discarded when its tracked path disappears or its Git object changes, and completed deep review removes it. Set the count to `0` to record debt without scheduling carryover. The starter configuration uses `25`.
 
 ### Primary-model failover
 
@@ -293,6 +304,7 @@ A review with work to do writes:
 - `Informant-Changes-<timestamp>.json`
 - `Informant-Manifest-<timestamp>.json`
 - `Informant-Coverage-<timestamp>.json`
+- `Informant-Findings-<timestamp>.json`
 - `Informant-Trace-<timestamp>.jsonl`
 - `Informant-Report-<timestamp>-validated.md` when the second opinion completes
 - `Informant-Report-<timestamp>-validated.json` when the second opinion completes
@@ -309,7 +321,51 @@ In `changed` mode, the first run uses the full tracked tree as its candidate uni
 
 When the tip already equals the baseline, Informant writes no report artifacts. If rewritten history makes the baseline unreachable, Informant performs a full review instead of remaining stuck.
 
-At the beginning of each run, retention deletes top-level managed artifacts whose last-write time is older than `reportRetentionDays`. The default is 31 days. Set `-1` to keep reports forever. Retention recognizes only exact Informant report, change-list, manifest, coverage, and trace filename patterns, does not recurse into subdirectories, does not delete logs or state, and refuses symbolic-link or reparse-point artifacts and directories. Cleanup failures are logged but do not prevent the review.
+At the beginning of each run, retention deletes top-level managed artifacts whose last-write time is older than `reportRetentionDays`. The default is 31 days. Set `-1` to keep reports forever. Retention recognizes only exact Informant report, change-list, manifest, coverage, finding, and trace filename patterns, does not recurse into subdirectories, does not delete logs or state, and refuses symbolic-link or reparse-point artifacts and directories. Cleanup failures are logged but do not prevent the review.
+
+## Finding identity, acceptance, and suppression
+
+BugSwatter assigns a versioned structural fingerprint to every parsed finding before it decides whether the finding is new, known, or suppressed. The fingerprint does not use model prose because wording is nondeterministic. Fingerprint version 1 hashes these normalized fields with SHA-256:
+
+1. The Git-relative path, normalized to Unicode Form C with `/` separators and no leading `./`
+2. A coarse finding category from the structured model response
+3. A source anchor made from the significant source line nearest the reported line plus its nearest significant predecessor and successor
+
+Whitespace inside each anchor line is collapsed, while source text and Git-path casing remain significant. Inserting unrelated lines above an unchanged finding therefore preserves its fingerprint. Moving or materially editing the anchored code normally creates a new fingerprint.
+
+Two failure modes are unavoidable. A false merge treats distinct defects as one finding and may hide a new problem behind an accepted or suppressed record. A false split gives one defect a new identity after a meaningful code or category change and reports it again. BugSwatter deliberately prefers false splits because repeating a finding is safer than suppressing a distinct defect.
+
+The accepted-finding ledger is application state, separate from the disposable review clone. Its default location is `informant.findings.json` beside the Informant configuration, and `findingStateFilePath` can select another path. `Informant accept-findings` copies every new finding from the latest managed finding artifact into that ledger with its fingerprint, acceptance time, source location, category, and summary. A later run reports matching entries as known instead of new. Acceptance does not change source and does not advance the Git review baseline.
+
+A comment line containing `bugswatter-ignore: <justification>` suppresses a finding anchored on that line or the next significant source line. Informant recognizes common comment prefixes including `//`, `#`, `--`, `;`, `/*`, `*`, `<!--`, `<#`, `'`, and `REM`; it does not treat an unprefixed string literal as an operator instruction. The justification is required. An empty marker does not suppress a finding and appears in suppression health as invalid.
+
+Each completed run writes `Informant-Findings-<timestamp>.json` with the stable fingerprint, structural inputs, validator status, and final `New`, `Known`, or `Suppressed` disposition for every finding. The report includes counts for new, known, and suppressed findings; accepted ledger entries; invalid markers; and suppressions first observed at least 90 days earlier. Suppression observation dates live in the same application state file so age survives report retention.
+
+## GitHub Check Runs
+
+An optional `githubCheckRun` block publishes one completed neutral Check Run for the reviewed commit after BugSwatter has written its local finding artifact. Informant owns the GitHub request. Neither the primary model nor the validator receives the token, GitHub API access, or a new tool.
+
+```jsonc
+"githubCheckRun": {
+  "repository": "your-org/your-repo",
+  "token": "env:INFORMANT_GITHUB_TOKEN",
+  "name": "BugSwatter review"
+}
+```
+
+| Field | Meaning | Default |
+| --- | --- | --- |
+| `repository` | GitHub.com repository in `owner/name` form | required |
+| `token` | Fine-grained personal access token or GitHub App token in an `env:` or `file:` reference | required |
+| `name` | Check name shown on the commit and related pull request | `BugSwatter review` |
+
+Grant the token access only to the configured repository and give it the GitHub `Checks: write` repository permission. A classic personal access token is not supported for creating Check Runs. Keep the token in an environment variable or protected file; a literal token is rejected. `Informant validate` resolves the secret reference but does not create a check or make another GitHub API request.
+
+The Check Run is informational and always concludes `neutral`. BugSwatter annotates only findings that are `New`, are not discarded by the validator, and are anchored to a changed line in a current file. Known findings, suppressed findings, discarded findings, deleted files, unchanged supporting files, and full-review-only files remain in the local artifact without annotations. Eligible annotations are ordered by severity, path, line, and fingerprint. One check contains at most 50 annotations, which is GitHub's limit for one creation request; its summary reports the complete eligible count and names the local finding artifact.
+
+The payload sent to GitHub contains the repository and commit identifiers plus bounded finding metadata such as category, severity, path, line, and model-written summary. It does not include a controller-selected source body, but a model summary can quote source. Treat this option as an intentional disclosure to GitHub. Publication currently targets GitHub.com and does not support a custom GitHub Enterprise Server API URL.
+
+Publishing happens after the local review and finding artifacts complete. A timeout, rejected credential, permission error, or other GitHub failure is logged without failing the review, removing artifacts, sending the token to a log, or changing baseline advancement. BugSwatter does not post pull-request comments or update an existing Check Run. When the reviewed commit is the head of a pull request, GitHub displays the commit's Check Run and eligible annotations in that pull request.
 
 ## Second opinion
 
@@ -328,7 +384,10 @@ The optional second opinion sends the primary findings and relevant code excerpt
   "requestTimeoutSeconds": 1800,
   "contextLines": 30,
   "maxFileReads": 5,
-  "reviewSkippedFiles": true
+  "reviewSkippedFiles": true,
+  "scope": "candidatePlusSample",
+  "maxCleanFiles": 10,
+  "reviewBudgetMinutes": 60
 }
 ```
 
@@ -346,8 +405,15 @@ The optional second opinion sends the primary findings and relevant code excerpt
 | `contextLines` | Source lines retained around changed ranges | `30` |
 | `maxFileReads` | Additional repository reads allowed per file when the validator supports tools | `5` |
 | `reviewSkippedFiles` | Ask the validator to review files the primary model could not complete | `true` |
+| `scope` | `allReviewed`, `candidateOnly`, or `candidatePlusSample` | `allReviewed` |
+| `maxCleanFiles` | Maximum deterministic clean-result sample for `candidatePlusSample` | `0` |
+| `reviewBudgetMinutes` | Graceful wall-clock limit for the complete second-opinion pass; omit for no pass limit | null |
 
 This simple form preserves the original behavior: every run uses the one configured validator. `reviewSkippedFiles` can include failed or deterministically excluded primary work, but it does not turn completely deferred adaptive paths into an unbounded second-model sweep. A deferred path is sent only when its mandatory changed-content review produced findings that need validation.
+
+`allReviewed` preserves pre-1.2 behavior. `candidateOnly` sends only primary results with parseable candidate findings. `candidatePlusSample` adds as many as `maxCleanFiles` clean primary results, selected deterministically by change risk and path, so the validator can challenge a bounded sample of apparent negatives. Candidate results are processed before the clean sample and ordered by severity. The starter example uses `candidatePlusSample`, 10 clean files, and a 60-minute second-opinion budget.
+
+When `reviewBudgetMinutes` expires, Informant stops starting validator requests and records every remaining selected result as budget-deferred in both validation reports. The validated severity is then incomplete, email says validation was incomplete, and the primary report and baseline remain intact. A scope that selects no files writes a completed zero-call validation report, which keeps always-send email behavior deterministic.
 
 ### Severity-routed model profiles
 
@@ -472,7 +538,7 @@ Each Informant child has a configurable timeout. Timeout or Marshal shutdown kil
 ```jsonc
 {
   "informantExecutable": "C:\\BugSwatter\\bin\\Informant.exe",
-  "perRunTimeoutMinutes": 360,
+  "perRunTimeoutMinutes": 300,
   "fileWatchDebounceSeconds": 300,
   "logLevel": "Information",
   "logFilePath": "logs/marshal-.log",
@@ -515,6 +581,8 @@ Each Informant child has a configurable timeout. Timeout or Marshal shutdown kil
 | `webServer` | Dashboard, API, and webhook listener settings | null, no listener |
 | `webhook` | Global webhook enablement and secrets | null |
 | `jobs` | Repository job configurations | empty |
+
+The sample uses a 300-minute emergency timeout. Existing configurations that omit `perRunTimeoutMinutes` retain the backward-compatible 360-minute default. Set this hard Marshal limit longer than the combined primary and second-opinion pass budgets so Informant can finish reports and coverage accounting before Marshal terminates the process tree.
 
 Each job supports:
 
@@ -751,7 +819,7 @@ Build local framework-dependent release archives with:
 
 The Linux archive should be produced on Linux so executable permission bits are set correctly. The script reads the version from `Directory.Build.props`, refuses to overwrite an existing archive, and can validate an expected `v<version>` tag.
 
-GitHub Actions runs build, test, dependency policy, vulnerability reporting, and package smoke tests on Windows and Linux for pushes and pull requests. Pushing a tag such as `v1.0.0` first runs the same CI, builds both archives, writes `SHA256SUMS.txt`, and creates a GitHub Release. The tag must exactly match the version in `Directory.Build.props`. Release packages remain framework-dependent and do not bundle .NET.
+GitHub Actions runs build, test, dependency policy, vulnerability reporting, and package smoke tests on Windows and Linux for pushes and pull requests. Pushing a tag such as `v1.2.0` first runs the same CI, builds both archives, writes `SHA256SUMS.txt`, and creates a GitHub Release. The tag must exactly match the version in `Directory.Build.props`. Release packages remain framework-dependent and do not bundle .NET.
 
 Opt-in integration tests are skipped in ordinary CI. Live model tests require `INFORMANT_IT=1`, `INFORMANT_IT_ENDPOINT`, and `INFORMANT_IT_MODEL`; optional second-opinion coverage also uses `INFORMANT_IT_SO_ENDPOINT` and `INFORMANT_IT_SO_MODEL`. The ACS email test uses `BUGSWATTER_EMAIL_IT=1`, `BUGSWATTER_EMAIL_IT_ACS_CONNECTION`, `BUGSWATTER_EMAIL_IT_FROM`, and `BUGSWATTER_EMAIL_IT_TO`. Never commit those values.
 

@@ -53,6 +53,8 @@ public static class InitCommand
           // Delete recognized report artifacts after this many days; -1 keeps them forever
           "reportRetentionDays": 31,
           "stateFilePath": "informant.state.json",
+          "coverageStateFilePath": "informant.coverage-state.json",
+          "findingStateFilePath": "informant.findings.json",
 
           // Inline prompt text wins over the prompt file; when both are null the built-in default is used
           "reviewPrompt": null,
@@ -68,6 +70,12 @@ public static class InitCommand
 
           // Target character budget per review call, kept deliberately below the model's context window
           "maxContextCharacters": 24000,
+
+          // Graceful wall-clock limit for primary planning and review; omit or set null for no pass limit
+          "primaryReviewBudgetMinutes": 180,
+
+          // In adaptive mode, carry this many oldest still-current deep-review deferrals into later runs
+          "adaptiveCarryoverCount": 25,
 
           // Files longer than this many lines are chunked at logical boundaries
           "maxFileLines": 800,
@@ -89,8 +97,11 @@ public static class InitCommand
           // apiKey must be an env:VARIABLE_NAME or file:PATH reference when the endpoint needs auth; omit it for local endpoints.
           // authentication is "bearer" by default; use "apiKey" for an Azure endpoint that expects the api-key header.
           // maxFileReads caps the validator's extra reads per file (default 5); reviewSkippedFiles also reviews files the local pass skipped (default true).
+          // scope is allReviewed for backward compatibility, candidateOnly, or candidatePlusSample. The recommended bounded cloud setup uses
+          // candidatePlusSample with maxCleanFiles 10 and reviewBudgetMinutes 60.
           // Example: { "endpoint": "https://api.openai.com/v1", "modelName": "gpt-5", "inputCostPerMillion": 1.25,
-          //            "outputCostPerMillion": 10.0, "apiKey": "env:INFORMANT_SECOND_OPINION_KEY", "contextLines": 30, "maxFileReads": 5, "reviewSkippedFiles": true }
+          //            "outputCostPerMillion": 10.0, "apiKey": "env:INFORMANT_SECOND_OPINION_KEY", "contextLines": 30, "maxFileReads": 5,
+          //            "reviewSkippedFiles": true, "scope": "candidatePlusSample", "maxCleanFiles": 10, "reviewBudgetMinutes": 60 }
           // DOCUMENTATION.md describes the advanced one-to-three-profile severity router.
           "secondOpinion": null,
 
@@ -104,6 +115,11 @@ public static class InitCommand
           // ACS example:   { "provider": "azureCommunicationServices", "from": "DoNotReply@your-verified-domain.com",
           //                  "to": ["dev@you.com"], "acsConnectionString": "env:INFORMANT_ACS_CONNECTION", "sendOn": "high" }
           "email": null,
+
+          // Optional informational GitHub Check Run for new findings on changed lines; null disables it.
+          // token must be an env:VARIABLE_NAME or file:PATH reference with Checks: write permission.
+          // Example: { "repository": "your-org/your-repo", "token": "env:INFORMANT_GITHUB_TOKEN", "name": "BugSwatter review" }
+          "githubCheckRun": null,
 
           "logLevel": "Information",
           "logFilePath": "logs/informant-.log",
@@ -131,7 +147,7 @@ public static class InitCommand
         Console.WriteLine($"Wrote {InformantConfig.FileName} and {PromptFileName} to {directory}");
         Console.WriteLine("Edit the config (repository, branch, working tree, git path, model endpoint and name), then run 'Informant verify' to prove tool-calling before the first review run. "
             + "See DOCUMENTATION.md for every option");
-        
+
         return 0;
     }
 }

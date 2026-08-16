@@ -21,7 +21,11 @@ public sealed class InformantConfigTests : IDisposable
         Assert.Equal(Path.Combine(_directory.Path, "reports"), config.ReportDirectory);
         Assert.Equal(31, config.ReportRetentionDays);
         Assert.Equal(Path.Combine(_directory.Path, "informant.state.json"), config.StateFilePath);
+        Assert.Equal(Path.Combine(_directory.Path, "informant.coverage-state.json"), config.CoverageStateFilePath);
+        Assert.Equal(Path.Combine(_directory.Path, "informant.findings.json"), config.FindingStateFilePath);
         Assert.Equal(24000, config.MaxContextCharacters);
+        Assert.Null(config.PrimaryReviewBudgetMinutes);
+        Assert.Equal(0, config.AdaptiveCarryoverCount);
         Assert.Equal(800, config.MaxFileLines);
         Assert.Equal(10 * 1024 * 1024, config.MaxFileBytes);
         Assert.Equal(4 * 1024 * 1024, config.MaxModelResponseBytes);
@@ -29,6 +33,7 @@ public sealed class InformantConfigTests : IDisposable
         Assert.Equal(1800, config.RequestTimeoutSeconds);
         Assert.Empty(config.FallbackModels);
         Assert.Empty(config.SeedPaths);
+        Assert.Null(config.GitHubCheckRun);
         Assert.Single(config.GetPrimaryModelTargets());
         Assert.Null(config.ConsoleLogging);
         Assert.Equal(config.WorkingTreePath, config.ResolvedAllowedReadRoot);
@@ -59,6 +64,71 @@ public sealed class InformantConfigTests : IDisposable
         WriteConfig(values => values["reviewStrategy"] = "Adaptive");
 
         Assert.Equal(ReviewStrategy.Adaptive, InformantConfig.Load(_directory.Path).ReviewStrategy);
+    }
+
+    [Fact]
+    public void PrimaryReviewBudgetAndCarryoverAreConfigurable()
+    {
+        WriteConfig(values =>
+        {
+            values["primaryReviewBudgetMinutes"] = 180;
+            values["adaptiveCarryoverCount"] = 25;
+            values["coverageStateFilePath"] = "state/coverage.json";
+            values["findingStateFilePath"] = "state/findings.json";
+        });
+
+        InformantConfig config = InformantConfig.Load(_directory.Path);
+        Assert.Equal(180, config.PrimaryReviewBudgetMinutes);
+        Assert.Equal(25, config.AdaptiveCarryoverCount);
+        Assert.Equal(Path.Combine(_directory.Path, "state", "coverage.json"), config.CoverageStateFilePath);
+        Assert.Equal(Path.Combine(_directory.Path, "state", "findings.json"), config.FindingStateFilePath);
+    }
+
+    [Theory]
+    [InlineData(0, 0)]
+    [InlineData(-1, 0)]
+    [InlineData(1, -1)]
+    public void InvalidPrimaryReviewBudgetOrCarryoverIsRejected(int budgetMinutes, int carryoverCount)
+    {
+        WriteConfig(values =>
+        {
+            values["primaryReviewBudgetMinutes"] = budgetMinutes;
+            values["adaptiveCarryoverCount"] = carryoverCount;
+        });
+
+        Assert.Throws<InformantFatalException>(() => InformantConfig.Load(_directory.Path));
+    }
+
+    /// <summary>Verifies an opt-in GitHub Check Run block resolves its token relative to the configuration</summary>
+    [Fact]
+    public void GitHubCheckRunConfigurationLoadsAndResolvesSecretFile()
+    {
+        Directory.CreateDirectory(Path.Combine(_directory.Path, "secrets"));
+        File.WriteAllText(Path.Combine(_directory.Path, "secrets", "github.txt"), "test-token\n");
+        WriteConfig(values => values["githubCheckRun"] = new Dictionary<string, object?>
+        {
+            ["repository"] = "example/project",
+            ["token"] = "file:secrets/github.txt",
+            ["name"] = "Nightly BugSwatter"
+        });
+
+        GitHubCheckRunConfig checkRun = Assert.IsType<GitHubCheckRunConfig>(InformantConfig.Load(_directory.Path).GitHubCheckRun);
+
+        Assert.Equal("example/project", checkRun.Repository);
+        Assert.Equal("Nightly BugSwatter", checkRun.Name);
+        Assert.Equal("test-token", checkRun.ResolveToken());
+    }
+
+    /// <summary>Verifies malformed repositories and literal tokens are rejected during configuration loading</summary>
+    [Theory]
+    [InlineData("missing-owner", "env:TOKEN")]
+    [InlineData("owner/repository name", "env:TOKEN")]
+    [InlineData("owner/repository", "literal-token")]
+    public void InvalidGitHubCheckRunConfigurationIsRejected(string repository, string token)
+    {
+        WriteConfig(values => values["githubCheckRun"] = new Dictionary<string, object?> { ["repository"] = repository, ["token"] = token });
+
+        Assert.Throws<InformantFatalException>(() => InformantConfig.Load(_directory.Path));
     }
 
     [Fact]

@@ -21,6 +21,44 @@ public sealed record ReviewUsageSnapshot
     public decimal? EstimatedCost { get; init; }
 }
 
+/// <summary>Pass-level wall-clock budget status suitable for progress output</summary>
+public sealed record ReviewBudgetProgressSnapshot
+{
+    /// <summary>Configured limit in minutes, or null for an unbounded pass</summary>
+    public int? ConfiguredMinutes { get; init; }
+
+    /// <summary>UTC instant at which pass accounting began</summary>
+    public DateTimeOffset StartedUtc { get; init; }
+
+    /// <summary>UTC deadline, or null for an unbounded pass</summary>
+    public DateTimeOffset? DeadlineUtc { get; init; }
+
+    /// <summary>Whether the deadline has been reached</summary>
+    public bool Exhausted { get; init; }
+
+    /// <summary>Human-readable stop reason when the pass ended because of its budget</summary>
+    public string? StopReason { get; init; }
+
+    /// <summary>Number of review targets deferred by this budget</summary>
+    public int DeferredCount { get; init; }
+}
+
+/// <summary>Persistent adaptive coverage-debt counts for one run</summary>
+public sealed record ReviewCoverageDebtSnapshot
+{
+    /// <summary>Current entries found before carryover selection</summary>
+    public int PriorCount { get; init; }
+
+    /// <summary>Old debt paths carried into this run</summary>
+    public int CarriedCount { get; init; }
+
+    /// <summary>Entries remaining after completed coverage was reconciled</summary>
+    public int RemainingCount { get; init; }
+
+    /// <summary>Entries discarded because the path or Git object no longer matched</summary>
+    public int DiscardedStaleCount { get; init; }
+}
+
 /// <summary>A complete, non-secret snapshot of an Informant review suitable for a supervising process or line-oriented script</summary>
 public sealed record ReviewProgressSnapshot
 {
@@ -62,6 +100,15 @@ public sealed record ReviewProgressSnapshot
 
     /// <summary>Usage from model configurations that declare input and output rates, including zero rates that disable cost estimation</summary>
     public ReviewUsageSnapshot FrontierUsage { get; init; } = new();
+
+    /// <summary>Current primary pass budget status</summary>
+    public ReviewBudgetProgressSnapshot? PrimaryBudget { get; init; }
+
+    /// <summary>Current second-opinion pass budget status</summary>
+    public ReviewBudgetProgressSnapshot? SecondOpinionBudget { get; init; }
+
+    /// <summary>Adaptive coverage-debt counts for this run</summary>
+    public ReviewCoverageDebtSnapshot? CoverageDebt { get; init; }
 }
 
 /// <summary>Versioned stdout marker used to exchange review progress without giving Informant a Marshal dependency</summary>
@@ -116,12 +163,19 @@ public static class ReviewProgressMarker
 
     private static bool IsValid(ReviewProgressSnapshot? snapshot) => snapshot is not null && snapshot.Version == CurrentVersion && !string.IsNullOrWhiteSpace(snapshot.Phase)
         && HasValidFilePosition(snapshot.FileIndex, snapshot.FileCount) && IsValidUsage(snapshot.RunUsage) && IsValidUsage(snapshot.CurrentUsage)
-        && IsValidUsage(snapshot.LocalUsage) && IsValidUsage(snapshot.FrontierUsage) && (!snapshot.ModelRequestActive || snapshot.ModelRequestStartedUtc is not null);
+        && IsValidUsage(snapshot.LocalUsage) && IsValidUsage(snapshot.FrontierUsage) && IsValidBudget(snapshot.PrimaryBudget) && IsValidBudget(snapshot.SecondOpinionBudget)
+        && IsValidCoverageDebt(snapshot.CoverageDebt) && (!snapshot.ModelRequestActive || snapshot.ModelRequestStartedUtc is not null);
 
     private static bool IsValidUsage(ReviewUsageSnapshot? usage) => usage is not null && usage.RequestCount >= 0 && IsNullableNonNegative(usage.PromptTokens)
         && IsNullableNonNegative(usage.CompletionTokens) && IsNullableNonNegative(usage.TotalTokens) && usage.EstimatedCost is null or >= 0;
 
     private static bool HasValidFilePosition(int? fileIndex, int? fileCount) => (fileIndex is null && fileCount is null) || (fileIndex > 0 && fileCount > 0 && fileIndex <= fileCount);
+
+    private static bool IsValidBudget(ReviewBudgetProgressSnapshot? budget) => budget is null || ((budget.ConfiguredMinutes is null or > 0) && budget.DeferredCount >= 0
+        && (budget.ConfiguredMinutes is null ? budget.DeadlineUtc is null : budget.DeadlineUtc is not null));
+
+    private static bool IsValidCoverageDebt(ReviewCoverageDebtSnapshot? debt) => debt is null || debt.PriorCount >= 0 && debt.CarriedCount >= 0 && debt.RemainingCount >= 0
+        && debt.DiscardedStaleCount >= 0 && debt.CarriedCount <= debt.PriorCount;
 
     private static bool IsNullableNonNegative(long? value) => value is null or >= 0;
 }

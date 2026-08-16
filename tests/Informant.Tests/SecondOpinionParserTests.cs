@@ -13,7 +13,7 @@ public sealed class SecondOpinionParserTests
             Not fit to ship.
 
             ```json
-            { "confirmed": [ { "file": "Foo.cs", "line": 12, "severity": "high", "summary": "SQL injection" } ], "discarded": [], "verdict": "Not fit to ship." }
+            { "confirmed": [ { "file": "Foo.cs", "line": 12, "severity": "high", "category": "security", "summary": "SQL injection" } ], "discarded": [], "verdict": "Not fit to ship." }
             ```
             """;
 
@@ -25,6 +25,7 @@ public sealed class SecondOpinionParserTests
         Assert.Equal("Foo.cs", finding.File);
         Assert.Equal(12, finding.Line);
         Assert.Equal("high", finding.Severity);
+        Assert.Equal("security", finding.Category);
         Assert.Contains("CONFIRMED FINDINGS", prose);
         Assert.DoesNotContain("```json", prose);
     }

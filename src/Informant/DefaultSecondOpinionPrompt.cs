@@ -24,8 +24,8 @@ public static class DefaultSecondOpinionPrompt
         After the prose, and only after it, output a single fenced code block tagged json containing a machine-readable summary of your verdict, in exactly this shape:
         ```json
         {
-          "confirmed": [ { "file": "path/to/file", "line": 12, "severity": "critical|high|medium|low", "summary": "one line" } ],
-          "discarded": [ { "summary": "one line", "reason": "why it was discarded" } ],
+          "confirmed": [ { "file": "path/to/file", "line": 12, "severity": "critical|high|medium|low", "category": "coarse category from the primary finding", "summary": "one line" } ],
+          "discarded": [ { "file": "path/to/file", "line": 12, "category": "coarse category from the primary finding", "summary": "one line", "reason": "why it was discarded" } ],
           "verdict": "one line"
         }
         ```

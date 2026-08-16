@@ -276,6 +276,27 @@ public sealed class ClusteredReviewTests : IDisposable
         Assert.False(result.FullyReviewed);
     }
 
+    [Fact]
+    public async Task BudgetDeferralAcceptsCompletedMandatoryCopyWithoutRequiringDeepCopy()
+    {
+        Write("src/Focused.cs", string.Join('\n', Enumerable.Range(1, 100).Select(number => $"line {number}")));
+        var file = new ChangedFile("src/Focused.cs", ChangeKind.Modified, [new LineRange(50, 50)]);
+        var mandatory = new RepositoryReviewUnit("mandatory", 0, "changed content", [file.Path], [], ChangedLinesOnly: true);
+        var deep = new RepositoryReviewUnit("deep", 1, "full context", [file.Path], []);
+        var builder = new ClusteredReviewUnitBuilder(new RepositoryReviewSourceLoader(_directory.Path), 200, 12000, "system prompt", "repository summary");
+        ClusteredReviewBuild build = await builder.BuildAsync(Plan(mandatory, deep), [file]);
+        ReviewExecutionUnit mandatoryExecution = Assert.Single(build.Units, unit => unit.Parts.All(part => part.MandatoryChangedContent));
+        var mandatoryResult = new ReviewUnitResult(mandatoryExecution,
+            mandatoryExecution.Parts.Select(part => new ReviewUnitPartResult(part, "changed lines reviewed", Severity.None, true)).ToArray(), FileReviewFailureKind.None, null);
+        RepositoryReviewDeferral[] deferrals = [new(file.Path, "primary review budget exhausted before deep review completed")];
+
+        FileReviewResult result = Assert.Single(ClusteredReviewResultAggregator.Build([file], build, [mandatoryResult], deferrals));
+
+        Assert.Equal(FileReviewStatus.Deferred, result.Status);
+        Assert.Equal(result.TotalChunks, result.CompletedChunks);
+        Assert.Contains("mandatory changed content reviewed", result.SkipReason);
+    }
+
     private static RepositoryReviewPlan Plan(params RepositoryReviewUnit[] units) => new("repository", units, [], [], false, false, []);
 
     private static ChangedFile File(string path) => new(path, ChangeKind.FullReview, []);

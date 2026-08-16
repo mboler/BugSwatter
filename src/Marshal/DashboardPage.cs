@@ -69,6 +69,13 @@ public static class DashboardPage
           function usageTiles(label, usage) {
             return tile(label + ' requests', usage?.requestCount ?? 0) + tile(label + ' tokens', reportedTokens(usage));
           }
+          function budgetStatus(budget) {
+            if (!budget) return 'not reported';
+            if (budget.configuredMinutes == null) return 'unbounded';
+            if (budget.exhausted) return 'exhausted; ' + budget.deferredCount + ' deferred';
+            const remaining = budget.deadlineUtc ? Math.max(0, (new Date(budget.deadlineUtc).getTime() - Date.now()) / 1000) : 0;
+            return duration(remaining) + ' remaining';
+          }
           async function refresh() {
             try {
               const status = await (await fetch('/api/status')).json();
@@ -82,7 +89,9 @@ public static class DashboardPage
                 statusHtml += tile('Job', activity.job) + tile('Trigger', activity.trigger) + tile('Phase', activity.phase) + tile('Started', started.toLocaleString()) +
                   tile('Elapsed', duration((Date.now() - started.getTime()) / 1000)) + tile('Model', model) + tile('Model request', request) +
                   usageTiles('Run', activity.runUsage) + usageTiles('Current phase/model', activity.currentUsage) + usageTiles('Local', activity.localUsage) +
-                  usageTiles('Frontier', activity.frontierUsage) + tile('Estimated frontier cost', estimatedCost(activity.frontierUsage)) + tile('File', file);
+                  usageTiles('Frontier', activity.frontierUsage) + tile('Estimated frontier cost', estimatedCost(activity.frontierUsage)) +
+                  tile('Primary budget', budgetStatus(activity.primaryBudget)) + tile('Second-opinion budget', budgetStatus(activity.secondOpinionBudget)) +
+                  tile('Coverage debt', activity.coverageDebt ? activity.coverageDebt.carriedCount + ' carried / ' + activity.coverageDebt.remainingCount + ' remaining' : 'not reported') + tile('File', file);
                 if (activity.modelRequestStartedUtc) {
                   const modelStarted = new Date(activity.modelRequestStartedUtc);
                   statusHtml += tile('Model request started', modelStarted.toLocaleString()) + tile('Model request elapsed', duration((Date.now() - modelStarted.getTime()) / 1000));

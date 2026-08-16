@@ -95,6 +95,11 @@ public static class ValidateCommand
             checks.Add(CheckSecretReference("email ACS connection string", acsEmail.AcsConnectionString, acsEmail.ResolveAcsConnectionString()));
         }
 
+        if (config.GitHubCheckRun is { } gitHubCheckRun)
+        {
+            checks.Add(CheckSecretReference("GitHub Check Run token", gitHubCheckRun.Token, gitHubCheckRun.ResolveToken()));
+        }
+
         return checks;
     }
 

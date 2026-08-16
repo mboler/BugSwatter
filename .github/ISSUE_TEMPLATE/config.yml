@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Setup and usage questions
+    url: https://github.com/mboler/BugSwatter/discussions
+    about: Ask for help or discuss configurations without opening a defect
+  - name: Private vulnerability report
+    url: https://github.com/mboler/BugSwatter/security/advisories/new
+    about: Report a potential security vulnerability privately

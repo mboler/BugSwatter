@@ -216,7 +216,7 @@ public sealed class ReportWriterTests : IDisposable
     {
         ReportWriter writer = CreateWriter();
         writer.WriteHeader("repo", "main", ReviewMode.Changed, "base", "tip", DateTimeOffset.Now);
-        writer.AppendFindingSummary(new FindingRunSummary("C:\\reports\\Informant-Findings-run.json", 2, 3, 4, 1, 1, 2, 1, 5, 1, 2));
+        writer.AppendFindingSummary(new FindingRunSummary(Path.Combine(_directory.Path, "Informant-Findings-run.json"), 2, 3, 4, 1, 1, 2, 1, 5, 1, 2));
 
         string report = File.ReadAllText(writer.ReportPath);
 

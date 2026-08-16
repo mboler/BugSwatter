@@ -1,0 +1,62 @@
+name: Bug report
+description: Report a reproducible BugSwatter defect
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve BugSwatter. Remove secrets, private network details, proprietary source, and complete model transcripts before submitting.
+  - type: input
+    id: version
+    attributes:
+      label: BugSwatter version
+      description: Release tag or commit SHA
+      placeholder: v1.1.1
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Windows x64
+        - Linux x64
+        - Other source build
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: What happened?
+      description: Describe the observed behavior and the smallest reliable reproduction
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: configuration
+    attributes:
+      label: Sanitized configuration
+      description: Include only relevant fields and replace credentials, hosts, paths, and repository names
+      render: json
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized logs
+      description: Include the smallest relevant excerpt and remove source text, tokens, endpoints, and machine details
+      render: text
+  - type: checkboxes
+    id: hygiene
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed credentials, private network details, proprietary source, and personal paths
+          required: true
+        - label: This is not a vulnerability report
+          required: true

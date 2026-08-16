@@ -2,13 +2,13 @@
 
 *Nightly AI code review that hunts down the shady things hiding in your repos.*
 
-There are shady things lurking in your code. Bugs, sharp edges, quiet little mistakes. There always are. Every codebase has them, and you never know about all of them. You never do.
+Pull-request review usually sees a diff. BugSwatter reviews clusters: changed files together with the unchanged supporting code they depend on, planned against a fresh whole-repository manifest. That wider context can expose defects that live in the relationship between a change and code the pull request did not touch.
 
-BugSwatter is a small app I put together to help find them. One AI model reviews what changed, and an optional second, stronger model second-guesses the first, so a single model's bad call does not land in the validated report on its own. BugSwatter writes up what it found and can email you when something serious surfaces.
+There are shady things lurking in your code. Bugs, sharp edges, quiet little mistakes. There always are. BugSwatter is a small, self-hosted app I put together to look for them every night. A primary model reviews bounded repository clusters, and an optional second model challenges the findings before they reach the validated report.
 
-It's a quick, practical tool I run nightly against my own apps and repos. I'm putting it up publicly in case it's handy for someone else too. No grand promises, just an extra set of eyes while you sleep.
+The primary pass can run on a local OpenAI-compatible model, while the validator can stay local or use a stronger cloud model. BugSwatter records what it reviewed, what it deferred, and what failed. It gives the models context, not hands: no shell, no Git access, no MCP adapters, and no ability to edit your code.
 
-If you want the short case for the design, including why its local-first review can reduce cloud token costs, read [Why BugSwatter?](WHY_BUGSWATTER.md).
+See [real finding case studies](findings/README.md) for defects found in BugSwatter, MVNC, and a sanitized commercial-style security product. For the design and its local-first cost model, read [Why BugSwatter?](WHY_BUGSWATTER.md).
 
 Contributions are welcome. Found a bug, smoothed a rough edge, or added something useful? Open a pull request.
 
@@ -25,9 +25,11 @@ BugSwatter is deliberately not a general-purpose agentic coding harness. The mod
 
 ## Quick start
 
-Install Git and .NET 10, extract the appropriate release archive into `C:\BugSwatter\bin` or `/opt/bugswatter`, and create a directory for one review job:
+Install Git and .NET 10. You can either build from source with the commands below or download the appropriate archive from [GitHub Releases](https://github.com/mboler/BugSwatter/releases), verify it against `SHA256SUMS.txt`, and extract it into `C:\BugSwatter\bin` or `/opt/bugswatter`.
 
 The Windows executables are not code-signed, so Windows may identify them as coming from an unknown publisher or display a SmartScreen warning. Download releases only from this GitHub repository and verify the archive against `SHA256SUMS.txt` before running it.
+
+Create a directory for one review job:
 
 ```text
 mkdir C:\BugSwatter\jobs\sample
@@ -44,6 +46,7 @@ The first run uses the full tracked tree as its candidate universe. The default 
 
 ## Why use it
 
+- **More than the diff:** review changed files with unchanged supporting context selected from a fresh repository manifest
 - **Local-first:** keep primary review code on your network
 - **Changed-file reviews:** after the first run, review only changes since the last successfully completed primary review
 - **Repository-aware clusters:** group related files and unchanged supporting context without assuming a language or framework

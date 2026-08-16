@@ -1,10 +1,12 @@
 # Why BugSwatter?
 
-*An extra set of eyes while you sleep, without sending every nightly review to an expensive cloud model.*
+*Repository-aware review while you sleep, without sending every nightly read to an expensive cloud model.*
 
-BugSwatter is built around a simple split: use a local model for broad, repetitive review work, then let one optional second model challenge the findings that survived the first pass. That second model can be a stronger cloud model, another local model, or nothing at all.
+Pull-request review usually sees a diff. BugSwatter plans review clusters from a fresh whole-repository manifest, so changed files can be examined with the unchanged supporting code they depend on. That is useful when the defect sits in a relationship the diff does not show.
 
-The result is not a promise of perfect review. It is a practical way to add consistent, unattended scrutiny while keeping control of source exposure, hardware use, and cloud spending.
+BugSwatter then applies a simple split: use a local model for broad, repetitive review work, and let one optional second model challenge the findings that survive the first pass. That validator can be a stronger cloud model, another local model, or nothing at all.
+
+The result is not a promise of perfect review. It is a practical way to add consistent, unattended scrutiny while keeping control of source exposure, hardware use, and cloud spending. The [finding case studies](findings/README.md) show the kinds of cross-file and lifecycle defects this approach has surfaced in real runs.
 
 ## Spend cloud tokens on judgment, not bulk reading
 

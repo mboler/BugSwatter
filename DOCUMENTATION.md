@@ -726,7 +726,36 @@ Remove-Item Env:MARSHAL_SERVICE_PASSWORD
 sc.exe start Marshal
 ```
 
-A managed service account or built-in identity that needs no password can use `--service-user` without `--service-password`. The account must have **Log on as a service**, read and execute access to the binaries, read access to configuration and secret files, and modify access to working trees, state, reports, history, and logs.
+A managed service account or built-in identity that needs no password can use `--service-user` without `--service-password`. The account must have **Log on as a service**, read and execute access to the binaries, read access to configuration and secret files, and Modify access to working trees, runtime state, reports, history, and logs. Informant must be able to create, replace, and delete every configured state file because it uses temporary files for atomic state updates.
+
+Relative `stateFilePath`, `coverageStateFilePath`, and `findingStateFilePath` values resolve from the directory that contains the relevant `informant.json`. When one of these fields is omitted, Informant creates its default file in that configuration directory. A simple deployment on a trusted host can therefore grant the service account inherited Modify access to the configuration subtree:
+
+```powershell
+$serviceAccount = "$env:COMPUTERNAME\BugSwatter"
+icacls.exe "C:\BugSwatter\config" /grant "${serviceAccount}:(OI)(CI)M"
+if ($LASTEXITCODE -ne 0) {
+    throw "icacls.exe failed with exit code $LASTEXITCODE."
+}
+```
+
+Modify access includes the create, replace, and delete operations required for atomic state updates. It also permits the service account to change configuration files. If the configuration must remain read-only, set all three state paths to files under a separate writable directory instead:
+
+```jsonc
+"stateFilePath": "C:\\BugSwatter\\state\\sample\\informant.state.json",
+"coverageStateFilePath": "C:\\BugSwatter\\state\\sample\\informant.coverage-state.json",
+"findingStateFilePath": "C:\\BugSwatter\\state\\sample\\informant.findings.json"
+```
+
+Create that directory and grant the service account inherited Modify access before starting Marshal:
+
+```powershell
+$serviceAccount = "$env:COMPUTERNAME\BugSwatter"
+New-Item -ItemType Directory -Path "C:\BugSwatter\state" -Force | Out-Null
+icacls.exe "C:\BugSwatter\state" /grant "${serviceAccount}:(OI)(CI)M"
+if ($LASTEXITCODE -ne 0) {
+    throw "icacls.exe failed with exit code $LASTEXITCODE."
+}
+```
 
 Custom accounts use the native Service Control Manager API. `--use-sc` is an optional fallback for LocalSystem installation and removal only; it is rejected with `--service-user` so a password cannot appear in an `sc.exe` command line.
 
